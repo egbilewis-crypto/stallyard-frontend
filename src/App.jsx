@@ -562,6 +562,7 @@ export default function Stallyard() {
   const [authReturnView, setAuthReturnView] = useState("browse");
   const [adminTab, setAdminTab] = useState("overview");
   const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [expandedDocsUsername, setExpandedDocsUsername] = useState(null);
   const [adminEditContext, setAdminEditContext] = useState(false);
   const [addMemberForm, setAddMemberForm] = useState({
     firstName: "",
@@ -580,6 +581,7 @@ export default function Stallyard() {
     videoUrl: "",
   });
   const [bannerImageUploading, setBannerImageUploading] = useState(false);
+  const [authImageUploading, setAuthImageUploading] = useState(false);
   const [articleModalOpen, setArticleModalOpen] = useState(false);
   const [articleForm, setArticleForm] = useState({ title: "", body: "" });
   const [editingArticleId, setEditingArticleId] = useState(null);
@@ -617,6 +619,8 @@ export default function Stallyard() {
     licenseNumber: "",
     idType: "Passport",
     idCountry: "",
+    accountType: "personal",
+    licensePhotos: [],
   });
   const [selected, setSelected] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
@@ -639,7 +643,7 @@ export default function Stallyard() {
   const [shippingError, setShippingError] = useState("");
   const [confirmedOrder, setConfirmedOrder] = useState(null);
   const [orders, setOrders] = useState([]);
-  const [settings, setSettings] = useState({ commissionRate: 0.05 });
+  const [settings, setSettings] = useState({ commissionRate: 0.05, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [withdrawals, setWithdrawals] = useState([]);
   const [reviews, setReviews] = useState([]);
@@ -675,6 +679,7 @@ export default function Stallyard() {
     shippingFee: "0.00",
   });
   const [uploading, setUploading] = useState(false);
+  const [uploadingLicense, setUploadingLicense] = useState(false);
   const [idVerifyOpen, setIdVerifyOpen] = useState(false);
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [vacationOpen, setVacationOpen] = useState(false);
@@ -740,7 +745,7 @@ export default function Stallyard() {
       }
       try {
         const settingsRes = await window.storage.get("stallyard-settings", true);
-        if (settingsRes) setSettings(JSON.parse(settingsRes.value));
+        if (settingsRes) setSettings((prev) => ({ ...prev, ...JSON.parse(settingsRes.value) }));
       } catch {
         // keep default settings
       }
@@ -906,7 +911,8 @@ export default function Stallyard() {
       setAuthError("Password should be at least 4 characters");
       return;
     }
-    if (!authForm.officeLocation.trim()) {
+    const skipOfficeLocation = authForm.accountType === "personal";
+    if (!skipOfficeLocation && !authForm.officeLocation.trim()) {
       setAuthError("Enter your office location");
       return;
     }
@@ -915,10 +921,8 @@ export default function Stallyard() {
       return;
     }
     const skipId = isUnitedStates(authForm.country);
-    if (!skipId && !authForm.idCountry.trim()) {
-      setAuthError("Enter the country that issued your ID or passport");
-      return;
-    }
+    // Issuing country is inferred from country of residence for everyone —
+    // no separate "issuing country" field is shown at signup anymore.
     const signupDraft = {
       username,
       displayName,
@@ -933,8 +937,10 @@ export default function Stallyard() {
       // so they can be layered onto the member record after signup succeeds.
       licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
       idType: skipId ? "" : authForm.idType,
-      idCountry: skipId ? "" : authForm.idCountry.trim(),
+      idCountry: skipId ? "" : authForm.country.trim(),
       idVerificationExempt: skipId,
+      accountType: authForm.accountType,
+      licensePhotos: skipId ? [] : authForm.licensePhotos,
     };
     setPendingPhoneVerification({ code: generateVerificationCode(), signupDraft });
     setPhoneVerifyError("");
@@ -987,6 +993,8 @@ export default function Stallyard() {
       idType: draft.idType,
       idCountry: draft.idCountry,
       idVerificationExempt: draft.idVerificationExempt,
+      accountType: draft.accountType || "personal",
+      licensePhotos: draft.licensePhotos || [],
       phoneVerified: true,
     };
     await persistMembers([...members, newMember]);
@@ -1009,6 +1017,8 @@ export default function Stallyard() {
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
+      accountType: "personal",
+      licensePhotos: [],
     });
     showToast(
       newMember.isAdmin
@@ -1057,6 +1067,8 @@ export default function Stallyard() {
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
+      accountType: "personal",
+      licensePhotos: [],
     });
     showToast(`Welcome back, ${member.displayName}`);
   };
@@ -1849,6 +1861,32 @@ export default function Stallyard() {
     setForm((f) => ({ ...f, images: f.images.filter((_, i) => i !== idx) }));
   };
 
+  const handleLicensePhotoSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    const room = 5 - authForm.licensePhotos.length;
+    if (room <= 0) {
+      showToast("You can add up to 5 license photos");
+      return;
+    }
+    setUploadingLicense(true);
+    try {
+      const toProcess = files.slice(0, room);
+      const results = await Promise.all(toProcess.map((f) => resizeImageFile(f)));
+      setAuthForm((f) => ({ ...f, licensePhotos: [...f.licensePhotos, ...results].slice(0, 5) }));
+      if (files.length > room) showToast("Only added the first 5 photos");
+    } catch {
+      showToast("Couldn't process one of those photos");
+    } finally {
+      setUploadingLicense(false);
+    }
+  };
+
+  const removeLicensePhoto = (idx) => {
+    setAuthForm((f) => ({ ...f, licensePhotos: f.licensePhotos.filter((_, i) => i !== idx) }));
+  };
+
   const handleBannerImageSelect = async (e) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
@@ -1862,6 +1900,25 @@ export default function Stallyard() {
     } finally {
       setBannerImageUploading(false);
     }
+  };
+
+  const handleAuthImageSelect = async (e) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file) return;
+    setAuthImageUploading(true);
+    try {
+      const resized = await resizeImageFile(file, 1400, 0.8);
+      await persistSettings({ ...settings, authImage: resized });
+    } catch {
+      showToast("Couldn't process that image");
+    } finally {
+      setAuthImageUploading(false);
+    }
+  };
+
+  const removeAuthImage = async () => {
+    await persistSettings({ ...settings, authImage: "" });
   };
 
   const handleSubmit = async (e) => {
@@ -2246,6 +2303,7 @@ export default function Stallyard() {
 
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
+    const showBusinessFields = authForm.accountType !== "personal";
     return (
       <div className="min-h-screen w-full flex" style={{ backgroundColor: "white", fontFamily: "'Work Sans', sans-serif" }}>
         {/* Photo panel */}
@@ -2257,7 +2315,10 @@ export default function Stallyard() {
             className="absolute inset-6 rounded-2xl bg-cover bg-center"
             style={{
               backgroundImage:
-                "linear-gradient(135deg, rgba(27,36,48,0.15), rgba(27,36,48,0.35)), url('https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1200&q=80')",
+                `linear-gradient(135deg, rgba(27,36,48,0.15), rgba(27,36,48,0.35)), url('${
+                  settings.authImage ||
+                  "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1200&q=80"
+                }')`,
             }}
           />
         </div>
@@ -2534,6 +2595,28 @@ export default function Stallyard() {
 
                   <div className="space-y-3">
                     {isSignUp && (
+                      <div
+                        className="w-full flex rounded-full p-1 mb-1"
+                        style={{ backgroundColor: "#F1EDE1" }}
+                      >
+                        {["personal", "business"].map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setAuthForm({ ...authForm, accountType: type })}
+                            className="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
+                            style={
+                              authForm.accountType === type
+                                ? { backgroundColor: INK, color: "#fff" }
+                                : { backgroundColor: "transparent", color: SLATE }
+                            }
+                          >
+                            {type === "personal" ? "Personal" : "Business"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {isSignUp && (
                       <select
                         value={authForm.country}
                         onChange={(e) => setAuthForm({ ...authForm, country: e.target.value })}
@@ -2567,7 +2650,7 @@ export default function Stallyard() {
                         </div>
                       </div>
                     )}
-                    {isSignUp && (
+                    {isSignUp && showBusinessFields && (
                       <input
                         value={authForm.displayName}
                         onChange={(e) => setAuthForm({ ...authForm, displayName: e.target.value })}
@@ -2597,7 +2680,7 @@ export default function Stallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                       />
                     )}
-                    {isSignUp && (
+                    {isSignUp && showBusinessFields && (
                       <input
                         value={authForm.officeLocation}
                         onChange={(e) => setAuthForm({ ...authForm, officeLocation: e.target.value })}
@@ -2607,36 +2690,25 @@ export default function Stallyard() {
                       />
                     )}
                     {isSignUp && !isUnitedStates(authForm.country) && (
-                      <div className="flex gap-3">
-                        <div className="flex-1">
-                          <select
-                            value={authForm.idType}
-                            onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
-                            className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
-                            style={{ borderColor: "#DDD8CC" }}
-                          >
-                            <option>Passport</option>
-                            <option>National ID</option>
-                            <option>Driver's License</option>
-                          </select>
-                        </div>
-                        <div className="flex-1">
-                          <input
-                            value={authForm.idCountry}
-                            onChange={(e) => setAuthForm({ ...authForm, idCountry: e.target.value })}
-                            placeholder="Issuing country"
-                            className="w-full px-3 py-2 rounded-lg border outline-none"
-                            style={{ borderColor: "#DDD8CC" }}
-                          />
-                        </div>
-                      </div>
+                      <select
+                        value={authForm.idType}
+                        onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
+                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <option>Passport</option>
+                        <option>National ID</option>
+                        <option>Driver's License</option>
+                        <option>NIN</option>
+                        <option>Permanent Voter's Card</option>
+                      </select>
                     )}
                     {isSignUp && isUnitedStates(authForm.country) && (
                       <p className="text-xs" style={{ color: SLATE }}>
                         ID verification isn't required for US-based members.
                       </p>
                     )}
-                    {isSignUp && !isUnitedStates(authForm.country) && (
+                    {isSignUp && !isUnitedStates(authForm.country) && showBusinessFields && (
                       <input
                         value={authForm.licenseNumber}
                         onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
@@ -2644,6 +2716,51 @@ export default function Stallyard() {
                         className="w-full px-3 py-2 rounded-lg border outline-none"
                         style={{ borderColor: "#DDD8CC" }}
                       />
+                    )}
+                    {isSignUp && !isUnitedStates(authForm.country) && (
+                      <div>
+                        <p className="text-xs mb-2" style={{ color: SLATE }}>
+                          License photos (optional, up to 5)
+                        </p>
+                        {authForm.licensePhotos.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {authForm.licensePhotos.map((src, idx) => (
+                              <div key={idx} className="relative w-20 h-20">
+                                <img
+                                  src={src}
+                                  alt={`License photo ${idx + 1}`}
+                                  className="w-full h-full object-cover rounded-lg"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeLicensePhoto(idx)}
+                                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
+                                  style={{ backgroundColor: BERRY }}
+                                  aria-label="Remove photo"
+                                >
+                                  <X size={14} color="white" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {authForm.licensePhotos.length < 5 && (
+                          <label
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
+                          >
+                            {uploadingLicense ? "Processing..." : "Add license photos"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              onChange={handleLicensePhotoSelect}
+                              disabled={uploadingLicense}
+                              className="hidden"
+                            />
+                          </label>
+                        )}
+                      </div>
                     )}
                     <input
                       value={authForm.username}
@@ -5438,13 +5555,25 @@ export default function Stallyard() {
                   <Plus size={16} />
                   Add member
                 </button>
+                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                  Sorted A–Z by name — documents for each member are under "View documents" below their info.
+                </p>
                 <div className="space-y-2">
-                  {members.map((m) => (
+                  {members
+                    .slice()
+                    .sort((a, b) =>
+                      (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "")
+                    )
+                    .map((m) => {
+                    const hasDocs = m.idType || m.licenseNumber || (m.licensePhotos && m.licensePhotos.length > 0);
+                    const docsOpen = expandedDocsUsername === m.username;
+                    return (
                     <div
                       key={m.username}
-                      className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                      className="p-3 rounded-lg border bg-white"
                       style={{ borderColor: "#DDD8CC" }}
                     >
+                      <div className="flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
                           {m.displayName}
@@ -5461,6 +5590,15 @@ export default function Stallyard() {
                         <div className="text-xs" style={{ color: SLATE }}>
                           @{m.username} · {m.email || "no email"} · {m.phone || "no phone"} · {m.officeLocation || "no office set"}
                         </div>
+                        {hasDocs && (
+                          <button
+                            onClick={() => setExpandedDocsUsername(docsOpen ? null : m.username)}
+                            className="text-xs font-medium underline mt-1"
+                            style={{ color: INK }}
+                          >
+                            {docsOpen ? "Hide documents" : `View documents${m.licensePhotos?.length ? ` (${m.licensePhotos.length} photo${m.licensePhotos.length > 1 ? "s" : ""})` : ""}`}
+                          </button>
+                        )}
                       </div>
                       {!m.isAdmin && (
                         <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
@@ -5499,8 +5637,39 @@ export default function Stallyard() {
                           </button>
                         </div>
                       )}
+                      </div>
+                      {docsOpen && (
+                        <div className="mt-3 pt-3" style={{ borderTop: "1px solid #DDD8CC" }}>
+                          <div className="text-xs space-y-1 mb-2" style={{ color: SLATE }}>
+                            <div>Account type: {m.accountType === "business" ? "Business" : "Personal"}</div>
+                            {m.idType && <div>ID type: {m.idType}</div>}
+                            {m.idCountry && <div>Issuing country: {m.idCountry}</div>}
+                            {m.licenseNumber && <div>License number: {m.licenseNumber}</div>}
+                            {m.idVerificationExempt && <div>US-based — ID verification exempt</div>}
+                          </div>
+                          {m.licensePhotos && m.licensePhotos.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {m.licensePhotos.map((src, idx) => (
+                                <a key={idx} href={src} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={src}
+                                    alt={`${m.displayName} document ${idx + 1}`}
+                                    className="w-24 h-24 object-cover rounded-lg border"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs" style={{ color: SLATE }}>
+                              No photos uploaded.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -5620,6 +5789,47 @@ export default function Stallyard() {
                 <p className="text-xs mt-3" style={{ color: SLATE }}>
                   Applies to new orders going forward — existing orders keep the rate they were placed under.
                 </p>
+
+                <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    Sign up / sign in page image
+                  </label>
+                  <p className="text-xs mb-3" style={{ color: SLATE }}>
+                    Shown as the side photo on the sign up and sign in screens. Falls back to a default photo if
+                    none is set.
+                  </p>
+                  {settings.authImage && (
+                    <img
+                      src={settings.authImage}
+                      alt="Sign up page"
+                      className="w-full h-40 object-cover rounded-lg mb-3"
+                    />
+                  )}
+                  <div className="flex items-center gap-3">
+                    <label
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
+                      style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
+                    >
+                      {authImageUploading ? "Uploading…" : settings.authImage ? "Change image" : "Choose image"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleAuthImageSelect}
+                        disabled={authImageUploading}
+                        className="hidden"
+                      />
+                    </label>
+                    {settings.authImage && (
+                      <button
+                        onClick={removeAuthImage}
+                        className="text-sm font-medium"
+                        style={{ color: BERRY }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
