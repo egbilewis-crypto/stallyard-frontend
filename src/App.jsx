@@ -10,6 +10,37 @@ const SLATE = "#667085";
 
 const BACKEND_URL = "https://stallyard-backend-production.up.railway.app";
 
+// `window.storage` only exists inside Claude's own preview tool. On the real
+// deployed site it doesn't exist, so we back it with the browser's own
+// localStorage instead — same shape (get/set/delete/list), so nothing else
+// in this file has to change.
+if (typeof window !== "undefined" && !window.storage) {
+  const PREFIX = "stallyard-storage:";
+  window.storage = {
+    async get(key) {
+      const raw = localStorage.getItem(PREFIX + key);
+      return raw === null ? null : { key, value: raw };
+    },
+    async set(key, value) {
+      localStorage.setItem(PREFIX + key, value);
+      return { key, value };
+    },
+    async delete(key) {
+      const existed = localStorage.getItem(PREFIX + key) !== null;
+      localStorage.removeItem(PREFIX + key);
+      return { key, deleted: existed };
+    },
+    async list(prefix = "") {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(PREFIX + prefix)) keys.push(k.slice(PREFIX.length));
+      }
+      return { keys };
+    },
+  };
+}
+
 const CATEGORIES = ["Handmade", "Home", "Vintage", "Electronics", "Clothing", "Books", "Art", "Outdoors", "Auto Parts", "Groceries", "Other"];
 
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
