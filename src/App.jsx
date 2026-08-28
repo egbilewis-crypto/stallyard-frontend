@@ -219,11 +219,14 @@ function backendUserToMember(user, existing) {
     isVerified: !!user.is_verified,
     isSuspended: !!user.is_suspended,
     joinedAt: user.created_at ? new Date(user.created_at).getTime() : existing?.joinedAt || Date.now(),
-    licenseNumber: existing?.licenseNumber || "",
-    idType: existing?.idType || "Passport",
-    idCountry: existing?.idCountry || "",
-    idVerificationExempt: existing?.idVerificationExempt ?? isUnitedStates(user.country),
-    hasAppliedToSell: existing?.hasAppliedToSell || false,
+    accountType: user.account_type || existing?.accountType || "personal",
+    licenseNumber: user.license_number || existing?.licenseNumber || "",
+    idType: user.id_type || existing?.idType || "Passport",
+    idCountry: user.id_country || existing?.idCountry || "",
+    licensePhotos: user.license_photos || existing?.licensePhotos || [],
+    idVerificationExempt:
+      user.id_verification_exempt ?? existing?.idVerificationExempt ?? isUnitedStates(user.country),
+    hasAppliedToSell: user.has_applied_to_sell || existing?.hasAppliedToSell || false,
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -976,6 +979,12 @@ export default function Stallyard() {
           lastName: draft.lastName,
           officeLocation: draft.officeLocation,
           country: draft.country,
+          accountType: draft.accountType || "personal",
+          idType: draft.idType,
+          idCountry: draft.idCountry,
+          licenseNumber: draft.licenseNumber,
+          licensePhotos: draft.licensePhotos || [],
+          idVerificationExempt: draft.idVerificationExempt,
         }),
       });
     } catch {
@@ -989,12 +998,6 @@ export default function Stallyard() {
     }
     const newMember = {
       ...backendUserToMember(data.user),
-      licenseNumber: draft.licenseNumber,
-      idType: draft.idType,
-      idCountry: draft.idCountry,
-      idVerificationExempt: draft.idVerificationExempt,
-      accountType: draft.accountType || "personal",
-      licensePhotos: draft.licensePhotos || [],
       phoneVerified: true,
     };
     await persistMembers([...members, newMember]);
