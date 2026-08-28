@@ -574,6 +574,8 @@ export default function Stallyard() {
     displayName: "",
     officeLocation: "",
     username: "",
+    email: "",
+    phone: "",
     password: "",
   });
   const [contentTab, setContentTab] = useState("banners");
@@ -651,6 +653,7 @@ export default function Stallyard() {
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [withdrawals, setWithdrawals] = useState([]);
   const [reviews, setReviews] = useState([]);
+  const [follows, setFollows] = useState([]);
   const [reviewDrafts, setReviewDrafts] = useState({});
   const [returnDrafts, setReturnDrafts] = useState({});
   const [returnTrackingDrafts, setReturnTrackingDrafts] = useState({});
@@ -790,6 +793,17 @@ export default function Stallyard() {
         setReviews(reviewsRes ? JSON.parse(reviewsRes.value) : []);
       } catch {
         setReviews([]);
+      }
+      try {
+        const followsRes = await fetch(`${BACKEND_URL}/follows`);
+        if (followsRes.ok) {
+          const { follows: rows } = await followsRes.json();
+          setFollows(
+            rows.map((r) => ({ followerUsername: r.follower_username, followedUsername: r.followed_username }))
+          );
+        }
+      } catch {
+        // couldn't reach backend for follows — leave empty, follow button will still work
       }
       setLoaded(true);
     })();
@@ -2174,33 +2188,79 @@ export default function Stallyard() {
 
   const adminAddMember = async (data) => {
     const username = data.username.trim().toLowerCase();
-    if (!username || !data.password) {
-      showToast("Enter a username and password");
+    if (!username || !data.password || !data.email?.trim() || !data.phone?.trim()) {
+      showToast("Enter a username, email, phone, and password");
       return false;
     }
     if (members.some((m) => m.username === username)) {
       showToast("That username is taken");
       return false;
     }
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/admin/create-member`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password: data.password,
+          displayName: data.displayName.trim() || username,
+          email: data.email?.trim() || "",
+          phone: data.phone?.trim() || "",
+          isApproved: true,
+        }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    }
+    const responseData = await res.json();
+    if (!res.ok) {
+      showToast(responseData.error || "Couldn't add that member");
+      return false;
+    }
     const newMember = {
-      username,
-      displayName: data.displayName.trim() || username,
+      ...backendUserToMember(responseData.user),
       firstName: data.firstName.trim(),
       lastName: data.lastName.trim(),
       officeLocation: data.officeLocation.trim(),
-      licenseNumber: "",
-      passwordHash: obfuscate(data.password),
-      idType: "Passport",
-      idCountry: "",
-      isAdmin: false,
-      isApproved: true,
-      isVerified: false,
-      isSuspended: false,
-      joinedAt: Date.now(),
     };
     await persistMembers([...members, newMember]);
     showToast(`Member ${newMember.displayName} added`);
     return true;
+  };
+
+  const toggleFollow = async (followedUsername) => {
+    if (!currentUser) {
+      setAuthReturnView(view);
+      setView("signin");
+      showToast("Sign in to follow sellers");
+      return;
+    }
+    if (currentUser === followedUsername) return;
+    const isFollowing = follows.some(
+      (f) => f.followerUsername === currentUser && f.followedUsername === followedUsername
+    );
+    try {
+      const res = await fetch(`${BACKEND_URL}/follows`, {
+        method: isFollowing ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ followerUsername: currentUser, followedUsername }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't update follow status — try again");
+        return;
+      }
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    setFollows((prev) =>
+      isFollowing
+        ? prev.filter((f) => !(f.followerUsername === currentUser && f.followedUsername === followedUsername))
+        : [...prev, { followerUsername: currentUser, followedUsername }]
+    );
+    showToast(isFollowing ? "Unfollowed" : "Following");
   };
 
   const noAdminExists = members.length > 0 && !members.some((m) => m.isAdmin);
@@ -4695,6 +4755,10 @@ export default function Stallyard() {
               );
               const sellerRating = getSellerRating(viewingSeller);
               const reputation = getSellerReputation(viewingSeller);
+              const followerCount = follows.filter((f) => f.followedUsername === viewingSeller).length;
+              const isFollowing = follows.some(
+                (f) => f.followerUsername === currentUser && f.followedUsername === viewingSeller
+              );
               const itemsSold = orders.reduce(
                 (s, o) =>
                   s + o.items.filter((i) => i.ownerUsername === viewingSeller).reduce((s2, i) => s2 + i.qty, 0),
@@ -4725,8 +4789,23 @@ export default function Stallyard() {
                         })}
                         {seller.officeLocation ? ` · ${seller.officeLocation}` : ""}
                         {reputation && ` · ${reputation.count} rating${reputation.count !== 1 ? "s" : ""}`}
+                        {` · ${followerCount} follower${followerCount !== 1 ? "s" : ""}`}
                       </p>
                     </div>
+                    <div className="flex items-center gap-2">
+                    {currentUser !== viewingSeller && (
+                      <button
+                        onClick={() => toggleFollow(viewingSeller)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium border"
+                        style={
+                          isFollowing
+                            ? { borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }
+                            : { borderColor: INK, backgroundColor: INK, color: "white" }
+                        }
+                      >
+                        {isFollowing ? "Following" : "Follow"}
+                      </button>
+                    )}
                     <button
                       onClick={() => startOrOpenThread(sellerListings[0] || { ownerUsername: viewingSeller, sellerName: seller.displayName, id: null })}
                       disabled={sellerListings.length === 0}
@@ -4735,6 +4814,7 @@ export default function Stallyard() {
                     >
                       Message seller
                     </button>
+                    </div>
                   </div>
 
                   {seller.vacationMode && (
@@ -7113,6 +7193,29 @@ export default function Stallyard() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Email
+                </label>
+                <input
+                  value={addMemberForm.email}
+                  onChange={(e) => setAddMemberForm({ ...addMemberForm, email: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                  autoCapitalize="none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Phone
+                </label>
+                <input
+                  value={addMemberForm.phone}
+                  onChange={(e) => setAddMemberForm({ ...addMemberForm, phone: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                   Username
                 </label>
                 <input
@@ -7147,6 +7250,8 @@ export default function Stallyard() {
                       displayName: "",
                       officeLocation: "",
                       username: "",
+                      email: "",
+                      phone: "",
                       password: "",
                     });
                   }
