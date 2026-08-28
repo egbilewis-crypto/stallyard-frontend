@@ -206,6 +206,7 @@ function obfuscate(str) {
 function backendUserToMember(user, existing) {
   return {
     ...existing,
+    backendId: user.id,
     username: user.username,
     displayName: user.display_name || user.username,
     email: user.email,
@@ -706,7 +707,21 @@ export default function Stallyard() {
       }
       try {
         const membersRes = await window.storage.get("stallyard-members", true);
-        setMembers(membersRes ? JSON.parse(membersRes.value) : []);
+        const localMembers = membersRes ? JSON.parse(membersRes.value) : [];
+        setMembers(localMembers);
+        try {
+          const usersRes = await fetch(`${BACKEND_URL}/users`);
+          if (usersRes.ok) {
+            const { users } = await usersRes.json();
+            const merged = users.map((u) =>
+              backendUserToMember(u, localMembers.find((m) => m.username === u.username))
+            );
+            setMembers(merged);
+            await window.storage.set("stallyard-members", JSON.stringify(merged), true);
+          }
+        } catch {
+          // couldn't reach backend for member list — keep local copy
+        }
       } catch {
         setMembers([]);
       }
@@ -2049,12 +2064,38 @@ export default function Stallyard() {
       showToast("You can't remove your own admin account");
       return;
     }
+    const target = members.find((m) => m.username === username);
+    if (target?.backendId) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
+        if (!res.ok) {
+          showToast("Couldn't remove member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(members.filter((m) => m.username !== username));
     await persistListings(listings.filter((l) => l.ownerUsername !== username));
     showToast("Member removed");
   };
 
   const adminPromoteMember = async (username) => {
+    const target = members.find((m) => m.username === username);
+    if (target?.backendId) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/promote`, { method: "PATCH" });
+        if (!res.ok) {
+          showToast("Couldn't promote member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(members.map((m) => (m.username === username ? { ...m, isAdmin: true } : m)));
     showToast("Member promoted to admin");
   };
@@ -2066,6 +2107,22 @@ export default function Stallyard() {
     }
     const target = members.find((m) => m.username === username);
     const nextSuspended = !target?.isSuspended;
+    if (target?.backendId) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/suspend`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isSuspended: nextSuspended }),
+        });
+        if (!res.ok) {
+          showToast("Couldn't update member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(
       members.map((m) => (m.username === username ? { ...m, isSuspended: nextSuspended } : m))
     );
@@ -2073,6 +2130,19 @@ export default function Stallyard() {
   };
 
   const adminApproveMember = async (username) => {
+    const target = members.find((m) => m.username === username);
+    if (target?.backendId) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/approve`, { method: "PATCH" });
+        if (!res.ok) {
+          showToast("Couldn't approve member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(members.map((m) => (m.username === username ? { ...m, isApproved: true } : m)));
     showToast("Seller approved — they can now list items");
   };
@@ -2080,6 +2150,22 @@ export default function Stallyard() {
   const adminToggleVerify = async (username) => {
     const target = members.find((m) => m.username === username);
     const nextVerified = !target?.isVerified;
+    if (target?.backendId) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/verify`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ isVerified: nextVerified }),
+        });
+        if (!res.ok) {
+          showToast("Couldn't update member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(
       members.map((m) => (m.username === username ? { ...m, isVerified: nextVerified } : m))
     );
