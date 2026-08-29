@@ -232,6 +232,39 @@ function backendListingToFrontend(row, existing) {
   };
 }
 
+function backendOrderToFrontend(row) {
+  return {
+    id: row.id,
+    buyerId: row.buyer_id,
+    buyerUsername: row.buyer_username,
+    buyerName: row.buyer_name || row.buyer_username,
+    shippingAddress: row.shipping_address || {},
+    currency: row.currency || "USD",
+    subtotal: Number(row.subtotal) || 0,
+    shippingTotal: Number(row.shipping_total) || 0,
+    total: Number(row.total) || 0,
+    commissionRate: row.commission_rate !== undefined ? Number(row.commission_rate) : 0.05,
+    commissionAmount: Number(row.commission_amount) || 0,
+    paymentStatus: row.payment_status || "held",
+    isDisputed: !!row.is_disputed,
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    items: (row.items || []).map((i) => ({
+      id: i.id,
+      listingId: i.listing_id,
+      title: i.title,
+      emoji: i.emoji || "📦",
+      price: Number(i.price),
+      qty: i.qty,
+      shippingFee: Number(i.shipping_fee) || 0,
+      sellerName: i.seller_name,
+      ownerUsername: i.seller_username,
+      fulfillmentStatus: i.fulfillment_status || "new",
+      trackingNumber: i.tracking_number || "",
+      statusHistory: [{ status: i.fulfillment_status || "new", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
+    })),
+  };
+}
+
 function backendUserToMember(user, existing) {
   return {
     ...existing,
@@ -690,6 +723,9 @@ export default function Stallyard() {
   const [returnTrackingDrafts, setReturnTrackingDrafts] = useState({});
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [bankList, setBankList] = useState([]);
+  const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
+  const [bankSaving, setBankSaving] = useState(false);
   const [threads, setThreads] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
@@ -814,12 +850,7 @@ export default function Stallyard() {
       } catch {
         setMessageReadState({});
       }
-      try {
-        const ordersRes = await window.storage.get("stallyard-orders", true);
-        setOrders(ordersRes ? JSON.parse(ordersRes.value) : []);
-      } catch {
-        setOrders([]);
-      }
+      setOrders([]);
       try {
         const settingsRes = await window.storage.get("stallyard-settings", true);
         if (settingsRes) setSettings((prev) => ({ ...prev, ...JSON.parse(settingsRes.value) }));
@@ -832,12 +863,7 @@ export default function Stallyard() {
       } catch {
         // keep default empty content
       }
-      try {
-        const withdrawalsRes = await window.storage.get("stallyard-withdrawals", true);
-        setWithdrawals(withdrawalsRes ? JSON.parse(withdrawalsRes.value) : []);
-      } catch {
-        setWithdrawals([]);
-      }
+      setWithdrawals([]);
       try {
         const threadsRes = await window.storage.get("stallyard-messages", true);
         setThreads(threadsRes ? JSON.parse(threadsRes.value) : []);
@@ -864,6 +890,62 @@ export default function Stallyard() {
       setLoaded(true);
     })();
   }, []);
+
+  // Orders and withdrawals are private, per-user data — load them fresh from
+  // the real backend whenever the signed-in user (or their token) changes,
+  // rather than during the anonymous initial load above.
+  useEffect(() => {
+    (async () => {
+      if (!currentUser || !authToken) {
+        setOrders([]);
+        setWithdrawals([]);
+        return;
+      }
+      const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
+      try {
+        const [mineRes, sellingRes, adminRes] = await Promise.all([
+          authFetch(`${BACKEND_URL}/orders/mine`),
+          authFetch(`${BACKEND_URL}/orders/selling`),
+          isAdmin ? authFetch(`${BACKEND_URL}/orders`) : Promise.resolve(null),
+        ]);
+        const byId = new Map();
+        for (const res of [mineRes, sellingRes, adminRes]) {
+          if (!res || !res.ok) continue;
+          const { orders: rows } = await res.json();
+          for (const row of rows) byId.set(row.id, backendOrderToFrontend(row));
+        }
+        setOrders([...byId.values()].sort((a, b) => b.createdAt - a.createdAt));
+      } catch {
+        // couldn't reach backend for orders — leave empty rather than show stale/fake data
+      }
+      try {
+        const [mineWRes, adminWRes] = await Promise.all([
+          authFetch(`${BACKEND_URL}/withdrawals/mine`),
+          isAdmin ? authFetch(`${BACKEND_URL}/withdrawals`) : Promise.resolve(null),
+        ]);
+        const byId = new Map();
+        for (const res of [mineWRes, adminWRes]) {
+          if (!res || !res.ok) continue;
+          const { withdrawals: rows } = await res.json();
+          for (const row of rows) {
+            byId.set(row.id, {
+              id: row.id,
+              sellerUsername: row.seller_username,
+              sellerId: row.seller_id,
+              amount: Number(row.amount),
+              status: row.status,
+              failureReason: row.failure_reason,
+              requestedAt: row.requested_at ? new Date(row.requested_at).getTime() : Date.now(),
+              processedAt: row.processed_at ? new Date(row.processed_at).getTime() : null,
+            });
+          }
+        }
+        setWithdrawals([...byId.values()].sort((a, b) => b.requestedAt - a.requestedAt));
+      } catch {
+        // couldn't reach backend for withdrawals — leave empty
+      }
+    })();
+  }, [currentUser, authToken, members]);
 
   useEffect(() => {
     if (view !== "messages") return;
@@ -1724,12 +1806,54 @@ export default function Stallyard() {
     showToast("Issue reported — the marketplace admin will review it");
   };
 
+  const patchOrderOnBackend = async (orderId, action, body) => {
+    if (typeof orderId !== "number") return true; // legacy local-only order, nothing to sync
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/${action}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        showToast("Couldn't save that change — try again");
+        return false;
+      }
+      return true;
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    }
+  };
+
+  const patchOrderItemOnBackend = async (itemId, body) => {
+    if (typeof itemId !== "number") return true;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save that change — try again");
+        return false;
+      }
+      return true;
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    }
+  };
+
   const resolveDispute = async (orderId) => {
+    const ok = await patchOrderOnBackend(orderId, "dispute", { isDisputed: false });
+    if (!ok) return;
     await persistOrders(orders.map((o) => (o.id === orderId ? { ...o, isDisputed: false } : o)));
     showToast("Dispute resolved");
   };
 
   const releasePayout = async (orderId) => {
+    const ok = await patchOrderOnBackend(orderId, "release");
+    if (!ok) return;
     await persistOrders(
       orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "released" } : o))
     );
@@ -1737,6 +1861,8 @@ export default function Stallyard() {
   };
 
   const refundOrder = async (orderId) => {
+    const ok = await patchOrderOnBackend(orderId, "refund");
+    if (!ok) return;
     await persistOrders(
       orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "refunded" } : o))
     );
@@ -1744,6 +1870,8 @@ export default function Stallyard() {
   };
 
   const updateItemFulfillment = async (orderId, itemId, status) => {
+    const ok = await patchOrderItemOnBackend(itemId, { fulfillmentStatus: status });
+    if (!ok) return;
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -1766,6 +1894,8 @@ export default function Stallyard() {
   };
 
   const updateItemTracking = async (orderId, itemId, trackingNumber) => {
+    const ok = await patchOrderItemOnBackend(itemId, { trackingNumber });
+    if (!ok) return;
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -1858,41 +1988,91 @@ export default function Stallyard() {
     showToast("Return request denied");
   };
 
+  const loadBankList = async () => {
+    if (bankList.length > 0) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/paystack/banks`);
+      if (res.ok) {
+        const { banks } = await res.json();
+        setBankList(banks);
+      }
+    } catch {
+      // bank list couldn't load — the field will just be empty
+    }
+  };
+
+  const saveBankDetails = async () => {
+    if (!bankForm.bankCode || !bankForm.accountNumber.trim()) {
+      showToast("Choose a bank and enter your account number");
+      return;
+    }
+    setBankSaving(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/sellers/bank-details`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: currentMember.backendId,
+          bankCode: bankForm.bankCode,
+          accountNumber: bankForm.accountNumber.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't verify those bank details");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, hasBankDetails: true } : m))
+      );
+      showToast("Bank details saved");
+      setBankForm({ bankCode: "", accountNumber: "" });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setBankSaving(false);
+    }
+  };
+
   const requestWithdrawal = async (amount) => {
     const amt = Math.round(Number(amount) * 100) / 100;
     if (!amt || amt <= 0) {
       showToast("Enter an amount to withdraw");
       return;
     }
-    if (amt > walletNetAvailable) {
-      showToast("You can't request more than your available balance");
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/withdrawals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: amt }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
       return;
     }
-    const request = {
-      id: uid(),
-      sellerUsername: currentUser,
-      sellerName: currentMember.displayName,
-      amount: amt,
-      status: "pending",
-      requestedAt: Date.now(),
-      processedAt: null,
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || "Couldn't process that withdrawal");
+      return;
+    }
+    const w = data.withdrawal;
+    const mapped = {
+      id: w.id,
+      sellerUsername: w.seller_username,
+      sellerId: w.seller_id,
+      amount: Number(w.amount),
+      status: w.status,
+      failureReason: w.failure_reason,
+      requestedAt: w.requested_at ? new Date(w.requested_at).getTime() : Date.now(),
+      processedAt: w.processed_at ? new Date(w.processed_at).getTime() : null,
     };
-    await persistWithdrawals([request, ...withdrawals]);
-    showToast("Withdrawal requested");
-  };
-
-  const adminMarkWithdrawalPaid = async (id) => {
-    await persistWithdrawals(
-      withdrawals.map((w) => (w.id === id ? { ...w, status: "paid", processedAt: Date.now() } : w))
+    await persistWithdrawals([mapped, ...withdrawals]);
+    showToast(
+      mapped.status === "paid"
+        ? "Withdrawal sent to your bank"
+        : `Withdrawal couldn't be completed: ${mapped.failureReason || "unknown error"}`
     );
-    showToast("Marked as paid");
-  };
-
-  const adminRejectWithdrawal = async (id) => {
-    await persistWithdrawals(
-      withdrawals.map((w) => (w.id === id ? { ...w, status: "rejected", processedAt: Date.now() } : w))
-    );
-    showToast("Withdrawal request rejected");
   };
 
   const checkout = async () => {
@@ -1911,38 +2091,29 @@ export default function Stallyard() {
       return;
     }
     setShippingError("");
-    const commissionRate = settings.commissionRate ?? 0.05;
-    const commissionAmount = Math.round(cartSubtotal * commissionRate * 100) / 100;
-    const sellerPayout = Math.round((cartSubtotal - commissionAmount + cartShipping) * 100) / 100;
-    const order = {
-      id: uid(),
-      buyerUsername: currentUser,
-      buyerName: currentMember.displayName,
-      shippingAddress: { ...shippingForm },
-      currency: cartCurrency,
-      items: cartItems.map((i) => ({
-        id: i.id,
-        title: i.title,
-        emoji: i.emoji,
-        price: i.price,
-        qty: i.qty,
-        shippingFee: Number(i.shippingFee) || 0,
-        sellerName: i.sellerName,
-        ownerUsername: i.ownerUsername,
-        fulfillmentStatus: "new",
-        statusHistory: [{ status: "new", at: Date.now() }],
-        trackingNumber: "",
-      })),
-      subtotal: cartSubtotal,
-      shippingTotal: cartShipping,
-      total: cartTotal,
-      commissionRate,
-      commissionAmount,
-      sellerPayout,
-      paymentStatus: "held",
-      createdAt: Date.now(),
-      isDisputed: false,
-    };
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/checkout`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty })),
+          shippingAddress: { ...shippingForm },
+          currency: cartCurrency,
+        }),
+      });
+    } catch {
+      setShippingError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setShippingError(data.error || "Something went wrong placing this order.");
+      return;
+    }
+    const order = backendOrderToFrontend(data.order);
+    const purchasedIds = new Set(order.items.map((i) => i.listingId));
+    await persistListings(listings.map((l) => (purchasedIds.has(l.id) ? { ...l, status: "sold" } : l)));
     await persistOrders([order, ...orders]);
     if (saveShippingAddress) {
       await persistMembers(
@@ -2494,7 +2665,7 @@ export default function Stallyard() {
     .filter((w) => w.sellerUsername === currentUser)
     .sort((a, b) => b.requestedAt - a.requestedAt);
   const withdrawalsReserved = myWithdrawals
-    .filter((w) => w.status === "pending" || w.status === "paid")
+    .filter((w) => w.status === "processing" || w.status === "paid")
     .reduce((s, w) => s + w.amount, 0);
   const withdrawalsPaidTotal = myWithdrawals
     .filter((w) => w.status === "paid")
@@ -4175,7 +4346,7 @@ export default function Stallyard() {
                         className="text-xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                       >
-                        {myWithdrawals.filter((w) => w.status === "pending").length}
+                        {myWithdrawals.filter((w) => w.status === "processing").length}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
                         pending requests
@@ -5168,6 +5339,48 @@ export default function Stallyard() {
                   </div>
                 </div>
 
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
+                    Payout bank details
+                  </h3>
+                  <p className="text-xs mb-3" style={{ color: SLATE }}>
+                    {currentMember?.hasBankDetails
+                      ? "Your bank details are on file. Add new ones below to replace them."
+                      : "Add your bank details before requesting a withdrawal — payouts go here automatically."}
+                  </p>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    <select
+                      value={bankForm.bankCode}
+                      onFocus={loadBankList}
+                      onChange={(e) => setBankForm({ ...bankForm, bankCode: e.target.value })}
+                      className="px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                      style={{ borderColor: "#DDD8CC", minWidth: "180px" }}
+                    >
+                      <option value="">Select your bank</option>
+                      {bankList.map((b) => (
+                        <option key={b.code} value={b.code}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      value={bankForm.accountNumber}
+                      onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value })}
+                      placeholder="Account number"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={saveBankDetails}
+                      disabled={bankSaving}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                      style={{ backgroundColor: INK, color: "white" }}
+                    >
+                      {bankSaving ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+
                 <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
                   <h3 className="text-sm font-semibold mb-2" style={{ color: INK }}>
                     Request a withdrawal
@@ -5224,10 +5437,10 @@ export default function Stallyard() {
                           <div className="flex items-center gap-3">
                             <Tag
                               color={
-                                w.status === "paid" ? SAGE : w.status === "rejected" ? BERRY : MARIGOLD
+                                w.status === "paid" ? SAGE : w.status === "failed" ? BERRY : MARIGOLD
                               }
                             >
-                              {w.status === "paid" ? "Paid" : w.status === "rejected" ? "Rejected" : "Pending"}
+                              {w.status === "paid" ? "Paid" : w.status === "failed" ? "Failed" : "Processing"}
                             </Tag>
                             <span
                               className="font-medium"
@@ -5671,7 +5884,7 @@ export default function Stallyard() {
                 { id: "content", label: "Content" },
                 {
                   id: "withdrawals",
-                  label: `Withdrawals (${withdrawals.filter((w) => w.status === "pending").length})`,
+                  label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
                 },
               ].map((t) => (
                 <button
@@ -6515,6 +6728,10 @@ export default function Stallyard() {
 
             {adminTab === "withdrawals" && (
               <div className="space-y-2">
+                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                  Withdrawals process automatically once a seller requests one — nothing to approve here.
+                  This is a read-only history.
+                </p>
                 {withdrawals.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
                     No withdrawal requests yet.
@@ -6531,13 +6748,13 @@ export default function Stallyard() {
                     >
                       <div className="min-w-0">
                         <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
-                          {w.sellerName}
+                          {members.find((m) => m.username === w.sellerUsername)?.displayName || w.sellerUsername}
                           <Tag
                             color={
-                              w.status === "paid" ? SAGE : w.status === "rejected" ? BERRY : MARIGOLD
+                              w.status === "paid" ? SAGE : w.status === "failed" ? BERRY : MARIGOLD
                             }
                           >
-                            {w.status === "paid" ? "Paid" : w.status === "rejected" ? "Rejected" : "Pending"}
+                            {w.status === "paid" ? "Paid" : w.status === "failed" ? "Failed" : "Processing"}
                           </Tag>
                         </div>
                         <div className="text-xs" style={{ color: SLATE }}>
@@ -6546,6 +6763,7 @@ export default function Stallyard() {
                             month: "short",
                             day: "numeric",
                           })}
+                          {w.status === "failed" && w.failureReason ? ` — ${w.failureReason}` : ""}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
@@ -6555,24 +6773,6 @@ export default function Stallyard() {
                         >
                           ${w.amount.toFixed(2)}
                         </span>
-                        {w.status === "pending" && (
-                          <>
-                            <button
-                              onClick={() => adminMarkWithdrawalPaid(w.id)}
-                              className="text-xs font-medium underline"
-                              style={{ color: SAGE }}
-                            >
-                              Mark as paid
-                            </button>
-                            <button
-                              onClick={() => adminRejectWithdrawal(w.id)}
-                              className="text-xs font-medium underline"
-                              style={{ color: BERRY }}
-                            >
-                              Reject
-                            </button>
-                          </>
-                        )}
                       </div>
                     </div>
                   ))}
