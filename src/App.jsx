@@ -624,6 +624,7 @@ export default function Stallyard() {
   const [editingFaqId, setEditingFaqId] = useState(null);
   const [openFaqId, setOpenFaqId] = useState(null);
   const [listings, setListings] = useState([]);
+  const [membersLoaded, setMembersLoaded] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -782,6 +783,7 @@ export default function Stallyard() {
       } catch {
         setMembers([]);
       }
+      setMembersLoaded(true);
       try {
         const sessionRes = await window.storage.get("stallyard-session", false);
         if (sessionRes) setCurrentUser(sessionRes.value);
@@ -2080,6 +2082,10 @@ export default function Stallyard() {
       showToast("Give it a title and a price");
       return;
     }
+    if (form.listingType === "auction" && isUnitedStates(currentMember?.country)) {
+      showToast("Auctions aren't available for US sellers yet");
+      return;
+    }
     if (editingId) {
       const existingListing = listings.find((l) => l.id === editingId);
       if (existingListing?.listingType === "auction" && (existingListing.bidHistory || []).length > 0) {
@@ -2111,11 +2117,13 @@ export default function Stallyard() {
       }
       showToast("Listing updated");
     } else {
-      const trusted = currentMember?.isVerified || currentMember?.isAdmin;
+      const isUSSeller = isUnitedStates(currentMember?.country);
+      const trusted = currentMember?.isVerified || currentMember?.isAdmin || isUSSeller;
       const isAuction = form.listingType === "auction";
-      // Auctions always require admin approval, even from verified sellers —
-      // only an admin's own auction skips the queue (they'd approve it anyway).
-      const autoApproved = isAuction ? currentMember?.isAdmin : trusted;
+      // US-based sellers and admins skip the approval queue entirely, including
+      // auctions. Everyone else's auctions still need admin approval even if
+      // they're a verified seller for fixed-price listings.
+      const autoApproved = isAuction ? (currentMember?.isAdmin || isUSSeller) : trusted;
       const status = autoApproved ? "approved" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
@@ -3343,7 +3351,7 @@ export default function Stallyard() {
               </div>
             )
           )}
-        {noAdminExists && currentUser && !currentMember?.isAdmin && (
+        {membersLoaded && noAdminExists && currentUser && !currentMember?.isAdmin && (
           <div
             className="mb-6 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
             style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
@@ -3741,7 +3749,7 @@ export default function Stallyard() {
                 <div className="flex gap-2">
                   {[
                     { id: "fixed", label: "Fixed price" },
-                    { id: "auction", label: "Auction" },
+                    ...(isUnitedStates(currentMember?.country) ? [] : [{ id: "auction", label: "Auction" }]),
                   ].map((opt) => (
                     <button
                       key={opt.id}
