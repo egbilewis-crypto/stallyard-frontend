@@ -203,6 +203,35 @@ function obfuscate(str) {
 // username already has a local record) is merged in for fields the backend
 // doesn't track yet — vacation mode, ID verification details, etc. — so
 // logging in again doesn't wipe out local-only data.
+function backendListingToFrontend(row, existing) {
+  return {
+    ...existing,
+    id: row.id,
+    ownerId: row.owner_id,
+    title: row.title,
+    description: row.description || "",
+    price: Number(row.price),
+    category: row.category,
+    condition: row.condition,
+    shippingFee: Number(row.shipping_fee) || 0,
+    emoji: row.emoji || "📦",
+    fitMake: row.fit_make || "",
+    fitModel: row.fit_model || "",
+    fitYear: row.fit_year || "",
+    images: row.images || [],
+    listingType: row.listing_type || "fixed",
+    currency: row.currency || "USD",
+    status: row.status || "pending",
+    isFeatured: !!row.is_featured,
+    auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).getTime() : null,
+    bidHistory: row.bid_history || [],
+    highestBidderUsername: row.highest_bidder_username || null,
+    sellerName: row.seller_name,
+    ownerUsername: row.owner_username,
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
+  };
+}
+
 function backendUserToMember(user, existing) {
   return {
     ...existing,
@@ -605,6 +634,7 @@ export default function Stallyard() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
   const [pendingPasswordReset, setPendingPasswordReset] = useState(null);
   const [resetCodeInput, setResetCodeInput] = useState("");
@@ -704,16 +734,40 @@ export default function Stallyard() {
     (async () => {
       try {
         const res = await window.storage.get("stallyard-listings", true);
-        setListings(res ? JSON.parse(res.value) : []);
+        const localListings = res ? JSON.parse(res.value) : [];
+        setListings(localListings);
+        try {
+          const listingsRes = await fetch(`${BACKEND_URL}/listings`);
+          if (listingsRes.ok) {
+            const { listings: rows } = await listingsRes.json();
+            const merged = rows.map((row) =>
+              backendListingToFrontend(row, localListings.find((l) => l.id === row.id))
+            );
+            setListings(merged);
+            await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
+          }
+        } catch {
+          // couldn't reach backend for listings — keep local copy
+        }
       } catch {
         setListings([]);
+      }
+      let bootstrapToken = null;
+      try {
+        const tokenRes = await window.storage.get("stallyard-auth-token", false);
+        if (tokenRes) setAuthToken(tokenRes.value);
+        bootstrapToken = tokenRes?.value || null;
+      } catch {
+        // no saved token — user will need to log in again for anything protected
       }
       try {
         const membersRes = await window.storage.get("stallyard-members", true);
         const localMembers = membersRes ? JSON.parse(membersRes.value) : [];
         setMembers(localMembers);
         try {
-          const usersRes = await fetch(`${BACKEND_URL}/users`);
+          const usersRes = await fetch(`${BACKEND_URL}/users`, {
+            headers: bootstrapToken ? { Authorization: `Bearer ${bootstrapToken}` } : {},
+          });
           if (usersRes.ok) {
             const { users } = await usersRes.json();
             const merged = users.map((u) =>
@@ -919,6 +973,28 @@ export default function Stallyard() {
     }
   };
 
+  const saveAuthToken = async (token) => {
+    setAuthToken(token);
+    try {
+      if (token) await window.storage.set("stallyard-auth-token", token, false);
+      else await window.storage.delete("stallyard-auth-token", false);
+    } catch {
+      // token save failed silently; user stays logged in for this visit only
+    }
+  };
+
+  // fetch wrapper that attaches the signed-in user's token — use this for any
+  // request that requires being logged in (creating/editing listings, admin
+  // actions, follows). Plain fetch is still fine for public GET endpoints.
+  const authFetch = (url, options = {}) =>
+    fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+    });
+
   const register = async () => {
     setAuthError("");
     const username = authForm.username.trim().toLowerCase();
@@ -1030,6 +1106,7 @@ export default function Stallyard() {
       phoneVerified: true,
     };
     await persistMembers([...members, newMember]);
+    await saveAuthToken(data.token);
     await pushNotification("new_account", `${newMember.displayName} (@${newMember.username}) created an account`);
     await setSession(newMember.username);
     setView(authReturnView);
@@ -1084,6 +1161,7 @@ export default function Stallyard() {
       ? members.map((m) => (m.username === username ? member : m))
       : [...members, member];
     await persistMembers(nextMembers);
+    await saveAuthToken(data.token);
     await setSession(username);
     setView(authReturnView);
     setAuthForm({
@@ -1170,6 +1248,7 @@ export default function Stallyard() {
 
   const logout = async () => {
     await setSession(null);
+    await saveAuthToken(null);
     setActiveThreadId(null);
     setSelected(null);
     setView("browse");
@@ -1283,6 +1362,25 @@ export default function Stallyard() {
     showToast(`Added "${listing.title}" to cart at your offer price`);
   };
 
+  const patchListingOnBackend = async (id, body) => {
+    if (typeof id !== "number") return true; // legacy local-only listing, nothing to sync
+    try {
+      const res = await authFetch(`${BACKEND_URL}/listings/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save that change — try again");
+        return false;
+      }
+      return true;
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    }
+  };
+
   const placeBid = async (listing, amount) => {
     if (!currentUser) {
       setAuthMode("login");
@@ -1307,10 +1405,17 @@ export default function Stallyard() {
       return;
     }
     const bid = { bidderUsername: currentUser, bidderName: currentMember.displayName, amount: amt, at: Date.now() };
+    const nextBidHistory = [...(listing.bidHistory || []), bid];
+    const ok = await patchListingOnBackend(listing.id, {
+      price: amt,
+      highestBidderUsername: currentUser,
+      bidHistory: nextBidHistory,
+    });
+    if (!ok) return;
     await persistListings(
       listings.map((l) =>
         l.id === listing.id
-          ? { ...l, price: amt, highestBidderUsername: currentUser, bidHistory: [...(l.bidHistory || []), bid] }
+          ? { ...l, price: amt, highestBidderUsername: currentUser, bidHistory: nextBidHistory }
           : l
       )
     );
@@ -1981,10 +2086,29 @@ export default function Stallyard() {
         showToast("This auction already has bids and can't be edited");
         return;
       }
-      const next = listings.map((l) =>
-        l.id === editingId ? { ...l, ...form, price: Number(form.price), shippingFee: Number(form.shippingFee) || 0 } : l
-      );
-      await persistListings(next);
+      const patch = { ...form, price: Number(form.price), shippingFee: Number(form.shippingFee) || 0 };
+      if (typeof existingListing?.id === "number") {
+        try {
+          const res = await authFetch(`${BACKEND_URL}/listings/${existingListing.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          });
+          if (!res.ok) {
+            showToast("Couldn't save changes — try again");
+            return;
+          }
+          const { listing } = await res.json();
+          await persistListings(
+            listings.map((l) => (l.id === editingId ? backendListingToFrontend(listing, l) : l))
+          );
+        } catch {
+          showToast("Couldn't reach the server — try again");
+          return;
+        }
+      } else {
+        await persistListings(listings.map((l) => (l.id === editingId ? { ...l, ...patch } : l)));
+      }
       showToast("Listing updated");
     } else {
       const trusted = currentMember?.isVerified || currentMember?.isAdmin;
@@ -1992,24 +2116,47 @@ export default function Stallyard() {
       // Auctions always require admin approval, even from verified sellers —
       // only an admin's own auction skips the queue (they'd approve it anyway).
       const autoApproved = isAuction ? currentMember?.isAdmin : trusted;
-      const newListing = {
-        id: uid(),
-        ...form,
-        price: Number(form.price),
-        shippingFee: Number(form.shippingFee) || 0,
+      const status = autoApproved ? "approved" : "pending";
+      const auctionEndTime = isAuction
+        ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
+        : null;
+      let res;
+      try {
+        res = await authFetch(`${BACKEND_URL}/listings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ownerId: currentMember.backendId,
+            title: form.title,
+            description: form.description,
+            price: Number(form.price),
+            category: form.category,
+            condition: form.condition,
+            shippingFee: Number(form.shippingFee) || 0,
+            emoji: form.emoji,
+            fitMake: form.fitMake,
+            fitModel: form.fitModel,
+            fitYear: form.fitYear,
+            images: form.images,
+            listingType: form.listingType,
+            currency: form.currency,
+            status,
+            auctionEndTime,
+          }),
+        });
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+      if (!res.ok) {
+        showToast("Couldn't publish that listing — try again");
+        return;
+      }
+      const { listing } = await res.json();
+      const newListing = backendListingToFrontend(listing, {
         sellerName: currentMember.displayName,
         ownerUsername: currentUser,
-        createdAt: Date.now(),
-        status: autoApproved ? "approved" : "pending",
-        isFeatured: false,
-        ...(isAuction
-          ? {
-              auctionEndTime: Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000,
-              bidHistory: [],
-              highestBidderUsername: null,
-            }
-          : {}),
-      };
+      });
       await persistListings([newListing, ...listings]);
       showToast(autoApproved ? "Listing is live" : "Listing submitted — pending admin approval");
     }
@@ -2040,28 +2187,48 @@ export default function Stallyard() {
     setView("sell");
   };
 
+  const deleteListingOnBackend = async (id) => {
+    if (typeof id !== "number") return true;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/listings/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that listing — try again");
+        return false;
+      }
+      return true;
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    }
+  };
+
   const deleteListing = async (id) => {
+    if (!(await deleteListingOnBackend(id))) return;
     await persistListings(listings.filter((l) => l.id !== id));
     showToast("Listing removed");
     setSelected(null);
   };
 
   const adminRemoveListing = async (id) => {
+    if (!(await deleteListingOnBackend(id))) return;
     await persistListings(listings.filter((l) => l.id !== id));
     showToast("Listing removed by admin");
   };
 
   const adminApproveListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing approved");
   };
 
   const adminTakeDownListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "removed" }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "removed" } : l)));
     showToast("Listing taken down");
   };
 
   const adminRestoreListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing restored");
   };
@@ -2069,6 +2236,7 @@ export default function Stallyard() {
   const adminToggleFeature = async (id) => {
     const target = listings.find((l) => l.id === id);
     const nextFeatured = !target?.isFeatured;
+    if (!(await patchListingOnBackend(id, { isFeatured: nextFeatured }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, isFeatured: nextFeatured } : l)));
     showToast(nextFeatured ? "Listing featured" : "Listing unfeatured");
   };
@@ -2081,7 +2249,8 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
-        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
+        await authFetch(`${BACKEND_URL}/listings/by-owner/${target.backendId}`, { method: "DELETE" });
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
         if (!res.ok) {
           showToast("Couldn't remove member — try again");
           return;
@@ -2100,7 +2269,7 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
-        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/promote`, { method: "PATCH" });
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/promote`, { method: "PATCH" });
         if (!res.ok) {
           showToast("Couldn't promote member — try again");
           return;
@@ -2123,7 +2292,7 @@ export default function Stallyard() {
     const nextSuspended = !target?.isSuspended;
     if (target?.backendId) {
       try {
-        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/suspend`, {
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/suspend`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ isSuspended: nextSuspended }),
@@ -2147,7 +2316,7 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
-        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/approve`, { method: "PATCH" });
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/approve`, { method: "PATCH" });
         if (!res.ok) {
           showToast("Couldn't approve member — try again");
           return;
@@ -2166,7 +2335,7 @@ export default function Stallyard() {
     const nextVerified = !target?.isVerified;
     if (target?.backendId) {
       try {
-        const res = await fetch(`${BACKEND_URL}/users/${target.backendId}/verify`, {
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/verify`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ isVerified: nextVerified }),
@@ -2198,7 +2367,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/admin/create-member`, {
+      res = await authFetch(`${BACKEND_URL}/admin/create-member`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2242,7 +2411,7 @@ export default function Stallyard() {
       (f) => f.followerUsername === currentUser && f.followedUsername === followedUsername
     );
     try {
-      const res = await fetch(`${BACKEND_URL}/follows`, {
+      const res = await authFetch(`${BACKEND_URL}/follows`, {
         method: isFollowing ? "DELETE" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ followerUsername: currentUser, followedUsername }),
