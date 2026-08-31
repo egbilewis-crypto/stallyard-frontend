@@ -807,9 +807,16 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [vacationOpen, setVacationOpen] = useState(false);
   const [vacationForm, setVacationForm] = useState({ returnDate: "", message: "" });
-  const [pendingPhoneVerification, setPendingPhoneVerification] = useState(null);
-  const [phoneCodeInput, setPhoneCodeInput] = useState("");
-  const [phoneVerifyError, setPhoneVerifyError] = useState("");
+  // Email verification (stage one of sign-up) — mirrors the phone
+  // verification pattern above, but for email since SMS is paused for now.
+  const [pendingEmailVerification, setPendingEmailVerification] = useState(null);
+  const [emailCodeInput, setEmailCodeInput] = useState("");
+  const [emailVerifyError, setEmailVerifyError] = useState("");
+  // Stage two of sign-up — the fuller profile form, shown right after a
+  // fresh account is created OR whenever a logged-in user's profile isn't
+  // complete yet, so they can always resume where they left off.
+  const [profileStageOpen, setProfileStageOpen] = useState(false);
+  const [profileStageError, setProfileStageError] = useState("");
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -1178,19 +1185,6 @@ export default function Stallyard() {
   const register = async () => {
     setAuthError("");
     const username = authForm.username.trim().toLowerCase();
-    const displayName = authForm.displayName.trim() || authForm.username.trim();
-    if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
-      setAuthError("Enter your first and last name");
-      return;
-    }
-    if (!authForm.email.trim() || !isValidEmail(authForm.email)) {
-      setAuthError("Enter a valid email address");
-      return;
-    }
-    if (!authForm.phone.trim() || !isValidPhone(authForm.phone)) {
-      setAuthError("Enter a valid phone number, including the country code (e.g. +1 555 123 4567)");
-      return;
-    }
     if (!username || !authForm.password) {
       setAuthError("Enter a username and password");
       return;
@@ -1199,43 +1193,21 @@ export default function Stallyard() {
       setAuthError("Password should be at least 4 characters");
       return;
     }
-    const skipOfficeLocation = authForm.accountType === "personal";
-    if (!skipOfficeLocation && !authForm.officeLocation.trim()) {
-      setAuthError("Enter your office location");
+    if (!authForm.email.trim() || !isValidEmail(authForm.email)) {
+      setAuthError("Enter a valid email address");
       return;
     }
-    if (!authForm.country.trim()) {
-      setAuthError("Enter your country of residence");
-      return;
-    }
-    const skipId = isUnitedStates(authForm.country);
-    // Issuing country is inferred from country of residence for everyone —
-    // no separate "issuing country" field is shown at signup anymore.
     const signupDraft = {
       username,
-      displayName,
       email: authForm.email.trim(),
-      phone: authForm.phone.trim(),
       password: authForm.password,
-      firstName: authForm.firstName.trim(),
-      lastName: authForm.lastName.trim(),
-      officeLocation: authForm.officeLocation.trim(),
-      country: authForm.country.trim(),
-      // Local-only fields the backend doesn't store yet — kept on the draft
-      // so they can be layered onto the member record after signup succeeds.
-      licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
-      idType: skipId ? "" : authForm.idType,
-      idCountry: skipId ? "" : authForm.country.trim(),
-      idVerificationExempt: skipId,
-      accountType: authForm.accountType,
-      licensePhotos: skipId ? [] : authForm.licensePhotos,
     };
     let sendRes;
     try {
-      sendRes = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+      sendRes = await fetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: signupDraft.phone }),
+        body: JSON.stringify({ email: signupDraft.email }),
       });
     } catch {
       setAuthError("Couldn't reach the server — check your connection and try again.");
@@ -1243,57 +1215,57 @@ export default function Stallyard() {
     }
     const sendData = await sendRes.json();
     if (!sendRes.ok) {
-      setAuthError(sendData.error || "Couldn't send a verification code to that number.");
+      setAuthError(sendData.error || "Couldn't send a verification code to that email.");
       return;
     }
-    setPendingPhoneVerification({ signupDraft });
-    setPhoneVerifyError("");
-    setPhoneCodeInput("");
+    setPendingEmailVerification({ signupDraft });
+    setEmailVerifyError("");
+    setEmailCodeInput("");
   };
 
-  const resendPhoneCode = async () => {
-    if (!pendingPhoneVerification) return;
+  const resendEmailCode = async () => {
+    if (!pendingEmailVerification) return;
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+      res = await fetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: pendingPhoneVerification.signupDraft.phone }),
+        body: JSON.stringify({ email: pendingEmailVerification.signupDraft.email }),
       });
     } catch {
-      setPhoneVerifyError("Couldn't reach the server — try again.");
+      setEmailVerifyError("Couldn't reach the server — try again.");
       return;
     }
     const data = await res.json();
     if (!res.ok) {
-      setPhoneVerifyError(data.error || "Couldn't resend the code — try again.");
+      setEmailVerifyError(data.error || "Couldn't resend the code — try again.");
       return;
     }
-    setPhoneVerifyError("");
+    setEmailVerifyError("");
     showToast("New code sent");
   };
 
-  const confirmPhoneCode = async () => {
-    if (!pendingPhoneVerification) return;
-    const draft = pendingPhoneVerification.signupDraft;
+  const confirmEmailCode = async () => {
+    if (!pendingEmailVerification) return;
+    const draft = pendingEmailVerification.signupDraft;
     let checkRes;
     try {
-      checkRes = await fetch(`${BACKEND_URL}/phone-verify/check`, {
+      checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: draft.phone, code: phoneCodeInput.trim() }),
+        body: JSON.stringify({ email: draft.email, code: emailCodeInput.trim() }),
       });
     } catch {
-      setPhoneVerifyError("Couldn't reach the server — check your connection and try again.");
+      setEmailVerifyError("Couldn't reach the server — check your connection and try again.");
       return;
     }
     const checkData = await checkRes.json();
     if (!checkRes.ok) {
-      setPhoneVerifyError(checkData.error || "Couldn't check that code — try again.");
+      setEmailVerifyError(checkData.error || "Couldn't check that code — try again.");
       return;
     }
     if (!checkData.valid) {
-      setPhoneVerifyError("That code doesn't match — check and try again.");
+      setEmailVerifyError("That code doesn't match — check and try again.");
       return;
     }
     let res;
@@ -1304,42 +1276,27 @@ export default function Stallyard() {
         body: JSON.stringify({
           username: draft.username,
           email: draft.email,
-          phone: draft.phone,
           password: draft.password,
-          displayName: draft.displayName,
-          firstName: draft.firstName,
-          lastName: draft.lastName,
-          officeLocation: draft.officeLocation,
-          country: draft.country,
-          accountType: draft.accountType || "personal",
-          idType: draft.idType,
-          idCountry: draft.idCountry,
-          licenseNumber: draft.licenseNumber,
-          licensePhotos: draft.licensePhotos || [],
-          idVerificationExempt: draft.idVerificationExempt,
+          emailVerified: true,
         }),
       });
     } catch {
-      setPhoneVerifyError("Couldn't reach the server — check your connection and try again.");
+      setEmailVerifyError("Couldn't reach the server — check your connection and try again.");
       return;
     }
     const data = await res.json();
     if (!res.ok) {
-      setPhoneVerifyError(data.error || "Something went wrong creating your account.");
+      setEmailVerifyError(data.error || "Something went wrong creating your account.");
       return;
     }
-    const newMember = {
-      ...backendUserToMember(data.user),
-      phoneVerified: true,
-    };
+    const newMember = backendUserToMember(data.user);
     await persistMembers([...members, newMember]);
     await saveAuthToken(data.token);
     await pushNotification("new_account", `${newMember.displayName} (@${newMember.username}) created an account`);
     await setSession(newMember.username);
-    setView(authReturnView);
-    setPendingPhoneVerification(null);
-    setPhoneCodeInput("");
-    setPhoneVerifyError("");
+    setPendingEmailVerification(null);
+    setEmailCodeInput("");
+    setEmailVerifyError("");
     setAuthForm({
       username: "",
       password: "",
@@ -1359,11 +1316,82 @@ export default function Stallyard() {
     showToast(
       newMember.isAdmin
         ? `Welcome, ${newMember.displayName} — you're the marketplace admin`
-        : `Welcome to Stallyard, ${newMember.displayName}`
+        : `You're in! Let's finish setting up your account.`
+    );
+    // Straight into stage two — but this can always be closed and resumed
+    // later, since profile_complete stays false until it's actually done.
+    setProfileStageOpen(true);
+  };
+
+  // Stage two: fill in name, phone, country, account type, and (if selling
+  // outside the US) ID documents. Can be submitted partially — nothing here
+  // is required to keep using the account — and re-opened any time from
+  // wherever we surface the "finish your profile" prompt.
+  const completeProfile = async () => {
+    setProfileStageError("");
+    if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
+      setProfileStageError("Enter your first and last name");
+      return;
+    }
+    if (!authForm.country.trim()) {
+      setProfileStageError("Enter your country of residence");
+      return;
+    }
+    if (isUnitedStates(authForm.country)) {
+      setProfileStageError("US sign-ups are coming soon — Stallyard is Nigeria-only for now");
+      return;
+    }
+    if (authForm.phone.trim() && !isValidPhone(authForm.phone)) {
+      setProfileStageError("That phone number doesn't look right — check it and try again");
+      return;
+    }
+    const skipOfficeLocation = authForm.accountType === "personal";
+    if (!skipOfficeLocation && !authForm.officeLocation.trim()) {
+      setProfileStageError("Enter your office location");
+      return;
+    }
+    const skipId = isUnitedStates(authForm.country);
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/profile/complete`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: authForm.firstName.trim(),
+          lastName: authForm.lastName.trim(),
+          phone: authForm.phone.trim(),
+          officeLocation: authForm.officeLocation.trim(),
+          country: authForm.country.trim(),
+          accountType: authForm.accountType,
+          idType: skipId ? "" : authForm.idType,
+          idCountry: skipId ? "" : authForm.country.trim(),
+          licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
+          licensePhotos: skipId ? [] : authForm.licensePhotos,
+          idVerificationExempt: skipId,
+        }),
+      });
+    } catch {
+      setProfileStageError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setProfileStageError(data.error || "Something went wrong saving your profile.");
+      return;
+    }
+    const existing = members.find((m) => m.username === currentUser);
+    const updatedMember = backendUserToMember(data.user, existing);
+    await persistMembers(members.map((m) => (m.username === currentUser ? updatedMember : m)));
+    setProfileStageOpen(false);
+    setView(authReturnView);
+    showToast(
+      updatedMember.profileComplete
+        ? "Profile complete — you're all set!"
+        : "Saved — you can finish the rest whenever you're ready."
     );
   };
 
-  const login = async () => {
+    const login = async () => {
     setAuthError("");
     const username = authForm.username.trim().toLowerCase();
     let res;
@@ -1390,24 +1418,31 @@ export default function Stallyard() {
     await persistMembers(nextMembers);
     await saveAuthToken(data.token);
     await setSession(username);
-    setView(authReturnView);
     setAuthForm({
       username: "",
       password: "",
       email: "",
-      phone: "",
+      phone: member.phone || "",
       displayName: "",
-      firstName: "",
-      lastName: "",
-      officeLocation: "",
-      country: "",
-      licenseNumber: "",
-      idType: "Passport",
-      idCountry: "",
-      accountType: "personal",
-      licensePhotos: [],
+      firstName: member.firstName || "",
+      lastName: member.lastName || "",
+      officeLocation: member.officeLocation || "",
+      country: member.country || "",
+      licenseNumber: member.licenseNumber || "",
+      idType: member.idType || "Passport",
+      idCountry: member.idCountry || "",
+      accountType: member.accountType || "personal",
+      licensePhotos: member.licensePhotos || [],
     });
-    showToast(`Welcome back, ${member.displayName}`);
+    if (!member.profileComplete) {
+      // Picks up exactly where they left off — stage two opens pre-filled
+      // with whatever they already saved, instead of starting fresh.
+      setProfileStageOpen(true);
+      showToast(`Welcome back, ${member.displayName} — let's finish your profile`);
+    } else {
+      setView(authReturnView);
+      showToast(`Welcome back, ${member.displayName}`);
+    }
   };
 
   const requestPasswordReset = () => {
@@ -3100,38 +3135,38 @@ export default function Stallyard() {
 
           <div className="flex-1 flex items-start sm:items-center justify-center px-6 sm:px-10 pb-10">
             <div className="w-full max-w-sm">
-              {pendingPhoneVerification ? (
+              {pendingEmailVerification ? (
                 <div>
                   <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-                    Verify your phone
+                    Verify your email
                   </h1>
                   <p className="text-sm mb-4" style={{ color: SLATE }}>
-                    We just texted a 6-digit code to{" "}
-                    <strong style={{ color: INK }}>{pendingPhoneVerification.signupDraft.phone}</strong>.
+                    We just emailed a 6-digit code to{" "}
+                    <strong style={{ color: INK }}>{pendingEmailVerification.signupDraft.email}</strong>.
                     Enter it below to finish creating your account.
                   </p>
                   <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                     Enter the 6-digit code
                   </label>
                   <input
-                    value={phoneCodeInput}
+                    value={emailCodeInput}
                     onChange={(e) => {
-                      setPhoneCodeInput(e.target.value);
-                      if (phoneVerifyError) setPhoneVerifyError("");
+                      setEmailCodeInput(e.target.value);
+                      if (emailVerifyError) setEmailVerifyError("");
                     }}
-                    onKeyDown={(e) => e.key === "Enter" && confirmPhoneCode()}
+                    onKeyDown={(e) => e.key === "Enter" && confirmEmailCode()}
                     placeholder="123456"
                     className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-center text-lg tracking-widest"
                     style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
                   />
-                  {phoneVerifyError && (
+                  {emailVerifyError && (
                     <p className="text-sm mb-2" style={{ color: BERRY }}>
-                      {phoneVerifyError}
+                      {emailVerifyError}
                     </p>
                   )}
                   <button
                     type="button"
-                    onClick={confirmPhoneCode}
+                    onClick={confirmEmailCode}
                     className="w-full py-2.5 rounded-lg font-medium mt-1"
                     style={{ backgroundColor: MARIGOLD, color: INK }}
                   >
@@ -3140,23 +3175,207 @@ export default function Stallyard() {
                   <div className="flex items-center justify-between mt-3">
                     <button
                       type="button"
-                      onClick={resendPhoneCode}
+                      onClick={resendEmailCode}
                       className="text-xs font-medium underline"
                       style={{ color: SLATE }}
                     >
-                      Generate a new code
+                      Resend code
                     </button>
                     <button
                       type="button"
                       onClick={() => {
-                        setPendingPhoneVerification(null);
-                        setPhoneCodeInput("");
-                        setPhoneVerifyError("");
+                        setPendingEmailVerification(null);
+                        setEmailCodeInput("");
+                        setEmailVerifyError("");
                       }}
                       className="text-xs font-medium underline"
                       style={{ color: SLATE }}
                     >
                       ← Back
+                    </button>
+                  </div>
+                </div>
+              ) : profileStageOpen ? (
+                <div>
+                  <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                    Finish your profile
+                  </h1>
+                  <p className="text-sm mb-6" style={{ color: SLATE }}>
+                    You're signed in — this just unlocks buying and selling. Close this any time and pick up where you left off.
+                  </p>
+                  <div className="space-y-3">
+                    <div
+                      className="w-full flex rounded-full p-1 mb-1"
+                      style={{ backgroundColor: "#F1EDE1" }}
+                    >
+                      {["personal", "business"].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setAuthForm({ ...authForm, accountType: type })}
+                          className="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
+                          style={
+                            authForm.accountType === type
+                              ? { backgroundColor: INK, color: "#fff" }
+                              : { backgroundColor: "transparent", color: SLATE }
+                          }
+                        >
+                          {type === "personal" ? "Personal" : "Business"}
+                        </button>
+                      ))}
+                    </div>
+                    <select
+                      value={authForm.country}
+                      onChange={(e) => setAuthForm({ ...authForm, country: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                      style={{ borderColor: "#DDD8CC", color: authForm.country ? INK : SLATE }}
+                    >
+                      <option value="">Country of residence</option>
+                      <option value="Nigeria">Nigeria</option>
+                      <option value="United States">United States (coming soon)</option>
+                    </select>
+                    <div className="flex gap-3">
+                      <div className="flex-1">
+                        <input
+                          value={authForm.firstName}
+                          onChange={(e) => setAuthForm({ ...authForm, firstName: e.target.value })}
+                          placeholder="First name"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          value={authForm.lastName}
+                          onChange={(e) => setAuthForm({ ...authForm, lastName: e.target.value })}
+                          placeholder="Last name"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                    </div>
+                    {showBusinessFields && (
+                      <input
+                        value={authForm.displayName}
+                        onChange={(e) => setAuthForm({ ...authForm, displayName: e.target.value })}
+                        placeholder="Stall name (e.g. Maple & Co.)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
+                    <input
+                      type="tel"
+                      value={authForm.phone}
+                      onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
+                      placeholder="Phone number (optional)"
+                      className="w-full px-3 py-2 rounded-lg border outline-none"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    {showBusinessFields && (
+                      <input
+                        value={authForm.officeLocation}
+                        onChange={(e) => setAuthForm({ ...authForm, officeLocation: e.target.value })}
+                        placeholder="Office location (e.g. Downtown branch)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
+                    {!isUnitedStates(authForm.country) && (
+                      <select
+                        value={authForm.idType}
+                        onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
+                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <option>Passport</option>
+                        <option>National ID</option>
+                        <option>Driver's License</option>
+                        <option>NIN</option>
+                        <option>Permanent Voter's Card</option>
+                      </select>
+                    )}
+                    {isUnitedStates(authForm.country) && (
+                      <p className="text-xs" style={{ color: SLATE }}>
+                        ID verification isn't required for US-based members.
+                      </p>
+                    )}
+                    {!isUnitedStates(authForm.country) && showBusinessFields && (
+                      <input
+                        value={authForm.licenseNumber}
+                        onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
+                        placeholder="License number (optional, self-reported)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
+                    {!isUnitedStates(authForm.country) && (
+                      <div>
+                        <p className="text-xs mb-2" style={{ color: SLATE }}>
+                          License photos (optional, up to 5)
+                        </p>
+                        {authForm.licensePhotos.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {authForm.licensePhotos.map((src, idx) => (
+                              <div key={idx} className="relative w-20 h-20">
+                                <img
+                                  src={src}
+                                  alt={`License photo ${idx + 1}`}
+                                  className="w-full h-full object-cover rounded-lg"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeLicensePhoto(idx)}
+                                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
+                                  style={{ backgroundColor: BERRY }}
+                                  aria-label="Remove photo"
+                                >
+                                  <X size={14} color="white" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {authForm.licensePhotos.length < 5 && (
+                          <label
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
+                          >
+                            {uploadingLicense ? "Processing..." : "Add license photos"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              onChange={handleLicensePhotoSelect}
+                              disabled={uploadingLicense}
+                              className="hidden"
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
+                    {profileStageError && (
+                      <p className="text-sm" style={{ color: BERRY }}>
+                        {profileStageError}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={completeProfile}
+                      className="w-full py-2.5 rounded-lg font-medium mt-1"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      Save & continue
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProfileStageOpen(false);
+                        setView(authReturnView);
+                      }}
+                      className="text-xs font-medium underline text-center w-full"
+                      style={{ color: SLATE }}
+                    >
+                      I'll finish this later
                     </button>
                   </div>
                 </div>
@@ -3325,76 +3544,19 @@ export default function Stallyard() {
                   </h1>
                   <p className="text-sm mb-6" style={{ color: SLATE }}>
                     {isSignUp
-                      ? "Anyone can join — you'll just need a valid ID or passport on hand."
+                      ? "Just a username, email, and password to get started — you can add the rest later."
                       : "Sign in to manage your stall and listings."}
                   </p>
 
                   <div className="space-y-3">
-                    {isSignUp && (
-                      <div
-                        className="w-full flex rounded-full p-1 mb-1"
-                        style={{ backgroundColor: "#F1EDE1" }}
-                      >
-                        {["personal", "business"].map((type) => (
-                          <button
-                            key={type}
-                            type="button"
-                            onClick={() => setAuthForm({ ...authForm, accountType: type })}
-                            className="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
-                            style={
-                              authForm.accountType === type
-                                ? { backgroundColor: INK, color: "#fff" }
-                                : { backgroundColor: "transparent", color: SLATE }
-                            }
-                          >
-                            {type === "personal" ? "Personal" : "Business"}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {isSignUp && (
-                      <select
-                        value={authForm.country}
-                        onChange={(e) => setAuthForm({ ...authForm, country: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
-                        style={{ borderColor: "#DDD8CC", color: authForm.country ? INK : SLATE }}
-                      >
-                        <option value="">Country of residence</option>
-                        <option value="United States">United States</option>
-                        <option value="Nigeria">Nigeria</option>
-                      </select>
-                    )}
-                    {isSignUp && (
-                      <div className="flex gap-3">
-                        <div className="flex-1">
-                          <input
-                            value={authForm.firstName}
-                            onChange={(e) => setAuthForm({ ...authForm, firstName: e.target.value })}
-                            placeholder="First name"
-                            className="w-full px-3 py-2 rounded-lg border outline-none"
-                            style={{ borderColor: "#DDD8CC" }}
-                          />
-                        </div>
-                        <div className="flex-1">
-                          <input
-                            value={authForm.lastName}
-                            onChange={(e) => setAuthForm({ ...authForm, lastName: e.target.value })}
-                            placeholder="Last name"
-                            className="w-full px-3 py-2 rounded-lg border outline-none"
-                            style={{ borderColor: "#DDD8CC" }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {isSignUp && showBusinessFields && (
-                      <input
-                        value={authForm.displayName}
-                        onChange={(e) => setAuthForm({ ...authForm, displayName: e.target.value })}
-                        placeholder="Stall name (e.g. Maple & Co.)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
+                    <input
+                      value={authForm.username}
+                      onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
+                      placeholder="Username"
+                      className="w-full px-3 py-2 rounded-lg border outline-none"
+                      style={{ borderColor: "#DDD8CC" }}
+                      autoCapitalize="none"
+                    />
                     {isSignUp && (
                       <input
                         type="email"
@@ -3406,111 +3568,6 @@ export default function Stallyard() {
                         autoCapitalize="none"
                       />
                     )}
-                    {isSignUp && (
-                      <div>
-                        <input
-                          type="tel"
-                          value={authForm.phone}
-                          onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
-                          placeholder="+1 555 123 4567"
-                          className="w-full px-3 py-2 rounded-lg border outline-none"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
-                        <p className="text-xs mt-1" style={{ color: SLATE }}>
-                          Include your country code (e.g. +1 for the US, +234 for Nigeria) — we'll text a code here.
-                        </p>
-                      </div>
-                    )}
-                    {isSignUp && showBusinessFields && (
-                      <input
-                        value={authForm.officeLocation}
-                        onChange={(e) => setAuthForm({ ...authForm, officeLocation: e.target.value })}
-                        placeholder="Office location (e.g. Downtown branch)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
-                    {isSignUp && !isUnitedStates(authForm.country) && (
-                      <select
-                        value={authForm.idType}
-                        onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
-                        style={{ borderColor: "#DDD8CC" }}
-                      >
-                        <option>Passport</option>
-                        <option>National ID</option>
-                        <option>Driver's License</option>
-                        <option>NIN</option>
-                        <option>Permanent Voter's Card</option>
-                      </select>
-                    )}
-                    {isSignUp && isUnitedStates(authForm.country) && (
-                      <p className="text-xs" style={{ color: SLATE }}>
-                        ID verification isn't required for US-based members.
-                      </p>
-                    )}
-                    {isSignUp && !isUnitedStates(authForm.country) && showBusinessFields && (
-                      <input
-                        value={authForm.licenseNumber}
-                        onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
-                        placeholder="License number (optional, self-reported)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
-                    {isSignUp && !isUnitedStates(authForm.country) && (
-                      <div>
-                        <p className="text-xs mb-2" style={{ color: SLATE }}>
-                          License photos (optional, up to 5)
-                        </p>
-                        {authForm.licensePhotos.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {authForm.licensePhotos.map((src, idx) => (
-                              <div key={idx} className="relative w-20 h-20">
-                                <img
-                                  src={src}
-                                  alt={`License photo ${idx + 1}`}
-                                  className="w-full h-full object-cover rounded-lg"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => removeLicensePhoto(idx)}
-                                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
-                                  style={{ backgroundColor: BERRY }}
-                                  aria-label="Remove photo"
-                                >
-                                  <X size={14} color="white" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {authForm.licensePhotos.length < 5 && (
-                          <label
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
-                          >
-                            {uploadingLicense ? "Processing..." : "Add license photos"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              onChange={handleLicensePhotoSelect}
-                              disabled={uploadingLicense}
-                              className="hidden"
-                            />
-                          </label>
-                        )}
-                      </div>
-                    )}
-                    <input
-                      value={authForm.username}
-                      onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
-                      placeholder="Username"
-                      className="w-full px-3 py-2 rounded-lg border outline-none"
-                      style={{ borderColor: "#DDD8CC" }}
-                      autoCapitalize="none"
-                    />
                     <input
                       type="password"
                       value={authForm.password}
@@ -3545,7 +3602,7 @@ export default function Stallyard() {
                       className="w-full py-2.5 rounded-lg font-medium mt-1"
                       style={{ backgroundColor: MARIGOLD, color: INK }}
                     >
-                      {isSignUp ? "Create personal account" : "Sign in"}
+                      {isSignUp ? "Continue" : "Sign in"}
                     </button>
                     <p className="text-xs text-center pt-1" style={{ color: SLATE }}>
                       Demo accounts — please don't reuse a real password, and don't enter your actual ID/passport number anywhere.
