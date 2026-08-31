@@ -2711,7 +2711,19 @@ export default function Stallyard() {
         await authFetch(`${BACKEND_URL}/listings/by-owner/${target.backendId}`, { method: "DELETE" });
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
         if (!res.ok) {
-          showToast("Couldn't remove member — try again");
+          let body = {};
+          try {
+            body = await res.json();
+          } catch {}
+          if (body.code === "HAS_HISTORY") {
+            // This member has order/payout history, so we can't hard-delete
+            // them without destroying records other users depend on.
+            // Suspend instead — blocks their access, keeps history intact.
+            await adminToggleSuspend(username);
+            showToast("Member has order or payout history, so they were suspended instead of deleted");
+          } else {
+            showToast("Couldn't remove member — try again");
+          }
           return;
         }
       } catch {
