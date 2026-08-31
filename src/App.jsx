@@ -798,7 +798,7 @@ export default function Stallyard() {
     images: [],
     listingType: "fixed",
     auctionDurationDays: "3",
-    currency: "USD",
+    currency: "NGN",
     shippingFee: "0.00",
   });
   const [uploading, setUploading] = useState(false);
@@ -2419,7 +2419,7 @@ export default function Stallyard() {
       images: [],
       listingType: "fixed",
       auctionDurationDays: "3",
-      currency: "USD",
+      currency: "NGN",
       shippingFee: "0.00",
     });
     setEditingId(null);
