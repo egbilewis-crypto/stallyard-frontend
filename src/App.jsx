@@ -994,6 +994,31 @@ export default function Stallyard() {
       } catch {
         // couldn't reach backend for withdrawals — leave empty
       }
+      try {
+        const cartRes = await authFetch(`${BACKEND_URL}/cart`);
+        if (cartRes.ok) {
+          const { items } = await cartRes.json();
+          const mapped = items.map((i) => ({
+            id: i.listing_id,
+            qty: i.qty,
+            ...(i.offer_price != null ? { offerPrice: Number(i.offer_price) } : {}),
+          }));
+          setCart(mapped);
+          await window.storage.set("stallyard-cart", JSON.stringify(mapped), false);
+        }
+      } catch {
+        // couldn't reach backend for cart — keep whatever loaded locally
+      }
+      try {
+        const watchlistRes = await authFetch(`${BACKEND_URL}/watchlist`);
+        if (watchlistRes.ok) {
+          const { listingIds } = await watchlistRes.json();
+          setWatchlist(listingIds);
+          await window.storage.set("stallyard-watchlist", JSON.stringify(listingIds), false);
+        }
+      } catch {
+        // couldn't reach backend for watchlist — keep whatever loaded locally
+      }
       const myBackendId = members.find((m) => m.username === currentUser)?.backendId;
       if (myBackendId) {
         try {
@@ -1466,6 +1491,19 @@ export default function Stallyard() {
     } catch {
       showToast("Couldn't update your cart — try again");
     }
+    if (authToken) {
+      try {
+        await authFetch(`${BACKEND_URL}/cart`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            items: next.map((c) => ({ listingId: c.id, qty: c.qty, offerPrice: c.offerPrice })),
+          }),
+        });
+      } catch {
+        // couldn't reach backend — local copy still saved, will resync next load
+      }
+    }
   };
 
   const persistWatchlist = async (next) => {
@@ -1474,6 +1512,17 @@ export default function Stallyard() {
       await window.storage.set("stallyard-watchlist", JSON.stringify(next), false);
     } catch {
       showToast("Couldn't update your watchlist — try again");
+    }
+    if (authToken) {
+      try {
+        await authFetch(`${BACKEND_URL}/watchlist`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ listingIds: next }),
+        });
+      } catch {
+        // couldn't reach backend — local copy still saved, will resync next load
+      }
     }
   };
 
