@@ -154,8 +154,9 @@ function isValidEmail(email) {
 // Permissive check: allows international formats, just makes sure it's
 // mostly digits of a plausible length rather than enforcing one country's format.
 function isValidPhone(phone) {
-  const digits = (phone || "").replace(/[^0-9]/g, "");
-  return digits.length >= 7 && digits.length <= 15;
+  const trimmed = (phone || "").trim();
+  const digits = trimmed.replace(/[^0-9]/g, "");
+  return trimmed.startsWith("+") && digits.length >= 8 && digits.length <= 15;
 }
 
 function generateVerificationCode() {
@@ -229,6 +230,54 @@ function backendListingToFrontend(row, existing) {
     sellerName: row.seller_name,
     ownerUsername: row.owner_username,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
+  };
+}
+
+function backendMessageToFrontend(row, members) {
+  const sender = members.find((m) => m.backendId === row.sender_id);
+  return {
+    id: row.id,
+    type: row.message_type,
+    senderUsername: sender?.username,
+    text: row.body || "",
+    amount: row.offer_amount != null ? Number(row.offer_amount) : undefined,
+    status: row.offer_status,
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+  };
+}
+
+function backendThreadToFrontend(row, messageRows, members, listings) {
+  const buyer = members.find((m) => m.backendId === row.buyer_id);
+  const seller = members.find((m) => m.backendId === row.seller_id);
+  const listing = listings.find((l) => l.id === row.listing_id);
+  const messages = messageRows.map((m) => backendMessageToFrontend(m, members));
+  return {
+    id: row.id,
+    listingId: row.listing_id,
+    listingTitle: listing?.title || "Listing",
+    listingEmoji: listing?.emoji || "📦",
+    buyerUsername: buyer?.username,
+    buyerName: buyer?.displayName,
+    sellerUsername: seller?.username,
+    sellerName: seller?.displayName,
+    messages,
+    updatedAt: messages.length > 0 ? Math.max(...messages.map((m) => m.createdAt)) : (row.created_at ? new Date(row.created_at).getTime() : Date.now()),
+  };
+}
+
+function backendReviewToFrontend(row, members) {
+  const buyer = members.find((m) => m.backendId === row.buyer_id);
+  const seller = members.find((m) => m.backendId === row.seller_id);
+  return {
+    id: row.id,
+    orderId: row.order_id,
+    listingId: row.listing_id,
+    sellerUsername: seller?.username,
+    buyerUsername: buyer?.username,
+    buyerName: buyer?.displayName,
+    rating: row.rating,
+    comment: row.comment || "",
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   };
 }
 
@@ -797,9 +846,11 @@ export default function Stallyard() {
       } catch {
         // no saved token — user will need to log in again for anything protected
       }
+      let resolvedMembers = [];
       try {
         const membersRes = await window.storage.get("stallyard-members", true);
         const localMembers = membersRes ? JSON.parse(membersRes.value) : [];
+        resolvedMembers = localMembers;
         setMembers(localMembers);
         try {
           const usersRes = await fetch(`${BACKEND_URL}/users`, {
@@ -810,6 +861,7 @@ export default function Stallyard() {
             const merged = users.map((u) =>
               backendUserToMember(u, localMembers.find((m) => m.username === u.username))
             );
+            resolvedMembers = merged;
             setMembers(merged);
             await window.storage.set("stallyard-members", JSON.stringify(merged), true);
           }
@@ -864,17 +916,15 @@ export default function Stallyard() {
         // keep default empty content
       }
       setWithdrawals([]);
+      setThreads([]); // loaded fresh once we know who's logged in, see the effect below
       try {
-        const threadsRes = await window.storage.get("stallyard-messages", true);
-        setThreads(threadsRes ? JSON.parse(threadsRes.value) : []);
+        const reviewsRes = await fetch(`${BACKEND_URL}/reviews`);
+        if (reviewsRes.ok) {
+          const { reviews: rows } = await reviewsRes.json();
+          setReviews(rows.map((r) => backendReviewToFrontend(r, resolvedMembers)));
+        }
       } catch {
-        setThreads([]);
-      }
-      try {
-        const reviewsRes = await window.storage.get("stallyard-reviews", true);
-        setReviews(reviewsRes ? JSON.parse(reviewsRes.value) : []);
-      } catch {
-        setReviews([]);
+        // couldn't reach backend for reviews — leave empty
       }
       try {
         const followsRes = await fetch(`${BACKEND_URL}/follows`);
@@ -944,8 +994,29 @@ export default function Stallyard() {
       } catch {
         // couldn't reach backend for withdrawals — leave empty
       }
+      const myBackendId = members.find((m) => m.username === currentUser)?.backendId;
+      if (myBackendId) {
+        try {
+          const threadsRes = await authFetch(`${BACKEND_URL}/threads/${myBackendId}`);
+          if (threadsRes.ok) {
+            const { threads: threadRows } = await threadsRes.json();
+            const withMessages = await Promise.all(
+              threadRows.map(async (t) => {
+                const msgRes = await authFetch(`${BACKEND_URL}/messages/${t.id}`);
+                const messageRows = msgRes.ok ? (await msgRes.json()).messages : [];
+                return backendThreadToFrontend(t, messageRows, members, listings);
+              })
+            );
+            setThreads(withMessages.sort((a, b) => b.updatedAt - a.updatedAt));
+          }
+        } catch {
+          // couldn't reach backend for threads — leave empty
+        }
+      } else {
+        setThreads([]);
+      }
     })();
-  }, [currentUser, authToken, members]);
+  }, [currentUser, authToken, members, listings]);
 
   useEffect(() => {
     if (view !== "messages") return;
@@ -1092,7 +1163,7 @@ export default function Stallyard() {
       return;
     }
     if (!authForm.phone.trim() || !isValidPhone(authForm.phone)) {
-      setAuthError("Enter a valid phone number");
+      setAuthError("Enter a valid phone number, including the country code (e.g. +1 555 123 4567)");
       return;
     }
     if (!username || !authForm.password) {
@@ -1134,25 +1205,72 @@ export default function Stallyard() {
       accountType: authForm.accountType,
       licensePhotos: skipId ? [] : authForm.licensePhotos,
     };
-    setPendingPhoneVerification({ code: generateVerificationCode(), signupDraft });
+    let sendRes;
+    try {
+      sendRes = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: signupDraft.phone }),
+      });
+    } catch {
+      setAuthError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const sendData = await sendRes.json();
+    if (!sendRes.ok) {
+      setAuthError(sendData.error || "Couldn't send a verification code to that number.");
+      return;
+    }
+    setPendingPhoneVerification({ signupDraft });
     setPhoneVerifyError("");
     setPhoneCodeInput("");
   };
 
-  const resendPhoneCode = () => {
+  const resendPhoneCode = async () => {
     if (!pendingPhoneVerification) return;
-    setPendingPhoneVerification({ ...pendingPhoneVerification, code: generateVerificationCode() });
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: pendingPhoneVerification.signupDraft.phone }),
+      });
+    } catch {
+      setPhoneVerifyError("Couldn't reach the server — try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setPhoneVerifyError(data.error || "Couldn't resend the code — try again.");
+      return;
+    }
     setPhoneVerifyError("");
-    showToast("New code generated");
+    showToast("New code sent");
   };
 
   const confirmPhoneCode = async () => {
     if (!pendingPhoneVerification) return;
-    if (phoneCodeInput.trim() !== pendingPhoneVerification.code) {
+    const draft = pendingPhoneVerification.signupDraft;
+    let checkRes;
+    try {
+      checkRes = await fetch(`${BACKEND_URL}/phone-verify/check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: draft.phone, code: phoneCodeInput.trim() }),
+      });
+    } catch {
+      setPhoneVerifyError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const checkData = await checkRes.json();
+    if (!checkRes.ok) {
+      setPhoneVerifyError(checkData.error || "Couldn't check that code — try again.");
+      return;
+    }
+    if (!checkData.valid) {
       setPhoneVerifyError("That code doesn't match — check and try again.");
       return;
     }
-    const draft = pendingPhoneVerification.signupDraft;
     let res;
     try {
       res = await fetch(`${BACKEND_URL}/signup`, {
@@ -1602,27 +1720,57 @@ export default function Stallyard() {
       showToast("Pick a star rating");
       return;
     }
-    const existing = reviews.find((r) => r.orderId === orderId && r.itemId === itemId);
+    const existing = reviews.find((r) => r.orderId === orderId && r.listingId === listingId);
     if (existing) {
+      let res;
+      try {
+        res = await authFetch(`${BACKEND_URL}/reviews/${existing.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rating, comment: comment.trim() }),
+        });
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+      if (!res.ok) {
+        showToast("Couldn't update your review — try again");
+        return;
+      }
+      const { review: row } = await res.json();
       await persistReviews(
-        reviews.map((r) =>
-          r.id === existing.id ? { ...r, rating, comment: comment.trim(), updatedAt: Date.now() } : r
-        )
+        reviews.map((r) => (r.id === existing.id ? backendReviewToFrontend(row, members) : r))
       );
       showToast("Review updated");
     } else {
-      const review = {
-        id: uid(),
-        orderId,
-        itemId,
-        listingId,
-        sellerUsername,
-        buyerUsername: currentUser,
-        buyerName: currentMember.displayName,
-        rating,
-        comment: comment.trim(),
-        createdAt: Date.now(),
-      };
+      const seller = members.find((m) => m.username === sellerUsername);
+      if (!seller?.backendId) {
+        showToast("Couldn't post that review — try again");
+        return;
+      }
+      let res;
+      try {
+        res = await authFetch(`${BACKEND_URL}/reviews`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId,
+            listingId,
+            sellerId: seller.backendId,
+            rating,
+            comment: comment.trim(),
+          }),
+        });
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't post that review");
+        return;
+      }
+      const review = backendReviewToFrontend(data.review, members);
       await persistReviews([review, ...reviews]);
       showToast("Review posted");
     }
@@ -1648,18 +1796,32 @@ export default function Stallyard() {
     );
     let threadId = existing?.id;
     if (!existing) {
-      const newThread = {
-        id: uid(),
-        listingId: listing.id,
-        listingTitle: listing.title,
-        listingEmoji: listing.emoji,
-        buyerUsername: currentUser,
-        buyerName: currentMember.displayName,
-        sellerUsername: listing.ownerUsername,
-        sellerName: listing.sellerName,
-        messages: [],
-        updatedAt: Date.now(),
-      };
+      const seller = members.find((m) => m.username === listing.ownerUsername);
+      if (!currentMember?.backendId || !seller?.backendId) {
+        showToast("Couldn't start that conversation — try again");
+        return;
+      }
+      let res;
+      try {
+        res = await authFetch(`${BACKEND_URL}/threads`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            listingId: listing.id,
+            buyerId: currentMember.backendId,
+            sellerId: seller.backendId,
+          }),
+        });
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+      if (!res.ok) {
+        showToast("Couldn't start that conversation — try again");
+        return;
+      }
+      const { thread } = await res.json();
+      const newThread = backendThreadToFrontend(thread, [], members, listings);
       await persistThreads([newThread, ...threads]);
       threadId = newThread.id;
     }
@@ -1677,13 +1839,23 @@ export default function Stallyard() {
       return;
     }
     setMessageError("");
-    const message = {
-      id: uid(),
-      type: "text",
-      senderUsername: currentUser,
-      text: trimmed,
-      createdAt: Date.now(),
-    };
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId, body: trimmed, messageType: "text" }),
+      });
+    } catch {
+      setMessageError("Couldn't reach the server — try again.");
+      return;
+    }
+    if (!res.ok) {
+      setMessageError("Couldn't send that — try again.");
+      return;
+    }
+    const { message: row } = await res.json();
+    const message = backendMessageToFrontend(row, members);
     await persistThreads(
       threads.map((t) =>
         t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
@@ -1698,14 +1870,23 @@ export default function Stallyard() {
       showToast("Enter an offer amount");
       return;
     }
-    const message = {
-      id: uid(),
-      type: "offer",
-      senderUsername: currentUser,
-      amount: amt,
-      status: "pending",
-      createdAt: Date.now(),
-    };
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId, messageType: "offer", offerAmount: amt }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      showToast("Couldn't send that offer — try again");
+      return;
+    }
+    const { message: row } = await res.json();
+    const message = backendMessageToFrontend(row, members);
     await persistThreads(
       threads.map((t) =>
         t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
@@ -1715,6 +1896,21 @@ export default function Stallyard() {
   };
 
   const respondToOffer = async (threadId, messageId, status) => {
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/messages/${messageId}/offer`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      showToast("Couldn't respond to that offer — try again");
+      return;
+    }
     await persistThreads(
       threads.map((t) =>
         t.id !== threadId
@@ -2861,16 +3057,10 @@ export default function Stallyard() {
                     Verify your phone
                   </h1>
                   <p className="text-sm mb-4" style={{ color: SLATE }}>
-                    We'd normally text a code to{" "}
+                    We just texted a 6-digit code to{" "}
                     <strong style={{ color: INK }}>{pendingPhoneVerification.signupDraft.phone}</strong>.
-                    This demo has no real SMS backend, so here's the code instead:
+                    Enter it below to finish creating your account.
                   </p>
-                  <div
-                    className="text-center py-3 mb-4 rounded-lg text-2xl font-semibold tracking-widest"
-                    style={{ backgroundColor: CANVAS, color: INK, fontFamily: "'IBM Plex Mono', monospace" }}
-                  >
-                    {pendingPhoneVerification.code}
-                  </div>
                   <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                     Enter the 6-digit code
                   </label>
@@ -3168,14 +3358,19 @@ export default function Stallyard() {
                       />
                     )}
                     {isSignUp && (
-                      <input
-                        type="tel"
-                        value={authForm.phone}
-                        onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
-                        placeholder="Phone number"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
+                      <div>
+                        <input
+                          type="tel"
+                          value={authForm.phone}
+                          onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
+                          placeholder="+1 555 123 4567"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>
+                          Include your country code (e.g. +1 for the US, +234 for Nigeria) — we'll text a code here.
+                        </p>
+                      </div>
                     )}
                     {isSignUp && showBusinessFields && (
                       <input
