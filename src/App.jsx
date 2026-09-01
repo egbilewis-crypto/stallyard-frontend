@@ -831,6 +831,13 @@ export default function Stallyard() {
   const [view, setView] = useState("browse");
   const [authReturnView, setAuthReturnView] = useState("browse");
   const [adminTab, setAdminTab] = useState("overview");
+  const [adminUnlockedUntil, setAdminUnlockedUntil] = useState(null);
+  const [adminReauthStep, setAdminReauthStep] = useState(null); // null | "password" | "code"
+  const [adminReauthPassword, setAdminReauthPassword] = useState("");
+  const [adminReauthCode, setAdminReauthCode] = useState("");
+  const [adminReauthSubmitting, setAdminReauthSubmitting] = useState(false);
+  const [adminReauthError, setAdminReauthError] = useState("");
+  const ADMIN_SESSION_IDLE_MS = 30 * 60 * 1000;
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [expandedDocsUsername, setExpandedDocsUsername] = useState(null);
   const [adminEditContext, setAdminEditContext] = useState(false);
@@ -1976,6 +1983,18 @@ export default function Stallyard() {
     }
   }, [currentMember?.isAdmin, currentMember?.adminRole]);
 
+  useEffect(() => {
+    if (view !== "admin") return;
+    const interval = setInterval(() => {
+      if (!adminUnlockedUntil || Date.now() > adminUnlockedUntil) {
+        setView("browse");
+        setAdminUnlockedUntil(null);
+        showToast("Your admin session locked — re-enter your password to continue");
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [view, adminUnlockedUntil]);
+
   const persistCart = async (next) => {
     setCart(next);
     try {
@@ -2542,6 +2561,77 @@ export default function Stallyard() {
       showToast("Report resolved");
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const openAdminPanel = () => {
+    if (adminUnlockedUntil && Date.now() < adminUnlockedUntil) {
+      setView("admin");
+      return;
+    }
+    setAdminReauthStep("password");
+    setAdminReauthPassword("");
+    setAdminReauthCode("");
+    setAdminReauthError("");
+  };
+
+  const submitAdminReauthPassword = async () => {
+    if (!adminReauthPassword) {
+      setAdminReauthError("Enter your password");
+      return;
+    }
+    setAdminReauthSubmitting(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/reauth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: adminReauthPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminReauthError(data.error || "Couldn't verify your password");
+        return;
+      }
+      if (data.success) {
+        // No 2FA on file (shouldn't normally happen) — unlock directly.
+        setAdminUnlockedUntil(Date.now() + ADMIN_SESSION_IDLE_MS);
+        setAdminReauthStep(null);
+        setView("admin");
+        return;
+      }
+      setAdminReauthStep("code");
+      setAdminReauthError("");
+    } catch {
+      setAdminReauthError("Couldn't reach the server — try again");
+    } finally {
+      setAdminReauthSubmitting(false);
+    }
+  };
+
+  const submitAdminReauthCode = async () => {
+    if (!adminReauthCode.trim()) {
+      setAdminReauthError("Enter the code we emailed you");
+      return;
+    }
+    setAdminReauthSubmitting(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/reauth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: adminReauthCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminReauthError(data.error || "That code didn't work");
+        return;
+      }
+      setAdminUnlockedUntil(Date.now() + ADMIN_SESSION_IDLE_MS);
+      setAdminReauthStep(null);
+      setView("admin");
+    } catch {
+      setAdminReauthError("Couldn't reach the server — try again");
+    } finally {
+      setAdminReauthSubmitting(false);
     }
   };
 
@@ -4794,9 +4884,9 @@ export default function Stallyard() {
     .slice(0, 10);
   const isHomeState = !search.trim() && categoryFilter === "All" && !priceMin && !priceMax && conditionFilter === "All";
 
-  const NavButton = ({ id, icon: Icon, label, badge }) => (
+  const NavButton = ({ id, icon: Icon, label, badge, onClick }) => (
     <button
-      onClick={() => setView(id)}
+      onClick={onClick || (() => setView(id))}
       className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
       style={{
         color: view === id ? INK : "#C9CCD3",
@@ -5427,7 +5517,9 @@ export default function Stallyard() {
             {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
             <NavButton id="orders" icon={Receipt} label="Orders" />
             <NavButton id="help" icon={HelpCircle} label="Help" />
-            {currentMember?.isAdmin && <NavButton id="admin" icon={Shield} label="Admin" />}
+            {currentMember?.isAdmin && (
+              <NavButton id="admin" icon={Shield} label="Admin" onClick={openAdminPanel} />
+            )}
             {currentUser && (
               <button
                 onClick={() => setNotifPanelOpen((o) => !o)}
@@ -9520,7 +9612,27 @@ export default function Stallyard() {
           </div>
         )}
 
-        {view === "admin" && currentMember?.isAdmin && (
+        {view === "admin" && currentMember?.isAdmin && !currentMember?.twoFactorEnabled && (
+          <div className="max-w-sm">
+            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Two-factor required
+            </h2>
+            <p className="text-sm mb-5" style={{ color: SLATE }}>
+              Admin accounts must have two-factor authentication turned on before you can open this panel.
+              We'll email a code to confirm it's you.
+            </p>
+            <button
+              onClick={() => toggleTwoFactor(true)}
+              disabled={savingTwoFactorToggle}
+              className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              {savingTwoFactorToggle ? "Turning on..." : "Turn on two-factor authentication"}
+            </button>
+          </div>
+        )}
+
+        {view === "admin" && currentMember?.isAdmin && currentMember?.twoFactorEnabled && (
           <div>
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               Admin dashboard
@@ -12095,6 +12207,85 @@ export default function Stallyard() {
             >
               {issuingWarning ? "Issuing..." : "Issue warning"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {adminReauthStep && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+        >
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 relative">
+            <button
+              onClick={() => setAdminReauthStep(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Confirm it's you
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              The admin panel needs a fresh check, even though you're already signed in.
+            </p>
+            {adminReauthStep === "password" ? (
+              <>
+                <input
+                  type="password"
+                  value={adminReauthPassword}
+                  onChange={(e) => setAdminReauthPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdminReauthPassword()}
+                  placeholder="Your password"
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                  autoFocus
+                />
+                {adminReauthError && (
+                  <p className="text-sm mb-2" style={{ color: BERRY }}>
+                    {adminReauthError}
+                  </p>
+                )}
+                <button
+                  onClick={submitAdminReauthPassword}
+                  disabled={adminReauthSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {adminReauthSubmitting ? "Checking..." : "Continue"}
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm mb-3" style={{ color: SLATE }}>
+                  We emailed a code to unlock the admin panel.
+                </p>
+                <input
+                  value={adminReauthCode}
+                  onChange={(e) => setAdminReauthCode(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdminReauthCode()}
+                  placeholder="6-digit code"
+                  maxLength={6}
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-center text-lg tracking-widest"
+                  style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                  autoFocus
+                />
+                {adminReauthError && (
+                  <p className="text-sm mb-2" style={{ color: BERRY }}>
+                    {adminReauthError}
+                  </p>
+                )}
+                <button
+                  onClick={submitAdminReauthCode}
+                  disabled={adminReauthSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {adminReauthSubmitting ? "Verifying..." : "Unlock admin panel"}
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
