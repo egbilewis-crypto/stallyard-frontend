@@ -336,6 +336,7 @@ function backendOrderToFrontend(row) {
       trackingNumber: i.tracking_number || "",
       carrier: i.carrier || "",
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
+      proofOfDeliveryUrl: i.proof_of_delivery_url || "",
       statusHistory: [{ status: i.fulfillment_status || "new", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
     })),
   };
@@ -887,6 +888,8 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
+  const [uploadingPodKey, setUploadingPodKey] = useState(null);
+  const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [rejectModalUsername, setRejectModalUsername] = useState(null);
   const [rejectReasonDraft, setRejectReasonDraft] = useState("");
   const [vacationOpen, setVacationOpen] = useState(false);
@@ -2361,6 +2364,22 @@ export default function Stallyard() {
     );
   };
 
+  const updateItemProofOfDelivery = async (orderId, itemId, proofOfDeliveryUrl) => {
+    const ok = await patchOrderItemOnBackend(itemId, { proofOfDeliveryUrl });
+    if (!ok) return;
+    await persistOrders(
+      orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              items: o.items.map((i) => (i.id === itemId ? { ...i, proofOfDeliveryUrl } : i)),
+            }
+      )
+    );
+    showToast("Proof of delivery saved");
+  };
+
   // Buyer-side action: confirms they received the item. If it's the last
   // item in the order still awaiting confirmation, the backend auto-releases
   // the order's held payment — mirrored here so the UI updates immediately.
@@ -2705,6 +2724,26 @@ export default function Stallyard() {
       showToast("Couldn't read that file — try a different one");
     } finally {
       setUploadingBankStatement(false);
+    }
+  };
+
+  const handleProofOfDeliverySelect = async (e, orderId, itemId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
+      return;
+    }
+    const key = `${orderId}-${itemId}`;
+    setUploadingPodKey(key);
+    try {
+      const dataUrl = await resizeImageFile(file, 1400, 0.85);
+      await updateItemProofOfDelivery(orderId, itemId, dataUrl);
+    } catch {
+      showToast("Couldn't read that photo — try a different one");
+    } finally {
+      setUploadingPodKey(null);
     }
   };
 
@@ -5706,6 +5745,13 @@ export default function Stallyard() {
                               {orderNumber(o.id)}
                             </span>
                             · {new Date(o.createdAt).toLocaleString()}
+                            <button
+                              onClick={() => setPackingSlipOrder(o)}
+                              className="text-xs font-medium underline ml-auto"
+                              style={{ color: INK }}
+                            >
+                              Print packing slip
+                            </button>
                           </div>
                           {o.shippingAddress && (
                             <div
@@ -5793,6 +5839,37 @@ export default function Stallyard() {
                                       >
                                         Save
                                       </button>
+                                    </div>
+                                  )}
+                                  {i.fulfillmentStatus === "delivered" && (
+                                    <div className="mt-2">
+                                      <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                        Proof of delivery
+                                      </div>
+                                      {i.proofOfDeliveryUrl ? (
+                                        <a href={i.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
+                                          <img
+                                            src={i.proofOfDeliveryUrl}
+                                            alt="Proof of delivery"
+                                            className="w-20 h-20 object-cover rounded-lg border"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </a>
+                                      ) : (
+                                        <label
+                                          className="inline-block px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer"
+                                          style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
+                                        >
+                                          {uploadingPodKey === trackKey ? "Uploading…" : "Add photo (optional)"}
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)}
+                                            className="hidden"
+                                            disabled={uploadingPodKey === trackKey}
+                                          />
+                                        </label>
+                                      )}
                                     </div>
                                   )}
                                   {i.returnStatus === "requested" && (
@@ -5981,6 +6058,21 @@ export default function Stallyard() {
                                     style={{ color: MARIGOLD }}
                                   >
                                     Track package →
+                                  </a>
+                                </div>
+                              )}
+                              {item.fulfillmentStatus === "delivered" && item.proofOfDeliveryUrl && (
+                                <div className="mt-2">
+                                  <div className="text-xs mb-1" style={{ color: SLATE }}>
+                                    Proof of delivery:
+                                  </div>
+                                  <a href={item.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
+                                    <img
+                                      src={item.proofOfDeliveryUrl}
+                                      alt="Proof of delivery"
+                                      className="w-20 h-20 object-cover rounded-lg border"
+                                      style={{ borderColor: "#DDD8CC" }}
+                                    />
                                   </a>
                                 </div>
                               )}
@@ -8925,6 +9017,98 @@ export default function Stallyard() {
                 Publish listing
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {packingSlipOrder && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setPackingSlipOrder(null)}
+        >
+          <style>{`
+            @media print {
+              body * { visibility: hidden; }
+              #packing-slip-content, #packing-slip-content * { visibility: visible; }
+              #packing-slip-content {
+                position: absolute; top: 0; left: 0; width: 100%; padding: 24px;
+              }
+              #packing-slip-no-print { display: none !important; }
+            }
+          `}</style>
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 relative max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              id="packing-slip-no-print"
+              onClick={() => setPackingSlipOrder(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <div id="packing-slip-content">
+              <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+                Packing slip
+              </h3>
+              <p className="text-xs mb-4" style={{ color: SLATE }}>
+                {orderNumber(packingSlipOrder.id)} · {new Date(packingSlipOrder.createdAt).toLocaleString()}
+              </p>
+              <div className="mb-4">
+                <div className="text-xs font-medium uppercase tracking-wide mb-1" style={{ color: SLATE }}>
+                  Ship to
+                </div>
+                {packingSlipOrder.shippingAddress ? (
+                  <p className="text-sm" style={{ color: INK }}>
+                    {packingSlipOrder.shippingAddress.fullName}
+                    <br />
+                    {packingSlipOrder.shippingAddress.street}
+                    <br />
+                    {packingSlipOrder.shippingAddress.city}
+                    {packingSlipOrder.shippingAddress.state ? `, ${packingSlipOrder.shippingAddress.state}` : ""}{" "}
+                    {packingSlipOrder.shippingAddress.zip}
+                    <br />
+                    {packingSlipOrder.shippingAddress.country}
+                  </p>
+                ) : (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No shipping address on file.
+                  </p>
+                )}
+              </div>
+              <div className="mb-4">
+                <div className="text-xs font-medium uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+                  Items
+                </div>
+                <div className="space-y-2">
+                  {packingSlipOrder.items
+                    .filter((i) => i.ownerUsername === currentUser)
+                    .map((i) => (
+                      <div key={i.id} className="flex items-center justify-between text-sm" style={{ color: INK }}>
+                        <span>
+                          {i.title} × {i.qty}
+                        </span>
+                        <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                          ${(i.price * i.qty).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+              <div className="pt-3 text-xs" style={{ borderTop: "1px solid #EFEBE0", color: SLATE }}>
+                Sold by {currentMember?.displayName} on Stallyard
+              </div>
+            </div>
+            <button
+              id="packing-slip-no-print"
+              onClick={() => window.print()}
+              className="w-full py-2.5 rounded-lg font-medium mt-4"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              Print
+            </button>
           </div>
         </div>
       )}
