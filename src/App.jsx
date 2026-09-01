@@ -192,10 +192,6 @@ function isValidPhone(phone) {
   return trimmed.startsWith("+") && digits.length >= 8 && digits.length <= 15;
 }
 
-function generateVerificationCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
 const US_COUNTRY_ALIASES = ["united states", "united states of america", "usa", "us", "u.s.", "u.s.a."];
 function isUnitedStates(country) {
   return US_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
@@ -219,17 +215,6 @@ function formatTimeRemaining(endTime, now) {
   if (days > 0) return `${days}d ${hours}h left`;
   if (hours > 0) return `${hours}h ${minutes}m left`;
   return `${minutes}m left`;
-}
-
-// Demo-only obfuscation so passwords aren't stored as plain text in shared
-// storage. This is NOT real cryptographic security — don't reuse a real
-// password here.
-function obfuscate(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
-  }
-  return hash.toString(36);
 }
 
 // Converts the backend's snake_case /signup and /login response into the
@@ -1316,8 +1301,8 @@ export default function Stallyard() {
       setAuthError("Enter a username and password");
       return;
     }
-    if (authForm.password.length < 4) {
-      setAuthError("Password should be at least 4 characters");
+    if (authForm.password.length < 8) {
+      setAuthError("Password should be at least 8 characters");
       return;
     }
     if (!authForm.email.trim() || !isValidEmail(authForm.email)) {
@@ -1572,60 +1557,105 @@ export default function Stallyard() {
     }
   };
 
-  const requestPasswordReset = () => {
+  const requestPasswordReset = async () => {
     setResetError("");
-    const id = resetIdentifier.trim().toLowerCase();
-    if (!id) {
-      setResetError("Enter your username, email, or phone number");
+    const username = resetIdentifier.trim().toLowerCase();
+    if (!username) {
+      setResetError("Enter your username");
       return;
     }
-    const member = members.find(
-      (m) =>
-        m.username === id ||
-        (m.email || "").toLowerCase() === id ||
-        (m.phone || "").replace(/[^0-9]/g, "") === id.replace(/[^0-9]/g, "")
-    );
-    if (!member) {
-      setResetError("We couldn't find an account matching that");
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+      });
+    } catch {
+      setResetError("Couldn't reach the server — check your connection and try again.");
       return;
     }
-    setPendingPasswordReset({ code: generateVerificationCode(), username: member.username, verified: false });
+    const data = await res.json();
+    if (!res.ok) {
+      setResetError(data.error || "Couldn't send a reset code.");
+      return;
+    }
+    setPendingPasswordReset({ username, maskedEmail: data.maskedEmail, verified: false, resetToken: null });
     setResetCodeInput("");
   };
 
-  const resendResetCode = () => {
+  const resendResetCode = async () => {
     if (!pendingPasswordReset) return;
-    setPendingPasswordReset({ ...pendingPasswordReset, code: generateVerificationCode() });
-    setResetError("");
-    showToast("New code generated");
-  };
-
-  const confirmResetCode = () => {
-    if (!pendingPasswordReset) return;
-    if (resetCodeInput.trim() !== pendingPasswordReset.code) {
-      setResetError("That code doesn't match — check and try again.");
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: pendingPasswordReset.username }),
+      });
+    } catch {
+      setResetError("Couldn't reach the server — check your connection and try again.");
       return;
     }
-    setPendingPasswordReset({ ...pendingPasswordReset, verified: true });
+    const data = await res.json();
+    if (!res.ok) {
+      setResetError(data.error || "Couldn't resend the code.");
+      return;
+    }
+    setResetError("");
+    showToast("New code sent");
+  };
+
+  const confirmResetCode = async () => {
+    if (!pendingPasswordReset) return;
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/password-reset/verify-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: pendingPasswordReset.username, code: resetCodeInput.trim() }),
+      });
+    } catch {
+      setResetError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setResetError(data.error || "That code doesn't match — check and try again.");
+      return;
+    }
+    setPendingPasswordReset({ ...pendingPasswordReset, verified: true, resetToken: data.resetToken });
     setResetError("");
   };
 
   const submitNewPassword = async () => {
-    if (newPasswordForm.password.length < 4) {
-      setResetError("Password should be at least 4 characters");
+    if (newPasswordForm.password.length < 8) {
+      setResetError("Password should be at least 8 characters");
       return;
     }
     if (newPasswordForm.password !== newPasswordForm.confirm) {
       setResetError("Passwords don't match");
       return;
     }
-    await persistMembers(
-      members.map((m) =>
-        m.username === pendingPasswordReset.username
-          ? { ...m, passwordHash: obfuscate(newPasswordForm.password) }
-          : m
-      )
-    );
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/password-reset/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resetToken: pendingPasswordReset.resetToken,
+          newPassword: newPasswordForm.password,
+        }),
+      });
+    } catch {
+      setResetError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setResetError(data.error || "Couldn't update your password — try starting over.");
+      return;
+    }
     showToast("Password updated — you can log in now");
     setPendingPasswordReset(null);
     setResetIdentifier("");
@@ -3793,7 +3823,7 @@ export default function Stallyard() {
                         Reset your password
                       </h1>
                       <p className="text-sm mb-4" style={{ color: SLATE }}>
-                        Enter your username, email, or phone number and we'll send you a code.
+                        Enter your username and we'll email a code to the address on file.
                       </p>
                       <input
                         value={resetIdentifier}
@@ -3802,7 +3832,7 @@ export default function Stallyard() {
                           if (resetError) setResetError("");
                         }}
                         onKeyDown={(e) => e.key === "Enter" && requestPasswordReset()}
-                        placeholder="Username, email, or phone"
+                        placeholder="Username"
                         className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
                         style={{ borderColor: "#DDD8CC" }}
                         autoCapitalize="none"
@@ -3838,14 +3868,8 @@ export default function Stallyard() {
                         Enter your code
                       </h1>
                       <p className="text-sm mb-4" style={{ color: SLATE }}>
-                        This demo has no real email/SMS backend, so here's the code we'd normally send:
+                        We sent a code to {pendingPasswordReset.maskedEmail || "the email on file"}. Enter it below.
                       </p>
-                      <div
-                        className="text-center py-3 mb-4 rounded-lg text-2xl font-semibold tracking-widest"
-                        style={{ backgroundColor: CANVAS, color: INK, fontFamily: "'IBM Plex Mono', monospace" }}
-                      >
-                        {pendingPasswordReset.code}
-                      </div>
                       <input
                         value={resetCodeInput}
                         onChange={(e) => {
@@ -3877,7 +3901,7 @@ export default function Stallyard() {
                           className="text-xs font-medium underline"
                           style={{ color: SLATE }}
                         >
-                          Generate a new code
+                          Resend code
                         </button>
                         <button
                           type="button"
