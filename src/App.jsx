@@ -887,6 +887,8 @@ export default function Stallyard() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
+  const [pendingBankChange, setPendingBankChange] = useState(false);
+  const [bankChangeCodeInput, setBankChangeCodeInput] = useState("");
   const [changePasswordForm, setChangePasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [changingPassword, setChangingPassword] = useState(false);
   const [loginHistory, setLoginHistory] = useState(null);
@@ -3046,11 +3048,48 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't verify those bank details");
         return;
       }
+      if (data.confirmationRequired) {
+        setPendingBankChange(true);
+        setBankChangeCodeInput("");
+        showToast("Check your email for a confirmation code");
+        return;
+      }
       await persistMembers(
         members.map((m) => (m.username === currentUser ? { ...m, hasBankDetails: true } : m))
       );
       showToast("Bank details saved");
       setBankForm({ bankCode: "", accountNumber: "" });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setBankSaving(false);
+    }
+  };
+
+  const confirmBankChange = async () => {
+    if (!bankChangeCodeInput.trim()) {
+      showToast("Enter the code we emailed you");
+      return;
+    }
+    setBankSaving(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/sellers/bank-details/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: bankChangeCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "That code didn't work");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, hasBankDetails: true } : m))
+      );
+      setPendingBankChange(false);
+      setBankChangeCodeInput("");
+      setBankForm({ bankCode: "", accountNumber: "" });
+      showToast("Bank account updated");
     } catch {
       showToast("Couldn't reach the server — try again");
     } finally {
@@ -7719,42 +7758,80 @@ export default function Stallyard() {
                   <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
                     Payout bank details
                   </h3>
-                  <p className="text-xs mb-3" style={{ color: SLATE }}>
-                    {currentMember?.hasBankDetails
-                      ? "Your bank details are on file. Add new ones below to replace them."
-                      : "Add your bank details before requesting a withdrawal — payouts go here automatically."}
-                  </p>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    <select
-                      value={bankForm.bankCode}
-                      onFocus={loadBankList}
-                      onChange={(e) => setBankForm({ ...bankForm, bankCode: e.target.value })}
-                      className="px-3 py-2 rounded-lg border outline-none text-sm bg-white"
-                      style={{ borderColor: "#DDD8CC", minWidth: "180px" }}
-                    >
-                      <option value="">Select your bank</option>
-                      {bankList.map((b) => (
-                        <option key={b.code} value={b.code}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      value={bankForm.accountNumber}
-                      onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value })}
-                      placeholder="Account number"
-                      className="px-3 py-2 rounded-lg border outline-none text-sm"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
-                    <button
-                      onClick={saveBankDetails}
-                      disabled={bankSaving}
-                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                      style={{ backgroundColor: INK, color: "white" }}
-                    >
-                      {bankSaving ? "Saving..." : "Save"}
-                    </button>
-                  </div>
+                  {pendingBankChange ? (
+                    <>
+                      <p className="text-xs mb-3" style={{ color: SLATE }}>
+                        We emailed a code to confirm this change. Enter it below to finish updating your payout account.
+                      </p>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <input
+                          value={bankChangeCodeInput}
+                          onChange={(e) => setBankChangeCodeInput(e.target.value)}
+                          placeholder="6-digit code"
+                          maxLength={6}
+                          className="px-3 py-2 rounded-lg border outline-none text-sm w-32 text-center"
+                          style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                        />
+                        <button
+                          onClick={confirmBankChange}
+                          disabled={bankSaving}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {bankSaving ? "Confirming..." : "Confirm change"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setPendingBankChange(false);
+                            setBankChangeCodeInput("");
+                          }}
+                          className="text-xs font-medium underline"
+                          style={{ color: SLATE }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs mb-3" style={{ color: SLATE }}>
+                        {currentMember?.hasBankDetails
+                          ? "Your bank details are on file. Changing them requires confirming a code we'll email you."
+                          : "Add your bank details before requesting a withdrawal — payouts go here automatically."}
+                      </p>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <select
+                          value={bankForm.bankCode}
+                          onFocus={loadBankList}
+                          onChange={(e) => setBankForm({ ...bankForm, bankCode: e.target.value })}
+                          className="px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                          style={{ borderColor: "#DDD8CC", minWidth: "180px" }}
+                        >
+                          <option value="">Select your bank</option>
+                          {bankList.map((b) => (
+                            <option key={b.code} value={b.code}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          value={bankForm.accountNumber}
+                          onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value })}
+                          placeholder="Account number"
+                          className="px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <button
+                          onClick={saveBankDetails}
+                          disabled={bankSaving}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: INK, color: "white" }}
+                        >
+                          {bankSaving ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
