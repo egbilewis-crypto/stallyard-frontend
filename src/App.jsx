@@ -73,6 +73,35 @@ const POLICY_ORDER = ["seller_rules", "prohibited_items", "fees", "payment_rules
 
 const TICKET_STATUS_LABEL = { open: "Open", in_progress: "In progress", resolved: "Resolved" };
 
+const ADMIN_ROLE_LABELS = {
+  super_admin: "Super Admin",
+  seller_verification: "Seller Verification",
+  listing_moderator: "Listing Moderator",
+  order_dispute: "Order/Dispute Admin",
+  finance: "Finance Admin",
+  customer_support: "Customer Support",
+};
+const ADMIN_ROLE_ORDER = [
+  "super_admin", "seller_verification", "listing_moderator", "order_dispute", "finance", "customer_support",
+];
+
+// Mirrors the backend's permission matrix exactly, so the UI only shows
+// what a role can actually do — the backend is still the real enforcement,
+// this just keeps the interface from being confusing/misleading.
+const ADMIN_ROLE_PERMISSIONS = {
+  seller_verification: new Set(["seller_verification"]),
+  listing_moderator: new Set(["listing_moderation"]),
+  order_dispute: new Set(["dispute_resolution"]),
+  finance: new Set(["finance"]),
+  customer_support: new Set(["support_tickets"]),
+};
+function hasAdminPermission(member, permission) {
+  if (!member?.isAdmin) return false;
+  if (!member.adminRole || member.adminRole === "super_admin") return true;
+  const allowed = ADMIN_ROLE_PERMISSIONS[member.adminRole];
+  return allowed ? allowed.has(permission) : false;
+}
+
 const LISTING_MANAGE_TABS = [
   { key: "all", label: "All" },
   { key: "approved", label: "Active" },
@@ -380,6 +409,7 @@ function backendUserToMember(user, existing) {
     storeBio: user.store_bio ?? existing?.storeBio ?? "",
     storePolicies: user.store_policies ?? existing?.storePolicies ?? "",
     twoFactorEnabled: user.two_factor_enabled ?? existing?.twoFactorEnabled ?? false,
+    adminRole: user.admin_role ?? existing?.adminRole ?? null,
     isEmailVerified: user.is_email_verified ?? existing?.isEmailVerified ?? false,
     isPhoneVerified: user.is_phone_verified ?? existing?.isPhoneVerified ?? false,
     country: user.country || existing?.country || "",
@@ -933,6 +963,8 @@ export default function Stallyard() {
   const [suspiciousActivityMessage, setSuspiciousActivityMessage] = useState("");
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
+  const [auditLog, setAuditLog] = useState([]);
+  const [loadingAuditLog, setLoadingAuditLog] = useState(false);
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -1107,8 +1139,11 @@ export default function Stallyard() {
       }
       setOrders([]);
       try {
-        const settingsRes = await window.storage.get("stallyard-settings", true);
-        if (settingsRes) setSettings((prev) => ({ ...prev, ...JSON.parse(settingsRes.value) }));
+        const settingsRes = await fetch(`${BACKEND_URL}/settings`);
+        if (settingsRes.ok) {
+          const raw = await settingsRes.json();
+          setSettings({ commissionRate: raw.commissionRate, authImage: raw.authImage || "" });
+        }
       } catch {
         // keep default settings
       }
@@ -1933,6 +1968,13 @@ export default function Stallyard() {
   };
 
   const currentMember = members.find((m) => m.username === currentUser) || null;
+  useEffect(() => {
+    if (!currentMember?.isAdmin) return;
+    const isSuperAdmin = !currentMember.adminRole || currentMember.adminRole === "super_admin";
+    if (adminTab === "overview" && !isSuperAdmin) {
+      setAdminTab("members");
+    }
+  }, [currentMember?.isAdmin, currentMember?.adminRole]);
 
   const persistCart = async (next) => {
     setCart(next);
@@ -2153,12 +2195,28 @@ export default function Stallyard() {
   };
 
   const persistSettings = async (next) => {
-    setSettings(next);
+    const body = {};
+    if (next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
+    if (next.authImage !== settings.authImage) body.authImage = next.authImage;
+    if (Object.keys(body).length === 0) {
+      setSettings(next);
+      return;
+    }
     try {
-      await window.storage.set("stallyard-settings", JSON.stringify(next), true);
+      const res = await authFetch(`${BACKEND_URL}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't save settings — try again");
+        return;
+      }
+      setSettings({ commissionRate: data.commissionRate, authImage: data.authImage || "" });
       showToast("Settings saved");
     } catch {
-      showToast("Couldn't save settings — try again");
+      showToast("Couldn't reach the server — try again");
     }
   };
 
@@ -2484,6 +2542,21 @@ export default function Stallyard() {
       showToast("Report resolved");
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const fetchAuditLog = async () => {
+    setLoadingAuditLog(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin-audit-log`);
+      if (res.ok) {
+        const { log } = await res.json();
+        setAuditLog(log);
+      }
+    } catch {
+      showToast("Couldn't load the audit log — try again");
+    } finally {
+      setLoadingAuditLog(false);
     }
   };
 
@@ -4282,13 +4355,17 @@ export default function Stallyard() {
     showToast("Member removed");
   };
 
-  const adminPromoteMember = async (username) => {
+  const adminSetRole = async (username, role) => {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
-        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/promote`, { method: "PATCH" });
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/admin-role`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role }),
+        });
         if (!res.ok) {
-          showToast("Couldn't promote member — try again");
+          showToast("Couldn't update that role — try again");
           return;
         }
       } catch {
@@ -4296,8 +4373,10 @@ export default function Stallyard() {
         return;
       }
     }
-    await persistMembers(members.map((m) => (m.username === username ? { ...m, isAdmin: true } : m)));
-    showToast("Member promoted to admin");
+    await persistMembers(
+      members.map((m) => (m.username === username ? { ...m, isAdmin: role !== null, adminRole: role } : m))
+    );
+    showToast(role ? `Role set to ${ADMIN_ROLE_LABELS[role] || role}` : "Admin access revoked");
   };
 
   const adminToggleSuspend = async (username) => {
@@ -9450,39 +9529,58 @@ export default function Stallyard() {
               Visible only to you, {currentMember.displayName}.
             </p>
 
-            <div className="flex gap-2 mb-6">
+            <div className="flex gap-2 mb-6 flex-wrap">
               {[
-                { id: "overview", label: "Overview" },
-                { id: "listings", label: `Listings (${listings.length})` },
+                { id: "overview", label: "Overview", requireSuperAdmin: true },
+                { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
                 { id: "members", label: `Members (${members.length})` },
                 { id: "orders", label: `Orders (${orders.length})` },
-                { id: "disputes", label: `Disputes (${disputedOrders.length})` },
+                { id: "disputes", label: `Disputes (${disputedOrders.length})`, permission: "dispute_resolution" },
                 {
                   id: "reports",
                   label: `Message reports (${messageReports.filter((r) => r.status === "open").length})`,
+                  permission: "dispute_resolution",
                 },
                 {
                   id: "reviewReports",
                   label: `Review reports (${reviewReports.filter((r) => r.status === "open").length})`,
+                  permission: "dispute_resolution",
                 },
                 {
                   id: "accountReports",
                   label: `Account reports (${accountReports.filter((r) => r.status === "open").length})`,
+                  requireSuperAdmin: true,
                 },
                 {
                   id: "supportTickets",
                   label: `Support tickets (${adminTickets.filter((t) => t.status !== "resolved").length})`,
+                  permission: "support_tickets",
                 },
-                { id: "settings", label: "Settings" },
-                { id: "content", label: "Content" },
+                { id: "settings", label: "Settings", permission: "finance_or_content" },
+                { id: "content", label: "Content", requireSuperAdmin: true },
                 {
                   id: "withdrawals",
                   label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
+                  permission: "finance",
                 },
-              ].map((t) => (
+                { id: "auditLog", label: "Audit log", requireSuperAdmin: true },
+              ]
+                .filter((t) => {
+                  const isSuperAdmin = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
+                  if (t.requireSuperAdmin) return isSuperAdmin;
+                  if (t.permission === "finance_or_content") {
+                    return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "content_management");
+                  }
+                  if (t.permission) return hasAdminPermission(currentMember, t.permission);
+                  return true; // no permission listed = every admin role can view (accounts/orders)
+                })
+                .map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => setAdminTab(t.id)}
+                  onClick={() => {
+                    setAdminTab(t.id);
+                    if (t.id === "auditLog") fetchAuditLog();
+                  }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
                     borderColor: adminTab === t.id ? INK : "#DDD8CC",
@@ -9495,7 +9593,7 @@ export default function Stallyard() {
               ))}
             </div>
 
-            {adminTab === "overview" && (
+            {adminTab === "overview" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
                   Marketplace totals
@@ -9709,7 +9807,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "listings" && (
+            {adminTab === "listings" && hasAdminPermission(currentMember, "listing_moderation") && (
               <div className="space-y-2">
                 {listings.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
@@ -9868,7 +9966,9 @@ export default function Stallyard() {
                       </div>
                       {!m.isAdmin && (
                         <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
-                          {m.isApproved === false && m.verificationStatus === "pending" && (
+                          {m.isApproved === false &&
+                            m.verificationStatus === "pending" &&
+                            hasAdminPermission(currentMember, "seller_verification") && (
                             <button
                               onClick={() => adminApproveMember(m.username)}
                               className="text-xs font-medium underline"
@@ -9877,7 +9977,9 @@ export default function Stallyard() {
                               Approve seller
                             </button>
                           )}
-                          {m.isApproved === false && m.verificationStatus === "pending" && (
+                          {m.isApproved === false &&
+                            m.verificationStatus === "pending" &&
+                            hasAdminPermission(currentMember, "seller_verification") && (
                             <button
                               onClick={() => {
                                 setRejectModalUsername(m.username);
@@ -9889,39 +9991,61 @@ export default function Stallyard() {
                               Reject
                             </button>
                           )}
-                          <button
-                            onClick={() => openAdminWarnings(m)}
-                            className="text-xs font-medium underline"
-                            style={{ color: SLATE }}
-                          >
-                            Warnings
-                          </button>
-                          <button
-                            onClick={() => adminToggleVerify(m.username)}
-                            className="text-xs font-medium underline"
-                            style={{ color: SLATE }}
-                          >
-                            {m.isVerified ? "Unverify" : "Verify"}
-                          </button>
-                          <button
-                            onClick={() => adminPromoteMember(m.username)}
-                            className="text-xs font-medium underline"
-                            style={{ color: SLATE }}
-                          >
-                            Make admin
-                          </button>
-                          <button
-                            onClick={() => adminToggleSuspend(m.username)}
-                            className="text-xs font-medium underline"
-                            style={{ color: m.isSuspended ? SAGE : BERRY }}
-                          >
-                            {m.isSuspended ? "Unsuspend" : "Suspend"}
-                          </button>
-                          <button onClick={() => adminRemoveMember(m.username)} aria-label="Remove member">
-                            <Trash2 size={16} style={{ color: BERRY }} />
-                          </button>
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => openAdminWarnings(m)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              Warnings
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => adminToggleVerify(m.username)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              {m.isVerified ? "Unverify" : "Verify"}
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => adminToggleSuspend(m.username)}
+                              className="text-xs font-medium underline"
+                              style={{ color: m.isSuspended ? SAGE : BERRY }}
+                            >
+                              {m.isSuspended ? "Unsuspend" : "Suspend"}
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button onClick={() => adminRemoveMember(m.username)} aria-label="Remove member">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          )}
                         </div>
                       )}
+                      {(currentMember?.adminRole === "super_admin" || !currentMember?.adminRole) &&
+                        m.username !== currentUser && (
+                          <div className="shrink-0">
+                            <label className="block text-xs mb-1" style={{ color: SLATE }}>
+                              Admin role
+                            </label>
+                            <select
+                              value={m.adminRole || ""}
+                              onChange={(e) => adminSetRole(m.username, e.target.value || null)}
+                              className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                              style={{ borderColor: "#DDD8CC" }}
+                            >
+                              <option value="">Not an admin</option>
+                              {ADMIN_ROLE_ORDER.map((r) => (
+                                <option key={r} value={r}>
+                                  {ADMIN_ROLE_LABELS[r]}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
                       {docsOpen && (
                         <div className="mt-3 pt-3" style={{ borderTop: "1px solid #DDD8CC" }}>
@@ -10073,38 +10197,43 @@ export default function Stallyard() {
 
             {adminTab === "settings" && (
               <div className="max-w-sm">
-                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Commission rate
-                </label>
-                <p className="text-xs mb-3" style={{ color: SLATE }}>
-                  Percentage taken from every sale before the seller payout.
-                </p>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.5"
-                    value={Math.round(settings.commissionRate * 1000) / 10}
-                    onChange={(e) =>
-                      setSettings({ ...settings, commissionRate: Number(e.target.value) / 100 })
-                    }
-                    className="w-24 px-3 py-2 rounded-lg border outline-none"
-                    style={{ borderColor: "#DDD8CC" }}
-                  />
-                  <span style={{ color: SLATE }}>%</span>
-                  <button
-                    onClick={() => persistSettings(settings)}
-                    className="px-4 py-2 rounded-lg text-sm font-medium"
-                    style={{ backgroundColor: MARIGOLD, color: INK }}
-                  >
-                    Save
-                  </button>
-                </div>
-                <p className="text-xs mt-3" style={{ color: SLATE }}>
-                  Applies to new orders going forward — existing orders keep the rate they were placed under.
-                </p>
+                {hasAdminPermission(currentMember, "finance") && (
+                  <>
+                    <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                      Commission rate
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      Percentage taken from every sale before the seller payout.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={Math.round(settings.commissionRate * 1000) / 10}
+                        onChange={(e) =>
+                          setSettings({ ...settings, commissionRate: Number(e.target.value) / 100 })
+                        }
+                        className="w-24 px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <span style={{ color: SLATE }}>%</span>
+                      <button
+                        onClick={() => persistSettings(settings)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <p className="text-xs mt-3" style={{ color: SLATE }}>
+                      Applies to new orders going forward — existing orders keep the rate they were placed under.
+                    </p>
+                  </>
+                )}
 
+                {hasAdminPermission(currentMember, "content_management") && (
                 <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
                   <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                     Sign up / sign in page image
@@ -10145,10 +10274,11 @@ export default function Stallyard() {
                     )}
                   </div>
                 </div>
+                )}
               </div>
             )}
 
-            {adminTab === "content" && (
+            {adminTab === "content" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div>
                 <div className="flex gap-2 mb-5">
                   {[
@@ -10482,7 +10612,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "withdrawals" && (
+            {adminTab === "withdrawals" && hasAdminPermission(currentMember, "finance") && (
               <div className="space-y-2">
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
                   Withdrawals process automatically once a seller requests one — nothing to approve here.
@@ -10535,7 +10665,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "disputes" && (
+            {adminTab === "disputes" && hasAdminPermission(currentMember, "dispute_resolution") && (
               <div className="space-y-3">
                 {disputedOrders.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
@@ -10580,7 +10710,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "reports" && (
+            {adminTab === "reports" && hasAdminPermission(currentMember, "dispute_resolution") && (
               <div className="space-y-3">
                 {messageReports.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
@@ -10646,7 +10776,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "reviewReports" && (
+            {adminTab === "reviewReports" && hasAdminPermission(currentMember, "dispute_resolution") && (
               <div className="space-y-3">
                 {reviewReports.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
@@ -10701,7 +10831,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "accountReports" && (
+            {adminTab === "accountReports" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div className="space-y-3">
                 {accountReports.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
@@ -10746,7 +10876,37 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "supportTickets" && (
+            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <p className="text-xs mb-4" style={{ color: SLATE }}>
+                  Every admin role change, most recent first. Currently the only action tracked here — a good
+                  foundation to log more admin actions later without needing another migration.
+                </p>
+                {loadingAuditLog ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Loading...
+                  </p>
+                ) : auditLog.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No audit log entries yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {auditLog.map((entry) => (
+                      <div key={entry.id} className="p-3 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
+                        <div style={{ color: INK }}>{entry.details}</div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {entry.display_name || entry.username || "Unknown admin"} ·{" "}
+                          {new Date(entry.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {adminTab === "supportTickets" && hasAdminPermission(currentMember, "support_tickets") && (
               <div className="space-y-3">
                 {adminTickets.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
