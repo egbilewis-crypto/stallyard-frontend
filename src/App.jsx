@@ -5318,7 +5318,14 @@ export default function Stallyard() {
       {/* Header */}
       <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setSelected(null);
+              setView("browse");
+            }}
+            className="flex items-center gap-2"
+            aria-label="Go to home"
+          >
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
               style={{ backgroundColor: MARIGOLD }}
@@ -5331,7 +5338,7 @@ export default function Stallyard() {
             >
               Stallyard
             </h1>
-          </div>
+          </button>
           <nav className="flex items-center gap-1">
             <NavButton id="browse" icon={LayoutGrid} label="Browse" />
             <NavButton id="sell" icon={Plus} label="Sell" />
