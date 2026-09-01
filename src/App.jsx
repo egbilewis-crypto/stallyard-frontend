@@ -304,6 +304,8 @@ function backendReviewToFrontend(row, members) {
     buyerName: buyer?.displayName,
     rating: row.rating,
     comment: row.comment || "",
+    sellerResponse: row.seller_response || "",
+    sellerResponseAt: row.seller_response_at ? new Date(row.seller_response_at).getTime() : null,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   };
 }
@@ -854,6 +856,11 @@ export default function Stallyard() {
   const [bankSaving, setBankSaving] = useState(false);
   const [threads, setThreads] = useState([]);
   const [messageReports, setMessageReports] = useState([]);
+  const [reviewReports, setReviewReports] = useState([]);
+  const [reviewResponseDrafts, setReviewResponseDrafts] = useState({});
+  const [reportReviewId, setReportReviewId] = useState(null);
+  const [reviewReportReasonDraft, setReviewReportReasonDraft] = useState("");
+  const [sellerSalesCounts, setSellerSalesCounts] = useState({});
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [activeThreadOrderId, setActiveThreadOrderId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
@@ -1115,6 +1122,15 @@ export default function Stallyard() {
           }
         } catch {
           // couldn't reach backend for message reports — leave empty
+        }
+        try {
+          const reviewReportsRes = await authFetch(`${BACKEND_URL}/review-reports`);
+          if (reviewReportsRes.ok) {
+            const { reports } = await reviewReportsRes.json();
+            setReviewReports(reports);
+          }
+        } catch {
+          // couldn't reach backend for review reports — leave empty
         }
       }
       try {
@@ -2194,6 +2210,84 @@ export default function Stallyard() {
       showToast("Report resolved");
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const respondToReview = async (reviewId, response) => {
+    if (!response.trim()) {
+      showToast("Write a response first");
+      return;
+    }
+    try {
+      const res = await authFetch(`${BACKEND_URL}/reviews/${reviewId}/respond`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: response.trim() }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save your response — try again");
+        return;
+      }
+      setReviews((rs) =>
+        rs.map((r) =>
+          r.id === reviewId ? { ...r, sellerResponse: response.trim(), sellerResponseAt: Date.now() } : r
+        )
+      );
+      setReviewResponseDrafts((d) => {
+        const next = { ...d };
+        delete next[reviewId];
+        return next;
+      });
+      showToast("Response posted");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const reportReview = async (reviewId, reason) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/reviews/${reviewId}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason || "" }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't submit that report — try again");
+        return;
+      }
+      showToast("Reported — an admin will take a look");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const adminResolveReviewReport = async (reportId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/review-reports/${reportId}/resolve`, { method: "PATCH" });
+      if (!res.ok) {
+        showToast("Couldn't resolve that report — try again");
+        return;
+      }
+      setReviewReports((reports) =>
+        reports.map((r) => (r.id === reportId ? { ...r, status: "resolved" } : r))
+      );
+      showToast("Report resolved");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  // Public trust signal — fetched on demand when a storefront opens, cached
+  // per username so revisiting the same seller doesn't re-fetch.
+  const fetchSellerSalesCount = async (username) => {
+    if (sellerSalesCounts[username] !== undefined) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/sellers/${username}/completed-sales-count`);
+      if (!res.ok) return;
+      const { count } = await res.json();
+      setSellerSalesCounts((c) => ({ ...c, [username]: count }));
+    } catch {
+      // couldn't reach backend — leave uncached, storefront just won't show a count
     }
   };
 
@@ -3730,6 +3824,7 @@ export default function Stallyard() {
     setViewingSeller(username);
     setSelected(null);
     setView("storefront");
+    fetchSellerSalesCount(username);
   };
 
 
@@ -6800,11 +6895,7 @@ export default function Stallyard() {
               const isFollowing = follows.some(
                 (f) => f.followerUsername === currentUser && f.followedUsername === viewingSeller
               );
-              const itemsSold = orders.reduce(
-                (s, o) =>
-                  s + o.items.filter((i) => i.ownerUsername === viewingSeller).reduce((s2, i) => s2 + i.qty, 0),
-                0
-              );
+              const completedSalesCount = sellerSalesCounts[viewingSeller];
               return (
                 <>
                   <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
@@ -6890,10 +6981,10 @@ export default function Stallyard() {
                         className="text-2xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                       >
-                        {itemsSold}
+                        {completedSalesCount === undefined ? "…" : completedSalesCount}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
-                        items sold
+                        completed sales
                       </div>
                     </div>
                     <div>
@@ -6935,6 +7026,116 @@ export default function Stallyard() {
                       )}
                     </div>
                   </div>
+
+                  {(() => {
+                    const sellerReviews = reviews
+                      .filter((r) => r.sellerUsername === viewingSeller)
+                      .sort((a, b) => b.createdAt - a.createdAt);
+                    const isOwnStorefront = currentUser === viewingSeller;
+                    if (sellerReviews.length === 0) return null;
+                    return (
+                      <div className="mb-8">
+                        <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                          Reviews ({sellerReviews.length})
+                        </h3>
+                        <div className="space-y-3">
+                          {sellerReviews.map((r) => (
+                            <div key={r.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+                                <span className="text-sm font-medium" style={{ color: INK }}>
+                                  {r.buyerName}
+                                </span>
+                                <span className="text-xs" style={{ color: SLATE }}>
+                                  {new Date(r.createdAt).toLocaleDateString(undefined, {
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                  })}
+                                </span>
+                              </div>
+                              <StarDisplay value={r.rating} />
+                              {r.comment && (
+                                <p className="text-sm mt-2" style={{ color: INK }}>
+                                  {r.comment}
+                                </p>
+                              )}
+                              {r.sellerResponse && (
+                                <div className="mt-3 p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                  <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                    Seller response
+                                  </div>
+                                  <p className="text-sm" style={{ color: INK }}>
+                                    {r.sellerResponse}
+                                  </p>
+                                </div>
+                              )}
+                              {isOwnStorefront && !r.sellerResponse && (
+                                <div className="mt-3">
+                                  {reviewResponseDrafts[r.id] !== undefined ? (
+                                    <div>
+                                      <textarea
+                                        value={reviewResponseDrafts[r.id]}
+                                        onChange={(e) =>
+                                          setReviewResponseDrafts((d) => ({ ...d, [r.id]: e.target.value }))
+                                        }
+                                        placeholder="Write a response..."
+                                        rows={2}
+                                        className="w-full mb-2 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                                        style={{ borderColor: "#DDD8CC" }}
+                                      />
+                                      <div className="flex items-center gap-3">
+                                        <button
+                                          onClick={() => respondToReview(r.id, reviewResponseDrafts[r.id])}
+                                          className="text-xs font-medium underline"
+                                          style={{ color: SAGE }}
+                                        >
+                                          Post response
+                                        </button>
+                                        <button
+                                          onClick={() =>
+                                            setReviewResponseDrafts((d) => {
+                                              const next = { ...d };
+                                              delete next[r.id];
+                                              return next;
+                                            })
+                                          }
+                                          className="text-xs font-medium underline"
+                                          style={{ color: SLATE }}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => setReviewResponseDrafts((d) => ({ ...d, [r.id]: "" }))}
+                                      className="text-xs font-medium underline"
+                                      style={{ color: SLATE }}
+                                    >
+                                      Respond
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              {!isOwnStorefront && currentUser && (
+                                <button
+                                  onClick={() => {
+                                    setReportReviewId(r.id);
+                                    setReviewReportReasonDraft("");
+                                  }}
+                                  className="text-xs font-medium underline mt-3 flex items-center gap-1"
+                                  style={{ color: SLATE }}
+                                >
+                                  <Flag size={10} />
+                                  Report
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
                     Listings
@@ -7616,6 +7817,10 @@ export default function Stallyard() {
                 {
                   id: "reports",
                   label: `Message reports (${messageReports.filter((r) => r.status === "open").length})`,
+                },
+                {
+                  id: "reviewReports",
+                  label: `Review reports (${reviewReports.filter((r) => r.status === "open").length})`,
                 },
                 { id: "settings", label: "Settings" },
                 { id: "content", label: "Content" },
@@ -8686,6 +8891,61 @@ export default function Stallyard() {
                   ))}
               </div>
             )}
+
+            {adminTab === "reviewReports" && (
+              <div className="space-y-3">
+                {reviewReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No reported reviews.
+                  </p>
+                )}
+                {reviewReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          Reported by {r.reporter_display_name || r.reporter_username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-xs mb-2" style={{ color: SLATE }}>
+                        Review of {r.review_seller_display_name || r.review_seller_username}, by{" "}
+                        {r.review_buyer_display_name || r.review_buyer_username}
+                      </div>
+                      <div
+                        className="text-sm p-3 rounded-lg mb-2"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        <StarDisplay value={r.review_rating} />
+                        <div className="mt-1">{r.review_comment || <em>No comment</em>}</div>
+                      </div>
+                      {r.reason && (
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>
+                          <span className="font-medium">Reason:</span> {r.reason}
+                        </div>
+                      )}
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveReviewReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -9630,6 +9890,52 @@ export default function Stallyard() {
               onClick={() => {
                 reportMessage(reportMessageId, reportReasonDraft.trim());
                 setReportMessageId(null);
+              }}
+              className="w-full py-2.5 rounded-lg font-medium"
+              style={{ backgroundColor: BERRY, color: "white" }}
+            >
+              Submit report
+            </button>
+          </div>
+        </div>
+      )}
+
+      {reportReviewId && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setReportReviewId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setReportReviewId(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Report this review
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              An admin will review it for being abusive or fraudulent.
+            </p>
+            <textarea
+              value={reviewReportReasonDraft}
+              onChange={(e) => setReviewReportReasonDraft(e.target.value)}
+              placeholder="What's wrong with this review? (optional)"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg border outline-none mb-3"
+              style={{ borderColor: "#DDD8CC" }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                reportReview(reportReviewId, reviewReportReasonDraft.trim());
+                setReportReviewId(null);
               }}
               className="w-full py-2.5 rounded-lg font-medium"
               style={{ backgroundColor: BERRY, color: "white" }}
