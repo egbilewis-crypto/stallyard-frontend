@@ -363,6 +363,9 @@ function backendUserToMember(user, existing) {
     firstName: user.first_name || existing?.firstName || "",
     lastName: user.last_name || existing?.lastName || "",
     officeLocation: user.office_location || existing?.officeLocation || "",
+    avatarUrl: user.avatar_url ?? existing?.avatarUrl ?? "",
+    storeBio: user.store_bio ?? existing?.storeBio ?? "",
+    storePolicies: user.store_policies ?? existing?.storePolicies ?? "",
     country: user.country || existing?.country || "",
     isAdmin: !!user.is_admin,
     isApproved: !!user.is_approved,
@@ -861,6 +864,9 @@ export default function Stallyard() {
   const [reportReviewId, setReportReviewId] = useState(null);
   const [reviewReportReasonDraft, setReviewReportReasonDraft] = useState("");
   const [sellerSalesCounts, setSellerSalesCounts] = useState({});
+  const [editingStoreProfile, setEditingStoreProfile] = useState(false);
+  const [storeProfileDraft, setStoreProfileDraft] = useState({ storeBio: "", storePolicies: "" });
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [activeThreadOrderId, setActiveThreadOrderId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
@@ -2288,6 +2294,65 @@ export default function Stallyard() {
       setSellerSalesCounts((c) => ({ ...c, [username]: count }));
     } catch {
       // couldn't reach backend — leave uncached, storefront just won't show a count
+    }
+  };
+
+  const handleAvatarSelect = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
+      return;
+    }
+    setUploadingAvatar(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 500, 0.85);
+      const res = await authFetch(`${BACKEND_URL}/profile/store`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ avatarUrl: dataUrl }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save that photo — try again");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, avatarUrl: dataUrl } : m))
+      );
+      showToast("Profile photo updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const saveStoreProfile = async () => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/store`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storeBio: storeProfileDraft.storeBio,
+          storePolicies: storeProfileDraft.storePolicies,
+        }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save your store profile — try again");
+        return;
+      }
+      await persistMembers(
+        members.map((m) =>
+          m.username === currentUser
+            ? { ...m, storeBio: storeProfileDraft.storeBio, storePolicies: storeProfileDraft.storePolicies }
+            : m
+        )
+      );
+      setEditingStoreProfile(false);
+      showToast("Store profile updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
     }
   };
 
@@ -6896,33 +6961,65 @@ export default function Stallyard() {
                 (f) => f.followerUsername === currentUser && f.followedUsername === viewingSeller
               );
               const completedSalesCount = sellerSalesCounts[viewingSeller];
+              const isOwnStorefrontHeader = currentUser === viewingSeller;
               return (
                 <>
-                  <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-                          {seller.displayName}
-                        </h2>
-                        {seller.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
-                        {seller.isVerified && <Tag color={SAGE}>Verified</Tag>}
-                        {seller.vacationMode && <Tag color={MARIGOLD}>🌴 On vacation</Tag>}
-                        {reputation && (
-                          <Tag color={reputation.positivePct >= 90 ? SAGE : reputation.positivePct >= 70 ? MARIGOLD : BERRY}>
-                            {reputation.positivePct}% positive
-                          </Tag>
+                  <div className="flex items-start justify-between flex-wrap gap-4 mb-4">
+                    <div className="flex items-start gap-4">
+                      {seller.avatarUrl ? (
+                        <img
+                          src={seller.avatarUrl}
+                          alt={seller.displayName}
+                          className="w-16 h-16 rounded-full object-cover shrink-0"
+                        />
+                      ) : (
+                        <div
+                          className="w-16 h-16 rounded-full flex items-center justify-center text-xl font-semibold shrink-0"
+                          style={{ backgroundColor: "#F1EFE7", color: INK }}
+                        >
+                          {seller.displayName?.[0]?.toUpperCase() || "?"}
+                        </div>
+                      )}
+                      <div>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                            {seller.displayName}
+                          </h2>
+                          {seller.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
+                          {seller.isVerified && <Tag color={SAGE}>Verified</Tag>}
+                          {seller.vacationMode && <Tag color={MARIGOLD}>🌴 On vacation</Tag>}
+                          {reputation && (
+                            <Tag color={reputation.positivePct >= 90 ? SAGE : reputation.positivePct >= 70 ? MARIGOLD : BERRY}>
+                              {reputation.positivePct}% positive
+                            </Tag>
+                          )}
+                        </div>
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          Member since{" "}
+                          {new Date(seller.joinedAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "long",
+                          })}
+                          {seller.officeLocation ? ` · ${seller.officeLocation}` : ""}
+                          {reputation && ` · ${reputation.count} rating${reputation.count !== 1 ? "s" : ""}`}
+                          {` · ${followerCount} follower${followerCount !== 1 ? "s" : ""}`}
+                        </p>
+                        {isOwnStorefrontHeader && (
+                          <label
+                            className="inline-block mt-2 text-xs font-medium underline cursor-pointer"
+                            style={{ color: INK }}
+                          >
+                            {uploadingAvatar ? "Uploading…" : "Change photo"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={handleAvatarSelect}
+                              className="hidden"
+                              disabled={uploadingAvatar}
+                            />
+                          </label>
                         )}
                       </div>
-                      <p className="text-sm" style={{ color: SLATE }}>
-                        Member since{" "}
-                        {new Date(seller.joinedAt).toLocaleDateString(undefined, {
-                          year: "numeric",
-                          month: "long",
-                        })}
-                        {seller.officeLocation ? ` · ${seller.officeLocation}` : ""}
-                        {reputation && ` · ${reputation.count} rating${reputation.count !== 1 ? "s" : ""}`}
-                        {` · ${followerCount} follower${followerCount !== 1 ? "s" : ""}`}
-                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                     {currentUser !== viewingSeller && (
@@ -6948,6 +7045,84 @@ export default function Stallyard() {
                     </button>
                     </div>
                   </div>
+
+                  {isOwnStorefrontHeader && editingStoreProfile ? (
+                    <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                        Store description
+                      </label>
+                      <textarea
+                        value={storeProfileDraft.storeBio}
+                        onChange={(e) => setStoreProfileDraft((d) => ({ ...d, storeBio: e.target.value }))}
+                        placeholder="Tell buyers about your store..."
+                        rows={3}
+                        className="w-full mb-3 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                        Store policies
+                      </label>
+                      <textarea
+                        value={storeProfileDraft.storePolicies}
+                        onChange={(e) => setStoreProfileDraft((d) => ({ ...d, storePolicies: e.target.value }))}
+                        placeholder="Shipping times, returns, general terms..."
+                        rows={3}
+                        className="w-full mb-3 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={saveStoreProfile}
+                          className="px-4 py-2 rounded-lg text-sm font-medium"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingStoreProfile(false)}
+                          className="text-sm font-medium underline"
+                          style={{ color: SLATE }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    (seller.storeBio || seller.storePolicies || isOwnStorefrontHeader) && (
+                      <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        {seller.storeBio && (
+                          <p className="text-sm mb-2" style={{ color: INK }}>
+                            {seller.storeBio}
+                          </p>
+                        )}
+                        {seller.storePolicies && (
+                          <div>
+                            <div className="text-xs font-medium mb-1" style={{ color: SLATE }}>
+                              Store policies
+                            </div>
+                            <p className="text-sm" style={{ color: INK }}>
+                              {seller.storePolicies}
+                            </p>
+                          </div>
+                        )}
+                        {isOwnStorefrontHeader && (
+                          <button
+                            onClick={() => {
+                              setStoreProfileDraft({
+                                storeBio: seller.storeBio || "",
+                                storePolicies: seller.storePolicies || "",
+                              });
+                              setEditingStoreProfile(true);
+                            }}
+                            className="text-xs font-medium underline mt-2"
+                            style={{ color: INK }}
+                          >
+                            {seller.storeBio || seller.storePolicies ? "Edit store profile" : "Add store description & policies"}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  )}
 
                   {seller.vacationMode && (
                     <div
