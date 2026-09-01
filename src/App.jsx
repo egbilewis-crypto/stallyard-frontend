@@ -367,6 +367,8 @@ function backendUserToMember(user, existing) {
     storeBio: user.store_bio ?? existing?.storeBio ?? "",
     storePolicies: user.store_policies ?? existing?.storePolicies ?? "",
     twoFactorEnabled: user.two_factor_enabled ?? existing?.twoFactorEnabled ?? false,
+    isEmailVerified: user.is_email_verified ?? existing?.isEmailVerified ?? false,
+    isPhoneVerified: user.is_phone_verified ?? existing?.isPhoneVerified ?? false,
     country: user.country || existing?.country || "",
     isAdmin: !!user.is_admin,
     isApproved: !!user.is_approved,
@@ -888,6 +890,13 @@ export default function Stallyard() {
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
   const [pendingBankChange, setPendingBankChange] = useState(false);
+  const [accountEmailCodeSent, setAccountEmailCodeSent] = useState(false);
+  const [accountEmailCodeInput, setAccountEmailCodeInput] = useState("");
+  const [verifyingAccountEmail, setVerifyingAccountEmail] = useState(false);
+  const [accountPhoneInput, setAccountPhoneInput] = useState("");
+  const [accountPhoneCodeSent, setAccountPhoneCodeSent] = useState(false);
+  const [accountPhoneCodeInput, setAccountPhoneCodeInput] = useState("");
+  const [verifyingAccountPhone, setVerifyingAccountPhone] = useState(false);
   const [bankChangeCodeInput, setBankChangeCodeInput] = useState("");
   const [changePasswordForm, setChangePasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [changingPassword, setChangingPassword] = useState(false);
@@ -3094,6 +3103,131 @@ export default function Stallyard() {
       showToast("Couldn't reach the server — try again");
     } finally {
       setBankSaving(false);
+    }
+  };
+
+  const sendAccountEmailCode = async () => {
+    if (!currentMember?.email) {
+      showToast("Add an email to your account first");
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/email-verify/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: currentMember.email }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't send a code — try again");
+        return;
+      }
+      setAccountEmailCodeSent(true);
+      setAccountEmailCodeInput("");
+      showToast("Check your email for a code");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const confirmAccountEmailCode = async () => {
+    if (!accountEmailCodeInput.trim()) {
+      showToast("Enter the code we emailed you");
+      return;
+    }
+    setVerifyingAccountEmail(true);
+    try {
+      const checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: currentMember.email, code: accountEmailCodeInput.trim() }),
+      });
+      const checkData = await checkRes.json();
+      if (!checkRes.ok || !checkData.valid) {
+        showToast("That code doesn't match — check and try again");
+        return;
+      }
+      const attachRes = await authFetch(`${BACKEND_URL}/profile/verify-email`, { method: "PATCH" });
+      if (!attachRes.ok) {
+        showToast("Couldn't confirm that — try again");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, isEmailVerified: true } : m))
+      );
+      setAccountEmailCodeSent(false);
+      setAccountEmailCodeInput("");
+      showToast("Email verified");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setVerifyingAccountEmail(false);
+    }
+  };
+
+  const sendAccountPhoneCode = async () => {
+    if (!accountPhoneInput.trim()) {
+      showToast("Enter a phone number");
+      return;
+    }
+    try {
+      const res = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: accountPhoneInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't send a code — try again");
+        return;
+      }
+      setAccountPhoneCodeSent(true);
+      setAccountPhoneCodeInput("");
+      showToast("Check your phone for a code");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const confirmAccountPhoneCode = async () => {
+    if (!accountPhoneCodeInput.trim()) {
+      showToast("Enter the code we texted you");
+      return;
+    }
+    setVerifyingAccountPhone(true);
+    try {
+      const checkRes = await fetch(`${BACKEND_URL}/phone-verify/check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }),
+      });
+      const checkData = await checkRes.json();
+      if (!checkRes.ok || !checkData.valid) {
+        showToast("That code doesn't match — check and try again");
+        return;
+      }
+      const attachRes = await authFetch(`${BACKEND_URL}/profile/verify-phone`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: accountPhoneInput.trim() }),
+      });
+      if (!attachRes.ok) {
+        showToast("Couldn't confirm that — try again");
+        return;
+      }
+      await persistMembers(
+        members.map((m) =>
+          m.username === currentUser ? { ...m, phone: accountPhoneInput.trim(), isPhoneVerified: true } : m
+        )
+      );
+      setAccountPhoneCodeSent(false);
+      setAccountPhoneCodeInput("");
+      setAccountPhoneInput("");
+      showToast("Phone verified");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setVerifyingAccountPhone(false);
     }
   };
 
@@ -7752,6 +7886,110 @@ export default function Stallyard() {
                   <p className="text-xs mt-2" style={{ color: SLATE }}>
                     Don't recognize something here? Change your password above right away.
                   </p>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                    Email & phone verification
+                  </h3>
+
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm" style={{ color: INK }}>
+                      Email {currentMember?.email ? `(${currentMember.email})` : ""}
+                    </span>
+                    {currentMember?.isEmailVerified ? (
+                      <Tag color={SAGE}>Verified</Tag>
+                    ) : !accountEmailCodeSent ? (
+                      <button
+                        onClick={sendAccountEmailCode}
+                        className="text-xs font-medium underline"
+                        style={{ color: INK }}
+                      >
+                        Verify
+                      </button>
+                    ) : null}
+                  </div>
+                  {!currentMember?.isEmailVerified && accountEmailCodeSent && (
+                    <div className="flex items-center gap-2 mt-2 mb-3">
+                      <input
+                        value={accountEmailCodeInput}
+                        onChange={(e) => setAccountEmailCodeInput(e.target.value)}
+                        placeholder="6-digit code"
+                        maxLength={6}
+                        className="px-3 py-2 rounded-lg border outline-none text-sm w-32 text-center"
+                        style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                      />
+                      <button
+                        onClick={confirmAccountEmailCode}
+                        disabled={verifyingAccountEmail}
+                        className="px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        {verifyingAccountEmail ? "Checking..." : "Confirm"}
+                      </button>
+                      <button
+                        onClick={() => setAccountEmailCodeSent(false)}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="pt-3 mt-3" style={{ borderTop: "1px solid #EFEBE0" }}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm" style={{ color: INK }}>
+                        Phone {currentMember?.phone ? `(${currentMember.phone})` : ""}
+                      </span>
+                      {currentMember?.isPhoneVerified && <Tag color={SAGE}>Verified</Tag>}
+                    </div>
+                    {!currentMember?.isPhoneVerified && !accountPhoneCodeSent && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <input
+                          value={accountPhoneInput}
+                          onChange={(e) => setAccountPhoneInput(e.target.value)}
+                          placeholder={currentMember?.phone || "Phone number"}
+                          className="px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <button
+                          onClick={sendAccountPhoneCode}
+                          className="px-3 py-2 rounded-lg text-sm font-medium"
+                          style={{ backgroundColor: INK, color: "white" }}
+                        >
+                          Send code
+                        </button>
+                      </div>
+                    )}
+                    {!currentMember?.isPhoneVerified && accountPhoneCodeSent && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <input
+                          value={accountPhoneCodeInput}
+                          onChange={(e) => setAccountPhoneCodeInput(e.target.value)}
+                          placeholder="6-digit code"
+                          maxLength={6}
+                          className="px-3 py-2 rounded-lg border outline-none text-sm w-32 text-center"
+                          style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                        />
+                        <button
+                          onClick={confirmAccountPhoneCode}
+                          disabled={verifyingAccountPhone}
+                          className="px-3 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {verifyingAccountPhone ? "Checking..." : "Confirm"}
+                        </button>
+                        <button
+                          onClick={() => setAccountPhoneCodeSent(false)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SLATE }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
