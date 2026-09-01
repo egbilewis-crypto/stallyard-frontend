@@ -61,6 +61,17 @@ const SHIPPING_METHODS = [
 
 const RETURN_POLICIES = ["No returns", "7-day returns", "14-day returns", "30-day returns"];
 
+const LISTING_MANAGE_TABS = [
+  { key: "all", label: "All" },
+  { key: "approved", label: "Active" },
+  { key: "draft", label: "Draft" },
+  { key: "pending", label: "Pending" },
+  { key: "paused", label: "Paused" },
+  { key: "sold", label: "Sold out" },
+  { key: "rejected", label: "Rejected" },
+  { key: "removed", label: "Taken down" },
+];
+
 const CURRENCIES = {
   USD: { symbol: "$", label: "US Dollar (USD)" },
   NGN: { symbol: "₦", label: "Nigerian Naira (NGN)" },
@@ -850,6 +861,9 @@ export default function Stallyard() {
     vin: "",
   });
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [manageListingsTab, setManageListingsTab] = useState("all");
+  const [quickEditId, setQuickEditId] = useState(null);
+  const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
   const [uploading, setUploading] = useState(false);
   const [uploadingLicense, setUploadingLicense] = useState(false);
   const [idVerifyOpen, setIdVerifyOpen] = useState(false);
@@ -2664,11 +2678,10 @@ export default function Stallyard() {
       let statusPatch = {};
       if (isDraft) {
         statusPatch = { status: "draft" };
-      } else if (existingListing?.status === "draft") {
-        const isUSSeller = isUnitedStates(currentMember?.country);
-        const trusted = currentMember?.isVerified || currentMember?.isAdmin || isUSSeller;
-        const isAuction = form.listingType === "auction";
-        const autoApproved = isAuction ? (currentMember?.isAdmin || isUSSeller) : trusted;
+      } else if (existingListing?.status === "draft" || existingListing?.status === "rejected") {
+        // Once a seller is approved, everything they list — including
+        // auctions — goes live immediately without a separate review queue.
+        const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
         statusPatch = { status: autoApproved ? "approved" : "pending" };
       }
       const patch = {
@@ -2701,13 +2714,10 @@ export default function Stallyard() {
       }
       showToast(isDraft ? "Draft saved" : "Listing updated");
     } else {
-      const isUSSeller = isUnitedStates(currentMember?.country);
-      const trusted = currentMember?.isVerified || currentMember?.isAdmin || isUSSeller;
       const isAuction = form.listingType === "auction";
-      // US-based sellers and admins skip the approval queue entirely, including
-      // auctions. Everyone else's auctions still need admin approval even if
-      // they're a verified seller for fixed-price listings.
-      const autoApproved = isAuction ? (currentMember?.isAdmin || isUSSeller) : trusted;
+      // Once a seller is approved, everything they list — including
+      // auctions — goes live immediately without a separate review queue.
+      const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
       const status = isDraft ? "draft" : autoApproved ? "approved" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
@@ -2816,6 +2826,85 @@ export default function Stallyard() {
     setSelected(null);
   };
 
+  const pauseListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "paused" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "paused" } : l)));
+    showToast("Listing paused — hidden from Browse until you resume it");
+  };
+
+  const resumeListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    showToast("Listing is live again");
+  };
+
+  const markListingSoldOut = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "sold" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "sold" } : l)));
+    showToast("Marked out of stock");
+  };
+
+  const markListingInStock = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    showToast("Marked back in stock");
+  };
+
+  // Prefills the create form from an existing listing (minus id, bid
+  // history, and auction end time) so the seller can tweak and publish it
+  // as a brand-new listing rather than starting from scratch.
+  const duplicateListing = (l) => {
+    setForm({
+      title: `${l.title} (copy)`,
+      description: l.description || "",
+      price: l.price != null ? String(l.price) : "",
+      category: l.category,
+      condition: l.condition || "New",
+      emoji: l.emoji || "📦",
+      fitMake: l.fitMake || "",
+      fitModel: l.fitModel || "",
+      fitYear: l.fitYear || "",
+      images: l.images || [],
+      listingType: "fixed",
+      auctionDurationDays: "3",
+      currency: l.currency || "NGN",
+      shippingFee: l.shippingFee != null ? String(l.shippingFee) : "0.00",
+      quantity: l.quantity != null ? String(l.quantity) : "",
+      sku: l.sku || "",
+      brand: l.brand || "",
+      state: l.state || "",
+      shippingMethods: l.shippingMethods || [],
+      returnPolicy: l.returnPolicy || "",
+      vin: l.vin || "",
+    });
+    setEditingId(null);
+    setAdminEditContext(false);
+    setPreviewOpen(false);
+    setView("sell");
+    showToast("Duplicated — review and publish when ready");
+  };
+
+  // Quick inline edit for just price/quantity from the Manage Listings list,
+  // without opening the full edit form.
+  const quickUpdateListing = async (id, { price, quantity }) => {
+    const patch = {};
+    if (price !== undefined) patch.price = Number(price);
+    if (quantity !== undefined) patch.quantity = quantity === "" ? null : Number(quantity);
+    if (!(await patchListingOnBackend(id, patch))) return;
+    await persistListings(
+      listings.map((l) =>
+        l.id === id
+          ? {
+              ...l,
+              ...(price !== undefined ? { price: Number(price) } : {}),
+              ...(quantity !== undefined ? { quantity: quantity === "" ? "" : Number(quantity) } : {}),
+            }
+          : l
+      )
+    );
+    showToast("Listing updated");
+  };
+
   const adminRemoveListing = async (id) => {
     if (!(await deleteListingOnBackend(id))) return;
     await persistListings(listings.filter((l) => l.id !== id));
@@ -2826,6 +2915,12 @@ export default function Stallyard() {
     if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing approved");
+  };
+
+  const adminRejectListing = async (id) => {
+    if (!(await patchListingOnBackend(id, { status: "rejected" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "rejected" } : l)));
+    showToast("Listing rejected");
   };
 
   const adminTakeDownListing = async (id) => {
@@ -3094,6 +3189,8 @@ export default function Stallyard() {
   };
 
   const myListings = listings.filter((l) => l.ownerUsername === currentUser);
+  const filteredMyListings =
+    manageListingsTab === "all" ? myListings : myListings.filter((l) => l.status === manageListingsTab);
   const mySales = orders
     .filter((o) => o.items.some((i) => i.ownerUsername === currentUser))
     .sort((a, b) => b.createdAt - a.createdAt);
@@ -3260,7 +3357,7 @@ export default function Stallyard() {
       const q = search.trim().toLowerCase();
       const matchesSearch =
         !q || l.title.toLowerCase().includes(q) || l.description.toLowerCase().includes(q);
-      const isVisible = l.status !== "pending" && l.status !== "removed" && l.status !== "draft";
+      const isVisible = l.status === "approved";
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
@@ -3279,7 +3376,7 @@ export default function Stallyard() {
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
     });
 
-  const visibleListings = listings.filter((l) => l.status !== "pending" && l.status !== "removed" && l.status !== "draft");
+  const visibleListings = listings.filter((l) => l.status === "approved");
   const featuredPicks = visibleListings.filter((l) => l.isFeatured).slice(0, 10);
   const newArrivals = visibleListings
     .slice()
@@ -5254,6 +5351,28 @@ export default function Stallyard() {
                   </div>
                 </div>
 
+                <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+                  {LISTING_MANAGE_TABS.map((t) => {
+                    const count =
+                      t.key === "all" ? myListings.length : myListings.filter((l) => l.status === t.key).length;
+                    if (t.key !== "all" && count === 0) return null;
+                    return (
+                      <button
+                        key={t.key}
+                        onClick={() => setManageListingsTab(t.key)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                        style={{
+                          backgroundColor: manageListingsTab === t.key ? INK : "white",
+                          color: manageListingsTab === t.key ? "white" : SLATE,
+                          border: `1px solid ${manageListingsTab === t.key ? INK : "#DDD8CC"}`,
+                        }}
+                      >
+                        {t.label} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
                 {myListings.length === 0 ? (
                   <p className="text-sm" style={{ color: SLATE }}>
                     Your stall is empty.{" "}
@@ -5262,44 +5381,162 @@ export default function Stallyard() {
                     </button>
                     .
                   </p>
+                ) : filteredMyListings.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Nothing in this tab.
+                  </p>
                 ) : (
                   <div className="space-y-2">
-                    {myListings.map((l) => (
+                    {filteredMyListings.map((l) => (
                       <div
                         key={l.id}
-                        className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                        className="p-3 rounded-lg border bg-white"
                         style={{ borderColor: "#DDD8CC" }}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="text-2xl">{l.emoji}</span>
-                          <div className="min-w-0">
-                            <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
-                              {l.title}
-                              {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
-                              {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
-                              {l.status === "pending" && <Tag color={MARIGOLD}>Pending review</Tag>}
-                              {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
-                            </div>
-                            <div className="text-xs" style={{ color: SLATE }}>
-                              {l.category}
-                              {l.condition && l.condition !== "New" ? ` · ${l.condition}` : ""}
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-2xl">{l.emoji}</span>
+                            <div className="min-w-0">
+                              <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
+                                {l.title}
+                                {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
+                                {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
+                                {l.status === "pending" && <Tag color={MARIGOLD}>Pending review</Tag>}
+                                {l.status === "paused" && <Tag color={SLATE}>Paused</Tag>}
+                                {l.status === "sold" && <Tag color={BERRY}>Sold out</Tag>}
+                                {l.status === "rejected" && <Tag color={BERRY}>Rejected</Tag>}
+                                {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
+                              </div>
+                              <div className="text-xs" style={{ color: SLATE }}>
+                                {l.category}
+                                {l.condition && l.condition !== "New" ? ` · ${l.condition}` : ""}
+                                {l.quantity !== "" && l.quantity != null ? ` · Qty: ${l.quantity}` : ""}
+                              </div>
                             </div>
                           </div>
+                          <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                            <span
+                              style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                              className="font-medium"
+                            >
+                              ${Number(l.price).toFixed(2)}
+                            </span>
+                            <button
+                              onClick={() => {
+                                if (quickEditId === l.id) {
+                                  setQuickEditId(null);
+                                } else {
+                                  setQuickEditId(l.id);
+                                  setQuickEditDraft({
+                                    price: String(l.price ?? ""),
+                                    quantity: l.quantity != null ? String(l.quantity) : "",
+                                  });
+                                }
+                              }}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              {quickEditId === l.id ? "Close" : "Quick edit"}
+                            </button>
+                            {l.status === "approved" && (
+                              <button
+                                onClick={() => pauseListing(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Pause
+                              </button>
+                            )}
+                            {l.status === "paused" && (
+                              <button
+                                onClick={() => resumeListing(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SAGE }}
+                              >
+                                Resume
+                              </button>
+                            )}
+                            {l.status === "approved" && (
+                              <button
+                                onClick={() => markListingSoldOut(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Mark out of stock
+                              </button>
+                            )}
+                            {l.status === "sold" && (
+                              <button
+                                onClick={() => markListingInStock(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SAGE }}
+                              >
+                                Mark in stock
+                              </button>
+                            )}
+                            <button
+                              onClick={() => duplicateListing(l)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              Duplicate
+                            </button>
+                            <button onClick={() => startEdit(l)} aria-label="Edit">
+                              <Pencil size={16} style={{ color: SLATE }} />
+                            </button>
+                            <button onClick={() => deleteListing(l.id)} aria-label="Delete">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span
-                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
-                            className="font-medium"
+                        {quickEditId === l.id && (
+                          <div
+                            className="mt-3 pt-3 flex items-end gap-3 flex-wrap"
+                            style={{ borderTop: "1px solid #EFEBE0" }}
                           >
-                            ${Number(l.price).toFixed(2)}
-                          </span>
-                          <button onClick={() => startEdit(l)} aria-label="Edit">
-                            <Pencil size={16} style={{ color: SLATE }} />
-                          </button>
-                          <button onClick={() => deleteListing(l.id)} aria-label="Delete">
-                            <Trash2 size={16} style={{ color: BERRY }} />
-                          </button>
-                        </div>
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                                Price
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={quickEditDraft.price}
+                                onChange={(e) => setQuickEditDraft((d) => ({ ...d, price: e.target.value }))}
+                                className="w-28 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                                style={{ borderColor: "#DDD8CC" }}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                                Quantity
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={quickEditDraft.quantity}
+                                onChange={(e) => setQuickEditDraft((d) => ({ ...d, quantity: e.target.value }))}
+                                className="w-24 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                                style={{ borderColor: "#DDD8CC" }}
+                              />
+                            </div>
+                            <button
+                              onClick={async () => {
+                                await quickUpdateListing(l.id, {
+                                  price: quickEditDraft.price,
+                                  quantity: quickEditDraft.quantity,
+                                });
+                                setQuickEditId(null);
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                              style={{ backgroundColor: MARIGOLD, color: INK }}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -5931,7 +6168,7 @@ export default function Stallyard() {
                 );
               }
               const sellerListings = listings.filter(
-                (l) => l.ownerUsername === viewingSeller && l.status !== "pending" && l.status !== "removed" && l.status !== "draft"
+                (l) => l.ownerUsername === viewingSeller && l.status === "approved"
               );
               const sellerRating = getSellerRating(viewingSeller);
               const reputation = getSellerReputation(viewingSeller);
@@ -6741,7 +6978,7 @@ export default function Stallyard() {
                     { label: "Total users", value: members.length, color: INK },
                     {
                       label: "Active listings",
-                      value: listings.filter((l) => l.status !== "pending" && l.status !== "removed" && l.status !== "draft").length,
+                      value: listings.filter((l) => l.status === "approved").length,
                       color: INK,
                     },
                     {
@@ -6873,6 +7110,9 @@ export default function Stallyard() {
                           {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
                           {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
                           {l.status === "pending" && <Tag color={MARIGOLD}>Pending</Tag>}
+                          {l.status === "paused" && <Tag color={SLATE}>Paused</Tag>}
+                          {l.status === "sold" && <Tag color={BERRY}>Sold out</Tag>}
+                          {l.status === "rejected" && <Tag color={BERRY}>Rejected</Tag>}
                           {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
                         </div>
                         <div className="text-xs" style={{ color: SLATE }}>
@@ -6895,6 +7135,15 @@ export default function Stallyard() {
                           style={{ color: SAGE }}
                         >
                           Approve
+                        </button>
+                      )}
+                      {l.status === "pending" && (
+                        <button
+                          onClick={() => adminRejectListing(l.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: BERRY }}
+                        >
+                          Reject
                         </button>
                       )}
                       {l.status === "removed" ? (
