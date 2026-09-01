@@ -366,6 +366,7 @@ function backendUserToMember(user, existing) {
     avatarUrl: user.avatar_url ?? existing?.avatarUrl ?? "",
     storeBio: user.store_bio ?? existing?.storeBio ?? "",
     storePolicies: user.store_policies ?? existing?.storePolicies ?? "",
+    twoFactorEnabled: user.two_factor_enabled ?? existing?.twoFactorEnabled ?? false,
     country: user.country || existing?.country || "",
     isAdmin: !!user.is_admin,
     isApproved: !!user.is_approved,
@@ -834,6 +835,9 @@ export default function Stallyard() {
   const [resetIdentifier, setResetIdentifier] = useState("");
   const [newPasswordForm, setNewPasswordForm] = useState({ password: "", confirm: "" });
   const [authError, setAuthError] = useState("");
+  const [pendingTwoFactor, setPendingTwoFactor] = useState(null);
+  const [twoFactorCodeInput, setTwoFactorCodeInput] = useState("");
+  const [savingTwoFactorToggle, setSavingTwoFactorToggle] = useState(false);
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -1618,6 +1622,40 @@ export default function Stallyard() {
       setAuthError(data.error || "Something went wrong logging in.");
       return;
     }
+    if (data.twoFactorRequired) {
+      setPendingTwoFactor({ userId: data.userId, username });
+      setTwoFactorCodeInput("");
+      return;
+    }
+    await completeLogin(data, username);
+  };
+
+  const verifyTwoFactorCode = async () => {
+    if (!pendingTwoFactor) return;
+    setAuthError("");
+    let res;
+    try {
+      res = await fetch(`${BACKEND_URL}/login/verify-2fa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: pendingTwoFactor.userId, code: twoFactorCodeInput.trim() }),
+      });
+    } catch {
+      setAuthError("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      setAuthError(data.error || "That code didn't work.");
+      return;
+    }
+    const username = pendingTwoFactor.username;
+    setPendingTwoFactor(null);
+    setTwoFactorCodeInput("");
+    await completeLogin(data, username);
+  };
+
+  const completeLogin = async (data, username) => {
     const existing = members.find((m) => m.username === username);
     const member = backendUserToMember(data.user, existing);
     const nextMembers = existing
@@ -2926,6 +2964,30 @@ export default function Stallyard() {
     }
   };
 
+  const toggleTwoFactor = async (enabled) => {
+    setSavingTwoFactorToggle(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/two-factor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't update that — try again");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, twoFactorEnabled: data.twoFactorEnabled } : m))
+      );
+      showToast(data.twoFactorEnabled ? "Two-factor authentication turned on" : "Two-factor authentication turned off");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSavingTwoFactorToggle(false);
+    }
+  };
+
   const changePassword = async () => {
     if (!changePasswordForm.current || !changePasswordForm.next) {
       showToast("Fill in your current and new password");
@@ -4095,7 +4157,50 @@ export default function Stallyard() {
 
           <div className="flex-1 flex items-start sm:items-center justify-center px-6 sm:px-10 pb-10">
             <div className="w-full max-w-sm">
-              {pendingEmailVerification ? (
+              {pendingTwoFactor ? (
+                <div>
+                  <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                    Enter your code
+                  </h1>
+                  <p className="text-sm mb-4" style={{ color: SLATE }}>
+                    We emailed a 6-digit code to confirm it's really you.
+                  </p>
+                  <input
+                    value={twoFactorCodeInput}
+                    onChange={(e) => setTwoFactorCodeInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && verifyTwoFactorCode()}
+                    placeholder="6-digit code"
+                    maxLength={6}
+                    className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-center text-lg tracking-widest"
+                    style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                  />
+                  {authError && (
+                    <p className="text-sm mb-2" style={{ color: BERRY }}>
+                      {authError}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={verifyTwoFactorCode}
+                    className="w-full py-2.5 rounded-lg font-medium mt-1"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    Verify & log in
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingTwoFactor(null);
+                      setTwoFactorCodeInput("");
+                      setAuthError("");
+                    }}
+                    className="text-xs font-medium underline mt-3"
+                    style={{ color: SLATE }}
+                  >
+                    ← Back
+                  </button>
+                </div>
+              ) : pendingEmailVerification ? (
                 <div>
                   <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                     Verify your email
@@ -7537,6 +7642,33 @@ export default function Stallyard() {
                       style={{ backgroundColor: INK, color: "white" }}
                     >
                       {changingPassword ? "Saving..." : "Save"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                        Two-factor authentication
+                      </h3>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                        {currentMember?.twoFactorEnabled
+                          ? "On — we'll email a code each time you log in."
+                          : "Off — add a one-time email code to your login."}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => toggleTwoFactor(!currentMember?.twoFactorEnabled)}
+                      disabled={savingTwoFactorToggle}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                      style={
+                        currentMember?.twoFactorEnabled
+                          ? { borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white", border: "1px solid #DDD8CC" }
+                          : { backgroundColor: MARIGOLD, color: INK }
+                      }
+                    >
+                      {currentMember?.twoFactorEnabled ? "Turn off" : "Turn on"}
                     </button>
                   </div>
                 </div>
