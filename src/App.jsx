@@ -45,6 +45,22 @@ const CATEGORIES = ["Handmade", "Home", "Vintage", "Electronics", "Clothing", "B
 
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
 
+const NIGERIAN_STATES = [
+  "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa", "Benue", "Borno",
+  "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti", "Enugu", "Gombe", "Imo", "Jigawa",
+  "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos", "Nasarawa", "Niger",
+  "Ogun", "Ondo", "Osun", "Oyo", "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara",
+  "FCT (Abuja)",
+];
+
+const SHIPPING_METHODS = [
+  { value: "self_delivery", label: "Self delivery" },
+  { value: "dhl", label: "DHL" },
+  { value: "sea_shipping", label: "Sea shipping" },
+];
+
+const RETURN_POLICIES = ["No returns", "7-day returns", "14-day returns", "30-day returns"];
+
 const CURRENCIES = {
   USD: { symbol: "$", label: "US Dollar (USD)" },
   NGN: { symbol: "₦", label: "Nigerian Naira (NGN)" },
@@ -229,6 +245,13 @@ function backendListingToFrontend(row, existing) {
     auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).getTime() : null,
     bidHistory: row.bid_history || [],
     highestBidderUsername: row.highest_bidder_username || null,
+    quantity: row.quantity ?? "",
+    sku: row.sku || "",
+    brand: row.brand || "",
+    state: row.state || "",
+    shippingMethods: row.shipping_methods || [],
+    returnPolicy: row.return_policy || "",
+    vin: row.vin || "",
     sellerName: row.seller_name,
     ownerUsername: row.owner_username,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
@@ -818,7 +841,15 @@ export default function Stallyard() {
     auctionDurationDays: "3",
     currency: "NGN",
     shippingFee: "0.00",
+    quantity: "",
+    sku: "",
+    brand: "",
+    state: "",
+    shippingMethods: [],
+    returnPolicy: "",
+    vin: "",
   });
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingLicense, setUploadingLicense] = useState(false);
   const [idVerifyOpen, setIdVerifyOpen] = useState(false);
@@ -2471,8 +2502,16 @@ export default function Stallyard() {
       auctionDurationDays: "3",
       currency: "NGN",
       shippingFee: "0.00",
+      quantity: "",
+      sku: "",
+      brand: "",
+      state: "",
+      shippingMethods: [],
+      returnPolicy: "",
+      vin: "",
     });
     setEditingId(null);
+    setPreviewOpen(false);
   };
 
   const handlePhotoSelect = async (e) => {
@@ -2583,8 +2622,7 @@ export default function Stallyard() {
     await persistSettings({ ...settings, authImage: "" });
   };
 
-  const handleSubmit = async (e) => {
-    if (e) e.preventDefault();
+  const handleSubmit = async (mode = "publish") => {
     if (!currentUser) {
       setAuthMode("register");
       setAuthReturnView(view);
@@ -2601,8 +2639,13 @@ export default function Stallyard() {
       setIdVerifyOpen(true);
       return;
     }
-    if (!form.title.trim() || !form.price) {
-      showToast("Give it a title and a price");
+    const isDraft = mode === "draft";
+    if (!form.title.trim()) {
+      showToast("Give it a title");
+      return;
+    }
+    if (!isDraft && !form.price) {
+      showToast("Give it a price before publishing");
       return;
     }
     if (form.listingType === "auction" && isUnitedStates(currentMember?.country)) {
@@ -2615,7 +2658,25 @@ export default function Stallyard() {
         showToast("This auction already has bids and can't be edited");
         return;
       }
-      const patch = { ...form, price: Number(form.price), shippingFee: Number(form.shippingFee) || 0 };
+      // Publishing a draft (or re-saving as a draft) re-runs the same
+      // approval logic a brand-new listing would get, since a draft has
+      // never been through it yet.
+      let statusPatch = {};
+      if (isDraft) {
+        statusPatch = { status: "draft" };
+      } else if (existingListing?.status === "draft") {
+        const isUSSeller = isUnitedStates(currentMember?.country);
+        const trusted = currentMember?.isVerified || currentMember?.isAdmin || isUSSeller;
+        const isAuction = form.listingType === "auction";
+        const autoApproved = isAuction ? (currentMember?.isAdmin || isUSSeller) : trusted;
+        statusPatch = { status: autoApproved ? "approved" : "pending" };
+      }
+      const patch = {
+        ...form,
+        price: form.price ? Number(form.price) : 0,
+        shippingFee: Number(form.shippingFee) || 0,
+        ...statusPatch,
+      };
       if (typeof existingListing?.id === "number") {
         try {
           const res = await authFetch(`${BACKEND_URL}/listings/${existingListing.id}`, {
@@ -2638,7 +2699,7 @@ export default function Stallyard() {
       } else {
         await persistListings(listings.map((l) => (l.id === editingId ? { ...l, ...patch } : l)));
       }
-      showToast("Listing updated");
+      showToast(isDraft ? "Draft saved" : "Listing updated");
     } else {
       const isUSSeller = isUnitedStates(currentMember?.country);
       const trusted = currentMember?.isVerified || currentMember?.isAdmin || isUSSeller;
@@ -2647,7 +2708,7 @@ export default function Stallyard() {
       // auctions. Everyone else's auctions still need admin approval even if
       // they're a verified seller for fixed-price listings.
       const autoApproved = isAuction ? (currentMember?.isAdmin || isUSSeller) : trusted;
-      const status = autoApproved ? "approved" : "pending";
+      const status = isDraft ? "draft" : autoApproved ? "approved" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
         : null;
@@ -2660,7 +2721,7 @@ export default function Stallyard() {
             ownerId: currentMember.backendId,
             title: form.title,
             description: form.description,
-            price: Number(form.price),
+            price: form.price ? Number(form.price) : 0,
             category: form.category,
             condition: form.condition,
             shippingFee: Number(form.shippingFee) || 0,
@@ -2673,6 +2734,13 @@ export default function Stallyard() {
             currency: form.currency,
             status,
             auctionEndTime,
+            quantity: form.quantity,
+            sku: form.sku,
+            brand: form.brand,
+            state: form.state,
+            shippingMethods: form.shippingMethods,
+            returnPolicy: form.returnPolicy,
+            vin: form.vin,
           }),
         });
       } catch {
@@ -2680,7 +2748,7 @@ export default function Stallyard() {
         return;
       }
       if (!res.ok) {
-        showToast("Couldn't publish that listing — try again");
+        showToast(isDraft ? "Couldn't save that draft — try again" : "Couldn't publish that listing — try again");
         return;
       }
       const { listing } = await res.json();
@@ -2689,7 +2757,7 @@ export default function Stallyard() {
         ownerUsername: currentUser,
       });
       await persistListings([newListing, ...listings]);
-      showToast(autoApproved ? "Listing is live" : "Listing submitted — pending admin approval");
+      showToast(isDraft ? "Draft saved" : autoApproved ? "Listing is live" : "Listing submitted — pending admin approval");
     }
     resetForm();
     setView(adminEditContext ? "admin" : "dashboard");
@@ -2712,9 +2780,17 @@ export default function Stallyard() {
       auctionDurationDays: "3",
       currency: listing.currency || "USD",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
+      quantity: listing.quantity != null ? String(listing.quantity) : "",
+      sku: listing.sku || "",
+      brand: listing.brand || "",
+      state: listing.state || "",
+      shippingMethods: listing.shippingMethods || [],
+      returnPolicy: listing.returnPolicy || "",
+      vin: listing.vin || "",
     });
     setEditingId(listing.id);
     setAdminEditContext(fromAdmin);
+    setPreviewOpen(false);
     setView("sell");
   };
 
@@ -3184,7 +3260,7 @@ export default function Stallyard() {
       const q = search.trim().toLowerCase();
       const matchesSearch =
         !q || l.title.toLowerCase().includes(q) || l.description.toLowerCase().includes(q);
-      const isVisible = l.status !== "pending" && l.status !== "removed";
+      const isVisible = l.status !== "pending" && l.status !== "removed" && l.status !== "draft";
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
@@ -3203,7 +3279,7 @@ export default function Stallyard() {
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
     });
 
-  const visibleListings = listings.filter((l) => l.status !== "pending" && l.status !== "removed");
+  const visibleListings = listings.filter((l) => l.status !== "pending" && l.status !== "removed" && l.status !== "draft");
   const featuredPicks = visibleListings.filter((l) => l.isFeatured).slice(0, 10);
   const newArrivals = visibleListings
     .slice()
@@ -4515,6 +4591,47 @@ export default function Stallyard() {
                   </select>
                 </div>
               </div>
+              <div className="flex gap-3 flex-wrap">
+                <div className="flex-1 min-w-[100px]">
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    Quantity available <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={form.quantity}
+                    onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border outline-none"
+                    style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}
+                    placeholder="1"
+                  />
+                </div>
+                <div className="flex-1 min-w-[140px]">
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    SKU / part number <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                  </label>
+                  <input
+                    value={form.sku}
+                    onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border outline-none"
+                    style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}
+                    placeholder="e.g. SKU-1024"
+                  />
+                </div>
+                <div className="flex-1 min-w-[140px]">
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    Brand <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                  </label>
+                  <input
+                    value={form.brand}
+                    onChange={(e) => setForm({ ...form, brand: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border outline-none"
+                    style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}
+                    placeholder="e.g. Samsung"
+                  />
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                   Shipping fee
@@ -4549,6 +4666,66 @@ export default function Stallyard() {
                   {CONDITIONS.map((c) => (
                     <option key={c} value={c}>
                       {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Location <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                </label>
+                <select
+                  value={form.state}
+                  onChange={(e) => setForm({ ...form, state: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                  style={{ borderColor: "#DDD8CC" }}
+                >
+                  <option value="">Select state</option>
+                  {NIGERIAN_STATES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2" style={{ color: INK }}>
+                  Shipping options <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  {SHIPPING_METHODS.map((m) => (
+                    <label key={m.value} className="flex items-center gap-2 text-sm" style={{ color: INK }}>
+                      <input
+                        type="checkbox"
+                        checked={form.shippingMethods.includes(m.value)}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            shippingMethods: e.target.checked
+                              ? [...form.shippingMethods, m.value]
+                              : form.shippingMethods.filter((v) => v !== m.value),
+                          })
+                        }
+                      />
+                      {m.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Return policy <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                </label>
+                <select
+                  value={form.returnPolicy}
+                  onChange={(e) => setForm({ ...form, returnPolicy: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                  style={{ borderColor: "#DDD8CC" }}
+                >
+                  <option value="">Not specified</option>
+                  {RETURN_POLICIES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
                     </option>
                   ))}
                 </select>
@@ -4608,6 +4785,18 @@ export default function Stallyard() {
                   <p className="text-xs mt-2" style={{ color: SLATE }}>
                     e.g. Honda / Civic / 2016–2021
                   </p>
+                  <div className="mt-3">
+                    <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                      VIN <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                    </label>
+                    <input
+                      value={form.vin}
+                      onChange={(e) => setForm({ ...form, vin: e.target.value })}
+                      placeholder="Vehicle identification number"
+                      className="w-full px-3 py-2 rounded-lg border outline-none"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                  </div>
                 </div>
               )}
               <div>
@@ -4677,14 +4866,35 @@ export default function Stallyard() {
                   ))}
                 </div>
               </div>
-              <div className="flex gap-3 pt-2">
+              <div className="flex gap-3 pt-2 flex-wrap">
+                {(!editingId || listings.find((l) => l.id === editingId)?.status === "draft") && (
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit("draft")}
+                    className="px-5 py-2.5 rounded-lg font-medium border"
+                    style={{ borderColor: "#DDD8CC", color: INK, backgroundColor: "white" }}
+                  >
+                    Save as draft
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => handleSubmit()}
+                  onClick={() => {
+                    const isDraftFlow = !editingId || listings.find((l) => l.id === editingId)?.status === "draft";
+                    if (isDraftFlow) {
+                      if (!form.title.trim()) {
+                        showToast("Give it a title first");
+                        return;
+                      }
+                      setPreviewOpen(true);
+                    } else {
+                      handleSubmit("publish");
+                    }
+                  }}
                   className="px-5 py-2.5 rounded-lg font-medium"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  {editingId ? "Save changes" : "Publish listing"}
+                  {editingId && listings.find((l) => l.id === editingId)?.status !== "draft" ? "Save changes" : "Preview"}
                 </button>
                 {editingId && (
                   <button
@@ -5066,6 +5276,7 @@ export default function Stallyard() {
                             <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
                               {l.title}
                               {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
+                              {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
                               {l.status === "pending" && <Tag color={MARIGOLD}>Pending review</Tag>}
                               {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
                             </div>
@@ -5720,7 +5931,7 @@ export default function Stallyard() {
                 );
               }
               const sellerListings = listings.filter(
-                (l) => l.ownerUsername === viewingSeller && l.status !== "pending" && l.status !== "removed"
+                (l) => l.ownerUsername === viewingSeller && l.status !== "pending" && l.status !== "removed" && l.status !== "draft"
               );
               const sellerRating = getSellerRating(viewingSeller);
               const reputation = getSellerReputation(viewingSeller);
@@ -6530,7 +6741,7 @@ export default function Stallyard() {
                     { label: "Total users", value: members.length, color: INK },
                     {
                       label: "Active listings",
-                      value: listings.filter((l) => l.status !== "pending" && l.status !== "removed").length,
+                      value: listings.filter((l) => l.status !== "pending" && l.status !== "removed" && l.status !== "draft").length,
                       color: INK,
                     },
                     {
@@ -6660,6 +6871,7 @@ export default function Stallyard() {
                         <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
                           {l.title}
                           {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
+                          {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
                           {l.status === "pending" && <Tag color={MARIGOLD}>Pending</Tag>}
                           {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
                         </div>
@@ -8208,6 +8420,101 @@ export default function Stallyard() {
             >
               Reject application
             </button>
+          </div>
+        </div>
+      )}
+
+      {previewOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setPreviewOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full p-6 relative max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setPreviewOpen(false)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-3" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Preview listing
+            </h3>
+            {form.images.length > 0 ? (
+              <div className="flex gap-2 mb-3 overflow-x-auto">
+                {form.images.map((src, idx) => (
+                  <img
+                    key={idx}
+                    src={src}
+                    alt={`Photo ${idx + 1}`}
+                    className="w-20 h-20 object-cover rounded-lg shrink-0"
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="text-4xl mb-3">{form.emoji}</div>
+            )}
+            <div className="font-medium text-lg mb-1" style={{ color: INK }}>
+              {form.title || "Untitled listing"}
+            </div>
+            <div
+              className="text-xl font-semibold mb-2"
+              style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+            >
+              {CURRENCIES[form.currency]?.symbol || "$"}
+              {form.price ? Number(form.price).toFixed(2) : "0.00"}
+            </div>
+            <div className="text-sm mb-3" style={{ color: SLATE }}>
+              {form.category} · {form.condition}
+              {form.quantity && ` · Qty: ${form.quantity}`}
+            </div>
+            {form.description && (
+              <p className="text-sm mb-3" style={{ color: INK }}>
+                {form.description}
+              </p>
+            )}
+            <div className="text-xs space-y-1 mb-4" style={{ color: SLATE }}>
+              {form.brand && <div>Brand: {form.brand}</div>}
+              {form.sku && <div>SKU/part number: {form.sku}</div>}
+              {form.category === "Auto Parts" && (form.fitMake || form.fitModel || form.fitYear) && (
+                <div>
+                  Fits: {form.fitMake} {form.fitModel} {form.fitYear}
+                </div>
+              )}
+              {form.category === "Auto Parts" && form.vin && <div>VIN: {form.vin}</div>}
+              {form.state && <div>Location: {form.state}</div>}
+              {form.shippingMethods.length > 0 && (
+                <div>
+                  Shipping:{" "}
+                  {form.shippingMethods
+                    .map((v) => SHIPPING_METHODS.find((m) => m.value === v)?.label || v)
+                    .join(", ")}
+                </div>
+              )}
+              {form.returnPolicy && <div>Return policy: {form.returnPolicy}</div>}
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+                className="flex-1 py-2.5 rounded-lg font-medium border"
+                style={{ borderColor: "#DDD8CC", color: SLATE }}
+              >
+                Back to edit
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSubmit("publish")}
+                className="flex-1 py-2.5 rounded-lg font-medium"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                Publish listing
+              </button>
+            </div>
           </div>
         </div>
       )}
