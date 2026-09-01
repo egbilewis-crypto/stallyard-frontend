@@ -890,6 +890,10 @@ export default function Stallyard() {
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
+  const [deliveryTokens, setDeliveryTokens] = useState({});
+  const [generatingTokenKey, setGeneratingTokenKey] = useState(null);
+  const [redeemTokenDrafts, setRedeemTokenDrafts] = useState({});
+  const [redeemingTokenKey, setRedeemingTokenKey] = useState(null);
   const [rejectModalUsername, setRejectModalUsername] = useState(null);
   const [rejectReasonDraft, setRejectReasonDraft] = useState("");
   const [vacationOpen, setVacationOpen] = useState(false);
@@ -2406,6 +2410,66 @@ export default function Stallyard() {
       showToast("Thanks for confirming — glad it arrived!");
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  // Buyer-side action: generates a 10-digit code to hand to the seller in
+  // person as proof of delivery, instead of tapping "Confirm receipt"
+  // themselves. Useful for cash-on-delivery or in-person handoffs.
+  const generateDeliveryToken = async (itemId) => {
+    setGeneratingTokenKey(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/generate-delivery-token`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't generate a code — try again");
+        return;
+      }
+      setDeliveryTokens((d) => ({ ...d, [itemId]: data.token }));
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setGeneratingTokenKey(null);
+    }
+  };
+
+  // Seller-side action: enters the code the buyer handed them in person.
+  // A match confirms receipt exactly like the buyer clicking the button
+  // themselves — same auto-release-payment behavior.
+  const redeemDeliveryToken = async (orderId, itemId, token) => {
+    setRedeemingTokenKey(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/redeem-delivery-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "That code didn't work — try again");
+        return;
+      }
+      await persistOrders(
+        orders.map((o) =>
+          o.id !== orderId
+            ? o
+            : {
+                ...o,
+                paymentStatus: data.order ? "released" : o.paymentStatus,
+                items: o.items.map((i) => (i.id === itemId ? { ...i, buyerConfirmedAt: Date.now() } : i)),
+              }
+        )
+      );
+      setRedeemTokenDrafts((d) => {
+        const next = { ...d };
+        delete next[itemId];
+        return next;
+      });
+      showToast(data.order ? "Delivery confirmed — payment released!" : "Delivery confirmed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setRedeemingTokenKey(null);
     }
   };
 
@@ -5872,6 +5936,43 @@ export default function Stallyard() {
                                       )}
                                     </div>
                                   )}
+                                  {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") &&
+                                    (i.buyerConfirmedAt ? (
+                                      <div className="mt-2">
+                                        <Tag color={SAGE}>Delivery confirmed — payment released</Tag>
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                        <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                          Buyer's delivery code
+                                        </div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <input
+                                            value={redeemTokenDrafts[i.id] || ""}
+                                            onChange={(e) =>
+                                              setRedeemTokenDrafts((d) => ({ ...d, [i.id]: e.target.value }))
+                                            }
+                                            placeholder="10-digit code from buyer"
+                                            maxLength={10}
+                                            className="px-2 py-1 rounded-lg border outline-none text-xs w-36"
+                                            style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                                          />
+                                          <button
+                                            onClick={() =>
+                                              redeemDeliveryToken(o.id, i.id, (redeemTokenDrafts[i.id] || "").trim())
+                                            }
+                                            disabled={redeemingTokenKey === i.id || !(redeemTokenDrafts[i.id] || "").trim()}
+                                            className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                                            style={{ backgroundColor: MARIGOLD, color: INK }}
+                                          >
+                                            {redeemingTokenKey === i.id ? "Checking…" : "Release payment"}
+                                          </button>
+                                        </div>
+                                        <p className="text-xs mt-1" style={{ color: SLATE }}>
+                                          Ask the buyer for the 10-digit code they generated after delivery.
+                                        </p>
+                                      </div>
+                                    ))}
                                   {i.returnStatus === "requested" && (
                                     <div
                                       className="mt-2 p-2 rounded-lg"
@@ -6080,14 +6181,39 @@ export default function Stallyard() {
                                 <div className="mt-2">
                                   {item.buyerConfirmedAt ? (
                                     <Tag color={SAGE}>You confirmed receipt</Tag>
+                                  ) : deliveryTokens[item.id] ? (
+                                    <div className="p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                      <div className="text-xs mb-1" style={{ color: SLATE }}>
+                                        Give this code to the seller once the item's in hand:
+                                      </div>
+                                      <div
+                                        className="text-center py-2 rounded-lg text-lg font-semibold tracking-widest"
+                                        style={{ backgroundColor: "white", color: INK, fontFamily: "'IBM Plex Mono', monospace" }}
+                                      >
+                                        {deliveryTokens[item.id]}
+                                      </div>
+                                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                                        Valid for 7 days. The seller enters this in their dashboard to release payment.
+                                      </p>
+                                    </div>
                                   ) : (
-                                    <button
-                                      onClick={() => confirmReceipt(o.id, item.id)}
-                                      className="text-xs font-medium underline"
-                                      style={{ color: SAGE }}
-                                    >
-                                      Confirm receipt
-                                    </button>
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                      <button
+                                        onClick={() => confirmReceipt(o.id, item.id)}
+                                        className="text-xs font-medium underline"
+                                        style={{ color: SAGE }}
+                                      >
+                                        Confirm receipt
+                                      </button>
+                                      <button
+                                        onClick={() => generateDeliveryToken(item.id)}
+                                        disabled={generatingTokenKey === item.id}
+                                        className="text-xs font-medium underline disabled:opacity-50"
+                                        style={{ color: SLATE }}
+                                      >
+                                        {generatingTokenKey === item.id ? "Generating…" : "Generate delivery code for seller"}
+                                      </button>
+                                    </div>
                                   )}
                                 </div>
                               )}
