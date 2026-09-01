@@ -340,6 +340,7 @@ function backendOrderToFrontend(row) {
       trackingNumber: i.tracking_number || "",
       carrier: i.carrier || "",
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
+      shippedAt: i.shipped_at ? new Date(i.shipped_at).getTime() : null,
       proofOfDeliveryUrl: i.proof_of_delivery_url || "",
       returnStatus: i.return_status || null,
       returnReason: i.return_reason || "",
@@ -904,6 +905,11 @@ export default function Stallyard() {
   const [suspiciousActivityMessage, setSuspiciousActivityMessage] = useState("");
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
+  const [myWarnings, setMyWarnings] = useState([]);
+  const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
+  const [adminWarningsList, setAdminWarningsList] = useState([]);
+  const [newWarningMessage, setNewWarningMessage] = useState("");
+  const [issuingWarning, setIssuingWarning] = useState(false);
   const [loginHistory, setLoginHistory] = useState(null);
   const [loadingLoginHistory, setLoadingLoginHistory] = useState(false);
   const [bankSaving, setBankSaving] = useState(false);
@@ -1119,6 +1125,7 @@ export default function Stallyard() {
         setOrders([]);
         setWithdrawals([]);
         setNotifications([]);
+        setMyWarnings([]);
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -1209,6 +1216,15 @@ export default function Stallyard() {
         } catch {
           // couldn't reach backend for account reports — leave empty
         }
+      }
+      try {
+        const warningsRes = await authFetch(`${BACKEND_URL}/warnings/mine`);
+        if (warningsRes.ok) {
+          const { warnings } = await warningsRes.json();
+          setMyWarnings(warnings);
+        }
+      } catch {
+        // couldn't reach backend for warnings — leave empty
       }
       try {
         const cartRes = await authFetch(`${BACKEND_URL}/cart`);
@@ -2394,6 +2410,47 @@ export default function Stallyard() {
       showToast("Report resolved");
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const openAdminWarnings = async (member) => {
+    setAdminWarningsTarget(member);
+    setNewWarningMessage("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/users/${member.backendId}/warnings`);
+      if (res.ok) {
+        const { warnings } = await res.json();
+        setAdminWarningsList(warnings);
+      }
+    } catch {
+      showToast("Couldn't load warnings — try again");
+    }
+  };
+
+  const issueWarning = async () => {
+    if (!newWarningMessage.trim() || !adminWarningsTarget) {
+      showToast("Write a message for the warning");
+      return;
+    }
+    setIssuingWarning(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/users/${adminWarningsTarget.backendId}/warnings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: newWarningMessage.trim() }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't issue that warning — try again");
+        return;
+      }
+      const { warning } = await res.json();
+      setAdminWarningsList((list) => [warning, ...list]);
+      setNewWarningMessage("");
+      showToast("Warning issued");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setIssuingWarning(false);
     }
   };
 
@@ -4141,7 +4198,7 @@ export default function Stallyard() {
   const mySoldItems = mySales.flatMap((o) =>
     o.items
       .filter((i) => i.ownerUsername === currentUser)
-      .map((i) => ({ ...i, orderId: o.id, isDisputed: o.isDisputed }))
+      .map((i) => ({ ...i, orderId: o.id, orderCreatedAt: o.createdAt, isDisputed: o.isDisputed }))
   );
   const totalSalesRevenue = mySoldItems
     .filter((i) => i.fulfillmentStatus !== "cancelled")
@@ -4152,6 +4209,31 @@ export default function Stallyard() {
   const activeReturnsDisputes = mySoldItems.filter(
     (i) => i.returnStatus === "requested" || i.isDisputed
   ).length;
+
+  // Seller performance rates — all computed from this seller's own data,
+  // no separate backend endpoint needed.
+  const ON_TIME_SHIP_WINDOW_MS = 48 * 60 * 60 * 1000;
+  const cancellationRate =
+    mySoldItems.length > 0
+      ? Math.round((mySoldItems.filter((i) => i.fulfillmentStatus === "cancelled").length / mySoldItems.length) * 100)
+      : null;
+  const returnRate =
+    mySoldItems.length > 0
+      ? Math.round((mySoldItems.filter((i) => !!i.returnStatus).length / mySoldItems.length) * 100)
+      : null;
+  const disputeRate =
+    mySales.length > 0
+      ? Math.round((mySales.filter((o) => o.isDisputed).length / mySales.length) * 100)
+      : null;
+  const shippedItems = mySoldItems.filter((i) => i.shippedAt);
+  const onTimeShippingRate =
+    shippedItems.length > 0
+      ? Math.round(
+          (shippedItems.filter((i) => i.shippedAt - i.orderCreatedAt <= ON_TIME_SHIP_WINDOW_MS).length /
+            shippedItems.length) *
+            100
+        )
+      : null;
 
   const myWalletTx = mySales.flatMap((o) => {
     const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
@@ -6152,6 +6234,91 @@ export default function Stallyard() {
                     </div>
                   </div>
                 </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                    Seller performance
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: cancellationRate === null || cancellationRate <= 5 ? SAGE : cancellationRate <= 15 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {cancellationRate === null ? "—" : `${cancellationRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        cancellation rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: returnRate === null || returnRate <= 5 ? SAGE : returnRate <= 15 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {returnRate === null ? "—" : `${returnRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        return rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: disputeRate === null || disputeRate === 0 ? SAGE : disputeRate <= 10 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {disputeRate === null ? "—" : `${disputeRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        dispute rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: onTimeShippingRate === null || onTimeShippingRate >= 90 ? SAGE : onTimeShippingRate >= 70 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {onTimeShippingRate === null ? "—" : `${onTimeShippingRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        on-time shipping
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs mt-3" style={{ color: SLATE }}>
+                    On-time shipping counts items marked Shipped within 48 hours of the sale.
+                  </p>
+                </div>
+
+                {myWarnings.length > 0 && (
+                  <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: BERRY }}>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2" style={{ color: INK }}>
+                      Warnings <Tag color={BERRY}>{myWarnings.length}</Tag>
+                    </h3>
+                    <div className="space-y-2">
+                      {myWarnings.map((w) => (
+                        <div key={w.id} className="text-sm p-3 rounded-lg" style={{ backgroundColor: "#FBEAEA", color: INK }}>
+                          {w.message}
+                          <div className="text-xs mt-1" style={{ color: SLATE }}>
+                            {new Date(w.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
                   <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -9066,6 +9233,13 @@ export default function Stallyard() {
                             </button>
                           )}
                           <button
+                            onClick={() => openAdminWarnings(m)}
+                            className="text-xs font-medium underline"
+                            style={{ color: SLATE }}
+                          >
+                            Warnings
+                          </button>
+                          <button
                             onClick={() => adminToggleVerify(m.username)}
                             className="text-xs font-medium underline"
                             style={{ color: SLATE }}
@@ -10909,6 +11083,66 @@ export default function Stallyard() {
               style={{ backgroundColor: BERRY, color: "white" }}
             >
               Submit report
+            </button>
+          </div>
+        </div>
+      )}
+
+      {adminWarningsTarget && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setAdminWarningsTarget(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setAdminWarningsTarget(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Warnings — {adminWarningsTarget.displayName}
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              Visible to both you and this seller. A lighter step than suspending.
+            </p>
+            {adminWarningsList.length === 0 ? (
+              <p className="text-sm mb-4" style={{ color: SLATE }}>
+                No warnings yet.
+              </p>
+            ) : (
+              <div className="space-y-2 mb-4">
+                {adminWarningsList.map((w) => (
+                  <div key={w.id} className="text-sm p-3 rounded-lg" style={{ backgroundColor: CANVAS, color: INK }}>
+                    {w.message}
+                    <div className="text-xs mt-1" style={{ color: SLATE }}>
+                      {new Date(w.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea
+              value={newWarningMessage}
+              onChange={(e) => setNewWarningMessage(e.target.value)}
+              placeholder="What's the warning about?"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg border outline-none mb-3"
+              style={{ borderColor: "#DDD8CC" }}
+            />
+            <button
+              type="button"
+              onClick={issueWarning}
+              disabled={issuingWarning}
+              className="w-full py-2.5 rounded-lg font-medium disabled:opacity-50"
+              style={{ backgroundColor: BERRY, color: "white" }}
+            >
+              {issuingWarning ? "Issuing..." : "Issue warning"}
             </button>
           </div>
         </div>
