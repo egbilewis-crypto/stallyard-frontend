@@ -73,6 +73,15 @@ const POLICY_ORDER = ["seller_rules", "prohibited_items", "fees", "payment_rules
 
 const TICKET_STATUS_LABEL = { open: "Open", in_progress: "In progress", resolved: "Resolved" };
 
+// The admin panel's entrance is this obscure path instead of a guessable
+// /admin — a supplementary deterrent only, not real security on its own.
+// Anyone who sees the URL once (over your shoulder, in browser history,
+// in a screen share) knows it from then on, so this doesn't replace the
+// password + mandatory 2FA + generic-error protections already in place.
+// Change this string any time — treat it like a password, don't share it
+// publicly, and rotate it if you think it's leaked.
+const ADMIN_SECRET_PATH = "/0936746admin";
+
 const ADMIN_ROLE_LABELS = {
   super_admin: "Super Admin",
   seller_verification: "Seller Verification",
@@ -829,6 +838,15 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
 export default function Stallyard() {
   useFonts();
   const [view, setView] = useState("browse");
+  const [adminLoginMode, setAdminLoginMode] = useState(
+    () => typeof window !== "undefined" && window.location.pathname === ADMIN_SECRET_PATH
+  );
+  const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
+  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code"
+  const [adminLoginCode, setAdminLoginCode] = useState("");
+  const [adminLoginPendingUserId, setAdminLoginPendingUserId] = useState(null);
+  const [adminLoginError, setAdminLoginError] = useState("");
+  const [adminLoginSubmitting, setAdminLoginSubmitting] = useState(false);
   const [authReturnView, setAuthReturnView] = useState("browse");
   const [adminTab, setAdminTab] = useState("overview");
   const [adminUnlockedUntil, setAdminUnlockedUntil] = useState(null);
@@ -1995,6 +2013,34 @@ export default function Stallyard() {
     return () => clearInterval(interval);
   }, [view, adminUnlockedUntil]);
 
+  // Gives the admin panel its own address rather than living as just
+  // another tab — reflects the current view in the URL, and handles
+  // someone landing directly on the secret admin path.
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (view === "admin") {
+      if (path !== ADMIN_SECRET_PATH) window.history.pushState({}, "", ADMIN_SECRET_PATH);
+    } else if (path === ADMIN_SECRET_PATH) {
+      window.history.pushState({}, "", "/");
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (window.location.pathname !== ADMIN_SECRET_PATH) return;
+    if (!membersLoaded) return; // wait until we actually know who's logged in
+    if (adminLoginMode) return;
+    if (!currentUser) {
+      setAdminLoginMode(true);
+      // already on ADMIN_SECRET_PATH — just show the login form
+      return;
+    }
+    if (!currentMember?.isAdmin) {
+      window.history.replaceState({}, "", "/");
+      return;
+    }
+    openAdminPanel();
+  }, [membersLoaded, currentUser, currentMember?.isAdmin]);
+
   const persistCart = async (next) => {
     setCart(next);
     try {
@@ -2632,6 +2678,84 @@ export default function Stallyard() {
       setAdminReauthError("Couldn't reach the server — try again");
     } finally {
       setAdminReauthSubmitting(false);
+    }
+  };
+
+  // Shared by both steps of the dedicated admin login: if the account
+  // isn't actually an admin, the error is identical to a wrong password —
+  // never confirms that valid, non-admin credentials were entered. A
+  // successful admin login here also satisfies the re-auth gate, since
+  // proving password + 2FA to log in already covers what re-auth checks.
+  const finishAdminLogin = async (data, username) => {
+    if (!data.user?.is_admin) {
+      setAdminLoginError("Username or password doesn't match");
+      return;
+    }
+    await completeLogin(data, username);
+    setAdminUnlockedUntil(Date.now() + ADMIN_SESSION_IDLE_MS);
+    setAdminLoginMode(false);
+    setAdminLoginForm({ username: "", password: "" });
+    setAdminLoginStep("credentials");
+    setAdminLoginCode("");
+    window.history.replaceState({}, "", ADMIN_SECRET_PATH);
+    setView("admin");
+  };
+
+  const submitAdminLoginCredentials = async () => {
+    const username = adminLoginForm.username.trim().toLowerCase();
+    if (!username || !adminLoginForm.password) {
+      setAdminLoginError("Enter your username and password");
+      return;
+    }
+    setAdminLoginSubmitting(true);
+    setAdminLoginError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: adminLoginForm.password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminLoginError("Username or password doesn't match");
+        return;
+      }
+      if (data.twoFactorRequired) {
+        setAdminLoginPendingUserId(data.userId);
+        setAdminLoginStep("code");
+        return;
+      }
+      await finishAdminLogin(data, username);
+    } catch {
+      setAdminLoginError("Couldn't reach the server — try again");
+    } finally {
+      setAdminLoginSubmitting(false);
+    }
+  };
+
+  const submitAdminLoginTwoFactor = async () => {
+    if (!adminLoginCode.trim()) {
+      setAdminLoginError("Enter the code we emailed you");
+      return;
+    }
+    setAdminLoginSubmitting(true);
+    setAdminLoginError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/login/verify-2fa`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: adminLoginPendingUserId, code: adminLoginCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminLoginError(data.error || "That code didn't work");
+        return;
+      }
+      await finishAdminLogin(data, adminLoginForm.username.trim().toLowerCase());
+    } catch {
+      setAdminLoginError("Couldn't reach the server — try again");
+    } finally {
+      setAdminLoginSubmitting(false);
     }
   };
 
@@ -4905,6 +5029,125 @@ export default function Stallyard() {
       )}
     </button>
   );
+
+  if (adminLoginMode) {
+    return (
+      <div
+        className="min-h-screen w-full flex items-center justify-center px-6"
+        style={{ backgroundColor: INK, fontFamily: "'Work Sans', sans-serif" }}
+      >
+        <div className="w-full max-w-sm">
+          <div className="flex items-center gap-2 justify-center mb-8">
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ backgroundColor: MARIGOLD }}
+            >
+              <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "16px" }}>S</span>
+            </div>
+            <h1 className="text-xl tracking-wide" style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}>
+              Stallyard Admin
+            </h1>
+          </div>
+          <div className="bg-white rounded-2xl p-6">
+            {adminLoginStep === "credentials" ? (
+              <>
+                <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
+                  Sign in
+                </h2>
+                <p className="text-sm mb-4" style={{ color: SLATE }}>
+                  This is a restricted entrance — admin credentials only.
+                </p>
+                <input
+                  value={adminLoginForm.username}
+                  onChange={(e) => setAdminLoginForm((f) => ({ ...f, username: e.target.value }))}
+                  placeholder="Username"
+                  autoCapitalize="none"
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                />
+                <input
+                  type="password"
+                  value={adminLoginForm.password}
+                  onChange={(e) => setAdminLoginForm((f) => ({ ...f, password: e.target.value }))}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdminLoginCredentials()}
+                  placeholder="Password"
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                />
+                {adminLoginError && (
+                  <p className="text-sm mb-2" style={{ color: BERRY }}>
+                    {adminLoginError}
+                  </p>
+                )}
+                <button
+                  onClick={submitAdminLoginCredentials}
+                  disabled={adminLoginSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {adminLoginSubmitting ? "Checking..." : "Continue"}
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
+                  Enter your code
+                </h2>
+                <p className="text-sm mb-4" style={{ color: SLATE }}>
+                  We emailed a 6-digit code to confirm it's you.
+                </p>
+                <input
+                  value={adminLoginCode}
+                  onChange={(e) => setAdminLoginCode(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitAdminLoginTwoFactor()}
+                  placeholder="6-digit code"
+                  maxLength={6}
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-center text-lg tracking-widest"
+                  style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                  autoFocus
+                />
+                {adminLoginError && (
+                  <p className="text-sm mb-2" style={{ color: BERRY }}>
+                    {adminLoginError}
+                  </p>
+                )}
+                <button
+                  onClick={submitAdminLoginTwoFactor}
+                  disabled={adminLoginSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {adminLoginSubmitting ? "Verifying..." : "Sign in"}
+                </button>
+                <button
+                  onClick={() => {
+                    setAdminLoginStep("credentials");
+                    setAdminLoginCode("");
+                    setAdminLoginError("");
+                  }}
+                  className="text-xs font-medium underline mt-3"
+                  style={{ color: SLATE }}
+                >
+                  ← Back
+                </button>
+              </>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setAdminLoginMode(false);
+              window.history.replaceState({}, "", "/");
+              setView("browse");
+            }}
+            className="text-xs font-medium underline mt-4 block mx-auto"
+            style={{ color: "#8A93A3" }}
+          >
+            ← Back to Stallyard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
