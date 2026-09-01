@@ -856,6 +856,8 @@ export default function Stallyard() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
+  const [changePasswordForm, setChangePasswordForm] = useState({ current: "", next: "", confirm: "" });
+  const [changingPassword, setChangingPassword] = useState(false);
   const [bankSaving, setBankSaving] = useState(false);
   const [threads, setThreads] = useState([]);
   const [messageReports, setMessageReports] = useState([]);
@@ -2876,6 +2878,43 @@ export default function Stallyard() {
       }
     } catch {
       // bank list couldn't load — the field will just be empty
+    }
+  };
+
+  const changePassword = async () => {
+    if (!changePasswordForm.current || !changePasswordForm.next) {
+      showToast("Fill in your current and new password");
+      return;
+    }
+    if (changePasswordForm.next.length < 8) {
+      showToast("New password must be at least 8 characters");
+      return;
+    }
+    if (changePasswordForm.next !== changePasswordForm.confirm) {
+      showToast("New passwords don't match");
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/change-password`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: changePasswordForm.current,
+          newPassword: changePasswordForm.next,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't change your password — try again");
+        return;
+      }
+      setChangePasswordForm({ current: "", next: "", confirm: "" });
+      showToast("Password changed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setChangingPassword(false);
     }
   };
 
@@ -7411,6 +7450,49 @@ export default function Stallyard() {
                     >
                       ${walletVoided.toFixed(2)}
                     </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
+                    Change password
+                  </h3>
+                  <p className="text-xs mb-3" style={{ color: SLATE }}>
+                    You'll need your current password to set a new one.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    <input
+                      type="password"
+                      value={changePasswordForm.current}
+                      onChange={(e) => setChangePasswordForm((f) => ({ ...f, current: e.target.value }))}
+                      placeholder="Current password"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <input
+                      type="password"
+                      value={changePasswordForm.next}
+                      onChange={(e) => setChangePasswordForm((f) => ({ ...f, next: e.target.value }))}
+                      placeholder="New password"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <input
+                      type="password"
+                      value={changePasswordForm.confirm}
+                      onChange={(e) => setChangePasswordForm((f) => ({ ...f, confirm: e.target.value }))}
+                      placeholder="Confirm new password"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={changePassword}
+                      disabled={changingPassword}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                      style={{ backgroundColor: INK, color: "white" }}
+                    >
+                      {changingPassword ? "Saving..." : "Save"}
+                    </button>
                   </div>
                 </div>
 
