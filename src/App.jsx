@@ -900,6 +900,10 @@ export default function Stallyard() {
   const [bankChangeCodeInput, setBankChangeCodeInput] = useState("");
   const [changePasswordForm, setChangePasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [signingOutOtherDevices, setSigningOutOtherDevices] = useState(false);
+  const [suspiciousActivityMessage, setSuspiciousActivityMessage] = useState("");
+  const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
+  const [accountReports, setAccountReports] = useState([]);
   const [loginHistory, setLoginHistory] = useState(null);
   const [loadingLoginHistory, setLoadingLoginHistory] = useState(false);
   const [bankSaving, setBankSaving] = useState(false);
@@ -1195,6 +1199,15 @@ export default function Stallyard() {
           }
         } catch {
           // couldn't reach backend for review reports — leave empty
+        }
+        try {
+          const accountReportsRes = await authFetch(`${BACKEND_URL}/account-reports`);
+          if (accountReportsRes.ok) {
+            const { reports } = await accountReportsRes.json();
+            setAccountReports(reports);
+          }
+        } catch {
+          // couldn't reach backend for account reports — leave empty
         }
       }
       try {
@@ -2368,6 +2381,22 @@ export default function Stallyard() {
     }
   };
 
+  const adminResolveAccountReport = async (reportId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/account-reports/${reportId}/resolve`, { method: "PATCH" });
+      if (!res.ok) {
+        showToast("Couldn't resolve that report — try again");
+        return;
+      }
+      setAccountReports((reports) =>
+        reports.map((r) => (r.id === reportId ? { ...r, status: "resolved" } : r))
+      );
+      showToast("Report resolved");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
   // Public trust signal — fetched on demand when a storefront opens, cached
   // per username so revisiting the same seller doesn't re-fetch.
   const fetchLoginHistory = async () => {
@@ -2999,6 +3028,50 @@ export default function Stallyard() {
     }
   };
 
+  const signOutOtherDevices = async () => {
+    setSigningOutOtherDevices(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/sign-out-other-devices`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't do that — try again");
+        return;
+      }
+      if (data.token) await saveAuthToken(data.token);
+      showToast("Signed out of all other devices");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSigningOutOtherDevices(false);
+    }
+  };
+
+  const reportSuspiciousActivity = async () => {
+    if (!suspiciousActivityMessage.trim()) {
+      showToast("Describe what happened first");
+      return;
+    }
+    setSubmittingSuspiciousReport(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/account-reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: suspiciousActivityMessage.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't submit that — try again");
+        return;
+      }
+      setSuspiciousActivityMessage("");
+      showToast("Reported — an admin will take a look");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSubmittingSuspiciousReport(false);
+    }
+  };
+
   const changePassword = async () => {
     if (!changePasswordForm.current || !changePasswordForm.next) {
       showToast("Fill in your current and new password");
@@ -3027,8 +3100,9 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't change your password — try again");
         return;
       }
+      if (data.token) await saveAuthToken(data.token);
       setChangePasswordForm({ current: "", next: "", confirm: "" });
-      showToast("Password changed");
+      showToast("Password changed — you've been signed out of other devices");
     } catch {
       showToast("Couldn't reach the server — try again");
     } finally {
@@ -7889,6 +7963,54 @@ export default function Stallyard() {
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                        Sign out of other devices
+                      </h3>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                        Ends every other active session. This device stays signed in.
+                      </p>
+                    </div>
+                    <button
+                      onClick={signOutOtherDevices}
+                      disabled={signingOutOtherDevices}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                      style={{ border: "1px solid #DDD8CC", color: SLATE, backgroundColor: "white" }}
+                    >
+                      {signingOutOtherDevices ? "Signing out..." : "Sign out others"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
+                    Report suspicious activity
+                  </h3>
+                  <p className="text-xs mb-2" style={{ color: SLATE }}>
+                    See something on your account that doesn't look right? Let an admin know.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <textarea
+                      value={suspiciousActivityMessage}
+                      onChange={(e) => setSuspiciousActivityMessage(e.target.value)}
+                      placeholder="What did you notice?"
+                      rows={2}
+                      className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={reportSuspiciousActivity}
+                      disabled={submittingSuspiciousReport}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 self-start"
+                      style={{ backgroundColor: BERRY, color: "white" }}
+                    >
+                      {submittingSuspiciousReport ? "Sending..." : "Report"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
                   <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
                     Email & phone verification
                   </h3>
@@ -8618,6 +8740,10 @@ export default function Stallyard() {
                 {
                   id: "reviewReports",
                   label: `Review reports (${reviewReports.filter((r) => r.status === "open").length})`,
+                },
+                {
+                  id: "accountReports",
+                  label: `Account reports (${accountReports.filter((r) => r.status === "open").length})`,
                 },
                 { id: "settings", label: "Settings" },
                 { id: "content", label: "Content" },
@@ -9733,6 +9859,51 @@ export default function Stallyard() {
                       {r.status === "open" && (
                         <button
                           onClick={() => adminResolveReviewReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "accountReports" && (
+              <div className="space-y-3">
+                {accountReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No account reports.
+                  </p>
+                )}
+                {accountReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          {r.display_name || r.username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div
+                        className="text-sm p-3 rounded-lg mb-3"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        {r.message}
+                      </div>
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveAccountReport(r.id)}
                           className="text-xs font-medium underline"
                           style={{ color: SAGE }}
                         >
