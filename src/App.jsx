@@ -125,6 +125,7 @@ const EMOJI_CHOICES = ["📦", "🧶", "🕯️", "📚", "🪴", "👕", "🎨"
 
 const FULFILLMENT_LABEL = {
   new: "New",
+  preparing: "Preparing",
   shipped: "Shipped",
   delivered: "Delivered",
   cancelled: "Cancelled",
@@ -133,11 +134,14 @@ const FULFILLMENT_LABEL = {
 
 const FULFILLMENT_COLOR = {
   new: "#3B6E8F",
+  preparing: "#B8862E",
   shipped: "#6B8F71",
   delivered: "#2F6B3A",
   cancelled: "#C1443C",
   returned: "#B8862E",
 };
+
+const SHIPPING_CARRIERS = ["Self delivery", "DHL", "GIG Logistics", "NIPOST", "UPS", "FedEx", "Other"];
 
 const RETURN_REASONS = [
   "Not as described",
@@ -345,6 +349,8 @@ function backendOrderToFrontend(row) {
       ownerUsername: i.seller_username,
       fulfillmentStatus: i.fulfillment_status || "new",
       trackingNumber: i.tracking_number || "",
+      carrier: i.carrier || "",
+      buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
       statusHistory: [{ status: i.fulfillment_status || "new", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
     })),
   };
@@ -455,6 +461,31 @@ function readFileAsDataURL(file) {
     reader.readAsDataURL(file);
   });
 }
+
+// Derives a single order-level status bucket (for tab filtering) from just
+// one seller's items within an order, since an order can span multiple
+// sellers and each item tracks its own fulfillment status independently.
+function getSellerOrderStatus(order, username) {
+  const myItems = order.items.filter((i) => i.ownerUsername === username);
+  if (myItems.length === 0) return "new";
+  if (myItems.every((i) => i.fulfillmentStatus === "cancelled")) return "cancelled";
+  const relevant = myItems.filter((i) => i.fulfillmentStatus !== "cancelled");
+  if (relevant.length > 0 && relevant.every((i) => ["delivered", "returned"].includes(i.fulfillmentStatus))) {
+    return "completed";
+  }
+  if (myItems.some((i) => (i.fulfillmentStatus || "new") === "new")) return "new";
+  if (myItems.some((i) => i.fulfillmentStatus === "preparing")) return "preparing";
+  return "shipped";
+}
+
+const SALES_TABS = [
+  { key: "all", label: "All" },
+  { key: "new", label: "New" },
+  { key: "preparing", label: "Preparing" },
+  { key: "shipped", label: "Shipped" },
+  { key: "completed", label: "Completed" },
+  { key: "cancelled", label: "Cancelled" },
+];
 
 function Tag({ children, color }) {
   return (
@@ -862,6 +893,7 @@ export default function Stallyard() {
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
+  const [salesTab, setSalesTab] = useState("all");
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
   const [uploading, setUploading] = useState(false);
@@ -2284,6 +2316,50 @@ export default function Stallyard() {
     showToast("Tracking number saved");
   };
 
+  const updateItemCarrier = async (orderId, itemId, carrier) => {
+    const ok = await patchOrderItemOnBackend(itemId, { carrier });
+    if (!ok) return;
+    await persistOrders(
+      orders.map((o) =>
+        o.id !== orderId
+          ? o
+          : {
+              ...o,
+              items: o.items.map((i) => (i.id === itemId ? { ...i, carrier } : i)),
+            }
+      )
+    );
+  };
+
+  // Buyer-side action: confirms they received the item. If it's the last
+  // item in the order still awaiting confirmation, the backend auto-releases
+  // the order's held payment — mirrored here so the UI updates immediately.
+  const confirmReceipt = async (orderId, itemId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/confirm-receipt`, { method: "PATCH" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        showToast(body.error || "Couldn't confirm receipt — try again");
+        return;
+      }
+      const { order: releasedOrder } = await res.json();
+      await persistOrders(
+        orders.map((o) =>
+          o.id !== orderId
+            ? o
+            : {
+                ...o,
+                paymentStatus: releasedOrder ? "released" : o.paymentStatus,
+                items: o.items.map((i) => (i.id === itemId ? { ...i, buyerConfirmedAt: Date.now() } : i)),
+              }
+        )
+      );
+      showToast("Thanks for confirming — glad it arrived!");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
   const updateReturnTracking = async (orderId, itemId, trackingNumber) => {
     await persistOrders(
       orders.map((o) =>
@@ -3194,6 +3270,8 @@ export default function Stallyard() {
   const mySales = orders
     .filter((o) => o.items.some((i) => i.ownerUsername === currentUser))
     .sort((a, b) => b.createdAt - a.createdAt);
+  const filteredMySales =
+    salesTab === "all" ? mySales : mySales.filter((o) => getSellerOrderStatus(o, currentUser) === salesTab);
 
   // Flattened view of just this seller's line items across all their sales,
   // used for the dashboard's order-status breakdown (waiting to ship, in
@@ -5545,13 +5623,42 @@ export default function Stallyard() {
                 <h3 className="text-lg font-semibold mt-10 mb-3" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
                   Sales
                 </h3>
+                {mySales.length > 0 && (
+                  <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+                    {SALES_TABS.map((t) => {
+                      const count =
+                        t.key === "all"
+                          ? mySales.length
+                          : mySales.filter((o) => getSellerOrderStatus(o, currentUser) === t.key).length;
+                      if (t.key !== "all" && count === 0) return null;
+                      return (
+                        <button
+                          key={t.key}
+                          onClick={() => setSalesTab(t.key)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                          style={{
+                            backgroundColor: salesTab === t.key ? INK : "white",
+                            color: salesTab === t.key ? "white" : SLATE,
+                            border: `1px solid ${salesTab === t.key ? INK : "#DDD8CC"}`,
+                          }}
+                        >
+                          {t.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 {mySales.length === 0 ? (
                   <p className="text-sm" style={{ color: SLATE }}>
                     No sales yet.
                   </p>
+                ) : filteredMySales.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Nothing in this tab.
+                  </p>
                 ) : (
                   <div className="space-y-3">
-                    {mySales.map((o) => {
+                    {filteredMySales.map((o) => {
                       const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
                       const myRevenue = myItems.reduce((s, i) => s + i.price * i.qty, 0);
                       return (
@@ -5604,10 +5711,11 @@ export default function Stallyard() {
                                     <span>
                                       {i.title} × {i.qty}
                                     </span>
-                                    <div className="flex items-center gap-2 shrink-0">
+                                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                                       <Tag color={FULFILLMENT_COLOR[i.fulfillmentStatus] || FULFILLMENT_COLOR.new}>
                                         {FULFILLMENT_LABEL[i.fulfillmentStatus] || "New"}
                                       </Tag>
+                                      {i.buyerConfirmedAt && <Tag color={SAGE}>Buyer confirmed</Tag>}
                                       <select
                                         value={i.fulfillmentStatus || "new"}
                                         onChange={(e) => updateItemFulfillment(o.id, i.id, e.target.value)}
@@ -5615,6 +5723,7 @@ export default function Stallyard() {
                                         style={{ borderColor: "#DDD8CC", color: INK }}
                                       >
                                         <option value="new">New</option>
+                                        <option value="preparing">Preparing</option>
                                         <option value="shipped">Shipped</option>
                                         <option value="delivered">Delivered</option>
                                         <option value="cancelled">Cancelled</option>
@@ -5622,8 +5731,21 @@ export default function Stallyard() {
                                       </select>
                                     </div>
                                   </div>
-                                  {i.fulfillmentStatus === "shipped" && (
-                                    <div className="flex items-center gap-2 mt-2">
+                                  {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") && (
+                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                      <select
+                                        value={i.carrier || ""}
+                                        onChange={(e) => updateItemCarrier(o.id, i.id, e.target.value)}
+                                        className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                                        style={{ borderColor: "#DDD8CC", color: INK }}
+                                      >
+                                        <option value="">Carrier (optional)</option>
+                                        {SHIPPING_CARRIERS.map((c) => (
+                                          <option key={c} value={c}>
+                                            {c}
+                                          </option>
+                                        ))}
+                                      </select>
                                       <input
                                         value={trackDraft}
                                         onChange={(e) =>
@@ -5821,9 +5943,9 @@ export default function Stallyard() {
                                 sage={SAGE}
                                 berry={BERRY}
                               />
-                              {item.fulfillmentStatus === "shipped" && item.trackingNumber && (
+                              {(item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && item.trackingNumber && (
                                 <div className="text-xs mt-2" style={{ color: SLATE }}>
-                                  Tracking:{" "}
+                                  {item.carrier ? `${item.carrier} tracking: ` : "Tracking: "}
                                   <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
                                     {item.trackingNumber}
                                   </span>{" "}
@@ -5836,6 +5958,21 @@ export default function Stallyard() {
                                   >
                                     Track package →
                                   </a>
+                                </div>
+                              )}
+                              {(item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && (
+                                <div className="mt-2">
+                                  {item.buyerConfirmedAt ? (
+                                    <Tag color={SAGE}>You confirmed receipt</Tag>
+                                  ) : (
+                                    <button
+                                      onClick={() => confirmReceipt(o.id, item.id)}
+                                      className="text-xs font-medium underline"
+                                      style={{ color: SAGE }}
+                                    >
+                                      Confirm receipt
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
