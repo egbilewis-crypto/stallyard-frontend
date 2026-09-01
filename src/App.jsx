@@ -61,6 +61,18 @@ const SHIPPING_METHODS = [
 
 const RETURN_POLICIES = ["No returns", "7-day returns", "14-day returns", "30-day returns"];
 
+const POLICY_LABELS = {
+  seller_rules: "Seller rules",
+  prohibited_items: "Prohibited items",
+  fees: "Fees",
+  payment_rules: "Payment rules",
+  shipping_rules: "Shipping rules",
+  returns_disputes: "Returns & disputes",
+};
+const POLICY_ORDER = ["seller_rules", "prohibited_items", "fees", "payment_rules", "shipping_rules", "returns_disputes"];
+
+const TICKET_STATUS_LABEL = { open: "Open", in_progress: "In progress", resolved: "Resolved" };
+
 const LISTING_MANAGE_TABS = [
   { key: "all", label: "All" },
   { key: "approved", label: "Active" },
@@ -880,6 +892,22 @@ export default function Stallyard() {
   const [orders, setOrders] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.05, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
+  const [policies, setPolicies] = useState({
+    seller_rules: "", prohibited_items: "", fees: "",
+    payment_rules: "", shipping_rules: "", returns_disputes: "",
+  });
+  const [myTickets, setMyTickets] = useState([]);
+  const [adminTickets, setAdminTickets] = useState([]);
+  const [activeTicketId, setActiveTicketId] = useState(null);
+  const [ticketMessages, setTicketMessages] = useState([]);
+  const [loadingTicketMessages, setLoadingTicketMessages] = useState(false);
+  const [newTicketForm, setNewTicketForm] = useState({ subject: "", message: "" });
+  const [creatingTicket, setCreatingTicket] = useState(false);
+  const [newTicketMessageInput, setNewTicketMessageInput] = useState("");
+  const [sendingTicketMessage, setSendingTicketMessage] = useState(false);
+  const [showNewTicketForm, setShowNewTicketForm] = useState(false);
+  const [editingPolicyCategory, setEditingPolicyCategory] = useState(null);
+  const [policyDraft, setPolicyDraft] = useState("");
   const [withdrawals, setWithdrawals] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [follows, setFollows] = useState([]);
@@ -1085,10 +1113,43 @@ export default function Stallyard() {
         // keep default settings
       }
       try {
-        const contentRes = await window.storage.get("stallyard-content", true);
-        if (contentRes) setContent(JSON.parse(contentRes.value));
+        const contentRes = await fetch(`${BACKEND_URL}/content`);
+        if (contentRes.ok) {
+          const raw = await contentRes.json();
+          setContent({
+            banners: raw.banners.map((b) => ({
+              id: b.id,
+              message: b.message,
+              tone: b.tone,
+              isActive: b.is_active,
+              mediaType: b.media_type,
+              imageUrl: b.image_url || "",
+              videoUrl: b.video_url || "",
+            })),
+            articles: raw.articles.map((a) => ({
+              id: a.id,
+              title: a.title,
+              body: a.body,
+              updatedAt: a.updated_at ? new Date(a.updated_at).getTime() : Date.now(),
+            })),
+            faqs: raw.faqs.map((f) => ({ id: f.id, question: f.question, answer: f.answer })),
+          });
+        }
       } catch {
         // keep default empty content
+      }
+      try {
+        const policiesRes = await fetch(`${BACKEND_URL}/policies`);
+        if (policiesRes.ok) {
+          const { policies: rows } = await policiesRes.json();
+          const next = {};
+          rows.forEach((p) => {
+            next[p.category] = p.body || "";
+          });
+          setPolicies(next);
+        }
+      } catch {
+        // keep default empty policies
       }
       setWithdrawals([]);
       setThreads([]); // loaded fresh once we know who's logged in, see the effect below
@@ -1126,6 +1187,8 @@ export default function Stallyard() {
         setWithdrawals([]);
         setNotifications([]);
         setMyWarnings([]);
+        setMyTickets([]);
+        setAdminTickets([]);
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -1225,6 +1288,26 @@ export default function Stallyard() {
         }
       } catch {
         // couldn't reach backend for warnings — leave empty
+      }
+      try {
+        const ticketsRes = await authFetch(`${BACKEND_URL}/support-tickets/mine`);
+        if (ticketsRes.ok) {
+          const { tickets } = await ticketsRes.json();
+          setMyTickets(tickets);
+        }
+      } catch {
+        // couldn't reach backend for tickets — leave empty
+      }
+      if (isAdmin) {
+        try {
+          const adminTicketsRes = await authFetch(`${BACKEND_URL}/support-tickets`);
+          if (adminTicketsRes.ok) {
+            const { tickets } = await adminTicketsRes.json();
+            setAdminTickets(tickets);
+          }
+        } catch {
+          // couldn't reach backend for admin tickets — leave empty
+        }
       }
       try {
         const cartRes = await authFetch(`${BACKEND_URL}/cart`);
@@ -2079,15 +2162,6 @@ export default function Stallyard() {
     }
   };
 
-  const persistContent = async (next) => {
-    setContent(next);
-    try {
-      await window.storage.set("stallyard-content", JSON.stringify(next), true);
-    } catch {
-      showToast("Couldn't save — try again");
-    }
-  };
-
   const persistWithdrawals = async (next) => {
     setWithdrawals(next);
     try {
@@ -2606,74 +2680,308 @@ export default function Stallyard() {
 
   const addBanner = async (data) => {
     if (!data.message.trim()) return;
-    const banner = {
-      id: uid(),
-      message: data.message.trim(),
-      tone: data.tone || "info",
-      isActive: true,
-      mediaType: data.mediaType || "none",
-      imageUrl: data.mediaType === "image" ? data.imageUrl : "",
-      videoUrl: data.mediaType === "video" ? data.videoUrl.trim() : "",
-    };
-    await persistContent({ ...content, banners: [banner, ...content.banners] });
-    showToast("Banner added");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/banners`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: data.message.trim(),
+          tone: data.tone || "info",
+          mediaType: data.mediaType || "none",
+          imageUrl: data.mediaType === "image" ? data.imageUrl : "",
+          videoUrl: data.mediaType === "video" ? data.videoUrl.trim() : "",
+        }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't add that banner — try again");
+        return;
+      }
+      const { banner: b } = await res.json();
+      setContent((c) => ({
+        ...c,
+        banners: [
+          { id: b.id, message: b.message, tone: b.tone, isActive: b.is_active, mediaType: b.media_type, imageUrl: b.image_url || "", videoUrl: b.video_url || "" },
+          ...c.banners,
+        ],
+      }));
+      showToast("Banner added");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const updateBanner = async (id, patch) => {
-    await persistContent({
-      ...content,
-      banners: content.banners.map((b) => (b.id === id ? { ...b, ...patch } : b)),
-    });
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/banners/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        showToast("Couldn't update that banner — try again");
+        return;
+      }
+      setContent((c) => ({
+        ...c,
+        banners: c.banners.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      }));
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const removeBanner = async (id) => {
-    await persistContent({ ...content, banners: content.banners.filter((b) => b.id !== id) });
-    showToast("Banner removed");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/banners/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that banner — try again");
+        return;
+      }
+      setContent((c) => ({ ...c, banners: c.banners.filter((b) => b.id !== id) }));
+      showToast("Banner removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const addArticle = async (data) => {
     if (!data.title.trim() || !data.body.trim()) return;
-    const article = {
-      id: uid(),
-      title: data.title.trim(),
-      body: data.body.trim(),
-      updatedAt: Date.now(),
-    };
-    await persistContent({ ...content, articles: [article, ...content.articles] });
-    showToast("Article published");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/articles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: data.title.trim(), body: data.body.trim() }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't publish that article — try again");
+        return;
+      }
+      const { article: a } = await res.json();
+      setContent((c) => ({
+        ...c,
+        articles: [{ id: a.id, title: a.title, body: a.body, updatedAt: Date.now() }, ...c.articles],
+      }));
+      showToast("Article published");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const updateArticle = async (id, patch) => {
-    await persistContent({
-      ...content,
-      articles: content.articles.map((a) => (a.id === id ? { ...a, ...patch, updatedAt: Date.now() } : a)),
-    });
-    showToast("Article updated");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/articles/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        showToast("Couldn't update that article — try again");
+        return;
+      }
+      setContent((c) => ({
+        ...c,
+        articles: c.articles.map((a) => (a.id === id ? { ...a, ...patch, updatedAt: Date.now() } : a)),
+      }));
+      showToast("Article updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const removeArticle = async (id) => {
-    await persistContent({ ...content, articles: content.articles.filter((a) => a.id !== id) });
-    showToast("Article removed");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/articles/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that article — try again");
+        return;
+      }
+      setContent((c) => ({ ...c, articles: c.articles.filter((a) => a.id !== id) }));
+      showToast("Article removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const addFaq = async (data) => {
     if (!data.question.trim() || !data.answer.trim()) return;
-    const faq = { id: uid(), question: data.question.trim(), answer: data.answer.trim() };
-    await persistContent({ ...content, faqs: [...content.faqs, faq] });
-    showToast("FAQ added");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/faqs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: data.question.trim(), answer: data.answer.trim() }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't add that FAQ — try again");
+        return;
+      }
+      const { faq } = await res.json();
+      setContent((c) => ({ ...c, faqs: [...c.faqs, faq] }));
+      showToast("FAQ added");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const updateFaq = async (id, patch) => {
-    await persistContent({
-      ...content,
-      faqs: content.faqs.map((f) => (f.id === id ? { ...f, ...patch } : f)),
-    });
-    showToast("FAQ updated");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/faqs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        showToast("Couldn't update that FAQ — try again");
+        return;
+      }
+      setContent((c) => ({
+        ...c,
+        faqs: c.faqs.map((f) => (f.id === id ? { ...f, ...patch } : f)),
+      }));
+      showToast("FAQ updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const removeFaq = async (id) => {
-    await persistContent({ ...content, faqs: content.faqs.filter((f) => f.id !== id) });
-    showToast("FAQ removed");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/content/faqs/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that FAQ — try again");
+        return;
+      }
+      setContent((c) => ({ ...c, faqs: c.faqs.filter((f) => f.id !== id) }));
+      showToast("FAQ removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const savePolicy = async (category, body) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/policies/${category}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't save that policy — try again");
+        return;
+      }
+      setPolicies((p) => ({ ...p, [category]: body }));
+      showToast("Policy updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const fetchMyTickets = async () => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets/mine`);
+      if (res.ok) {
+        const { tickets } = await res.json();
+        setMyTickets(tickets);
+      }
+    } catch {
+      // couldn't reach backend — leave whatever was already loaded
+    }
+  };
+
+  const createSupportTicket = async () => {
+    if (!newTicketForm.subject.trim() || !newTicketForm.message.trim()) {
+      showToast("Give it a subject and a message");
+      return;
+    }
+    setCreatingTicket(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: newTicketForm.subject.trim(), message: newTicketForm.message.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't open that ticket — try again");
+        return;
+      }
+      setMyTickets((t) => [data.ticket, ...t]);
+      setNewTicketForm({ subject: "", message: "" });
+      setShowNewTicketForm(false);
+      showToast("Ticket opened — we'll get back to you here");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setCreatingTicket(false);
+    }
+  };
+
+  const openTicketThread = async (ticketId) => {
+    setActiveTicketId(ticketId);
+    setLoadingTicketMessages(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets/${ticketId}/messages`);
+      if (res.ok) {
+        const { messages } = await res.json();
+        setTicketMessages(messages);
+      }
+    } catch {
+      showToast("Couldn't load that conversation — try again");
+    } finally {
+      setLoadingTicketMessages(false);
+    }
+  };
+
+  const sendTicketMessage = async () => {
+    if (!newTicketMessageInput.trim() || !activeTicketId) return;
+    setSendingTicketMessage(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets/${activeTicketId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: newTicketMessageInput.trim() }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't send that — try again");
+        return;
+      }
+      const { message } = await res.json();
+      setTicketMessages((m) => [...m, message]);
+      setNewTicketMessageInput("");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSendingTicketMessage(false);
+    }
+  };
+
+  const fetchAdminTickets = async () => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets`);
+      if (res.ok) {
+        const { tickets } = await res.json();
+        setAdminTickets(tickets);
+      }
+    } catch {
+      // couldn't reach backend — leave whatever was already loaded
+    }
+  };
+
+  const adminUpdateTicketStatus = async (ticketId, status) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets/${ticketId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't update that ticket — try again");
+        return;
+      }
+      setAdminTickets((tickets) => tickets.map((t) => (t.id === ticketId ? { ...t, status } : t)));
+      showToast("Ticket status updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const fileDispute = async (orderId) => {
@@ -8819,7 +9127,104 @@ export default function Stallyard() {
           </div>
         )}
 
-        {view === "help" && (
+        {view === "help" && activeTicketId && (
+          <div className="max-w-2xl">
+            <button
+              onClick={() => {
+                setActiveTicketId(null);
+                setTicketMessages([]);
+              }}
+              className="text-sm font-medium underline mb-4"
+              style={{ color: SLATE }}
+            >
+              ← Back to Help center
+            </button>
+            {(() => {
+              const ticket =
+                (currentMember?.isAdmin ? adminTickets : myTickets).find((t) => t.id === activeTicketId) || null;
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+                    <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                      {ticket?.subject || "Ticket"}
+                    </h2>
+                    {ticket && (
+                      <Tag color={ticket.status === "resolved" ? SAGE : ticket.status === "in_progress" ? MARIGOLD : SLATE}>
+                        {TICKET_STATUS_LABEL[ticket.status] || ticket.status}
+                      </Tag>
+                    )}
+                  </div>
+                  {ticket && !currentMember?.isAdmin && (
+                    <p className="text-xs mb-4" style={{ color: SLATE }}>
+                      Opened {new Date(ticket.created_at).toLocaleDateString()}
+                    </p>
+                  )}
+                  {ticket && currentMember?.isAdmin && (
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-xs" style={{ color: SLATE }}>
+                        From {ticket.display_name || ticket.username} · Set status:
+                      </span>
+                      <select
+                        value={ticket.status}
+                        onChange={(e) => adminUpdateTicketStatus(ticket.id, e.target.value)}
+                        className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <option value="open">Open</option>
+                        <option value="in_progress">In progress</option>
+                        <option value="resolved">Resolved</option>
+                      </select>
+                    </div>
+                  )}
+                  {loadingTicketMessages ? (
+                    <p className="text-sm" style={{ color: SLATE }}>
+                      Loading...
+                    </p>
+                  ) : (
+                    <div className="space-y-3 mb-4">
+                      {ticketMessages.map((m) => {
+                        const fromAdmin = m.is_admin;
+                        return (
+                          <div key={m.id} className={`flex ${fromAdmin ? "justify-start" : "justify-end"}`}>
+                            <div
+                              className="max-w-[80%] px-3 py-2 rounded-lg text-sm"
+                              style={{ backgroundColor: fromAdmin ? "#F1EFE7" : INK, color: fromAdmin ? INK : "white" }}
+                            >
+                              <div className="text-xs font-medium mb-1" style={{ color: fromAdmin ? SLATE : "#C9CCD3" }}>
+                                {m.display_name || m.username}
+                              </div>
+                              {m.body}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={newTicketMessageInput}
+                      onChange={(e) => setNewTicketMessageInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && sendTicketMessage()}
+                      placeholder="Write a reply..."
+                      className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={sendTicketMessage}
+                      disabled={sendingTicketMessage}
+                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        )}
+
+        {view === "help" && !activeTicketId && (
           <div className="max-w-2xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               Help center
@@ -8827,6 +9232,151 @@ export default function Stallyard() {
             <p className="text-sm mb-6" style={{ color: SLATE }}>
               Articles and answers to common questions.
             </p>
+
+            <div className="mb-8">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                  Contact support
+                </h3>
+                {currentUser && (
+                  <button
+                    onClick={() => setShowNewTicketForm((v) => !v)}
+                    className="text-xs font-medium underline"
+                    style={{ color: INK }}
+                  >
+                    {showNewTicketForm ? "Cancel" : "+ New ticket"}
+                  </button>
+                )}
+              </div>
+              {!currentUser ? (
+                <p className="text-sm" style={{ color: SLATE }}>
+                  <button onClick={() => setView("signin")} className="underline" style={{ color: INK }}>
+                    Log in
+                  </button>{" "}
+                  to contact support.
+                </p>
+              ) : (
+                <>
+                  {showNewTicketForm && (
+                    <div className="p-4 rounded-lg border bg-white mb-3" style={{ borderColor: "#DDD8CC" }}>
+                      <input
+                        value={newTicketForm.subject}
+                        onChange={(e) => setNewTicketForm((f) => ({ ...f, subject: e.target.value }))}
+                        placeholder="Subject"
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <textarea
+                        value={newTicketForm.message}
+                        onChange={(e) => setNewTicketForm((f) => ({ ...f, message: e.target.value }))}
+                        placeholder="Describe what's going on..."
+                        rows={3}
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <button
+                        onClick={createSupportTicket}
+                        disabled={creatingTicket}
+                        className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        {creatingTicket ? "Submitting..." : "Submit ticket"}
+                      </button>
+                    </div>
+                  )}
+                  {myTickets.length === 0 ? (
+                    !showNewTicketForm && (
+                      <p className="text-sm" style={{ color: SLATE }}>
+                        No tickets yet.
+                      </p>
+                    )
+                  ) : (
+                    <div className="space-y-2">
+                      {myTickets.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => openTicketThread(t.id)}
+                          className="w-full text-left flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <span className="text-sm font-medium truncate" style={{ color: INK }}>
+                            {t.subject}
+                          </span>
+                          <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : SLATE}>
+                            {TICKET_STATUS_LABEL[t.status] || t.status}
+                          </Tag>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="mb-8">
+              <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                Marketplace policies
+              </h3>
+              <div className="space-y-2">
+                {POLICY_ORDER.map((cat) => (
+                  <div key={cat} className="rounded-lg border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="px-4 py-3 flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium" style={{ color: INK }}>
+                        {POLICY_LABELS[cat]}
+                      </span>
+                      {currentMember?.isAdmin && editingPolicyCategory !== cat && (
+                        <button
+                          onClick={() => {
+                            setEditingPolicyCategory(cat);
+                            setPolicyDraft(policies[cat] || "");
+                          }}
+                          className="text-xs font-medium underline shrink-0"
+                          style={{ color: SLATE }}
+                        >
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    {editingPolicyCategory === cat ? (
+                      <div className="px-4 pb-3">
+                        <textarea
+                          value={policyDraft}
+                          onChange={(e) => setPolicyDraft(e.target.value)}
+                          rows={4}
+                          className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={async () => {
+                              await savePolicy(cat, policyDraft);
+                              setEditingPolicyCategory(null);
+                            }}
+                            className="text-xs font-medium underline"
+                            style={{ color: SAGE }}
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingPolicyCategory(null)}
+                            className="text-xs font-medium underline"
+                            style={{ color: SLATE }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      policies[cat] && (
+                        <div className="px-4 pb-3 text-sm whitespace-pre-wrap" style={{ color: SLATE }}>
+                          {policies[cat]}
+                        </div>
+                      )
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
 
             {content.articles.length > 0 && (
               <div className="mb-8">
@@ -8911,6 +9461,10 @@ export default function Stallyard() {
                 {
                   id: "accountReports",
                   label: `Account reports (${accountReports.filter((r) => r.status === "open").length})`,
+                },
+                {
+                  id: "supportTickets",
+                  label: `Support tickets (${adminTickets.filter((t) => t.status !== "resolved").length})`,
                 },
                 { id: "settings", label: "Settings" },
                 { id: "content", label: "Content" },
@@ -10085,6 +10639,42 @@ export default function Stallyard() {
                         </button>
                       )}
                     </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "supportTickets" && (
+              <div className="space-y-3">
+                {adminTickets.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No support tickets.
+                  </p>
+                )}
+                {adminTickets
+                  .slice()
+                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        openTicketThread(t.id);
+                        setView("help");
+                      }}
+                      className="w-full text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
+                      style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate" style={{ color: INK }}>
+                          {t.subject}
+                        </div>
+                        <div className="text-xs" style={{ color: SLATE }}>
+                          {t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>
+                        {TICKET_STATUS_LABEL[t.status] || t.status}
+                      </Tag>
+                    </button>
                   ))}
               </div>
             )}
