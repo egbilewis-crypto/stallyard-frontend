@@ -99,6 +99,7 @@ const EMOJI_CHOICES = ["📦", "🧶", "🕯️", "📚", "🪴", "👕", "🎨"
 const FULFILLMENT_LABEL = {
   new: "New",
   shipped: "Shipped",
+  delivered: "Delivered",
   cancelled: "Cancelled",
   returned: "Returned",
 };
@@ -106,6 +107,7 @@ const FULFILLMENT_LABEL = {
 const FULFILLMENT_COLOR = {
   new: "#3B6E8F",
   shipped: "#6B8F71",
+  delivered: "#2F6B3A",
   cancelled: "#C1443C",
   returned: "#B8862E",
 };
@@ -462,6 +464,7 @@ function StarDisplay({ value, size = "text-sm" }) {
 const TRACKING_STEPS = [
   { status: "new", label: "Order placed" },
   { status: "shipped", label: "Shipped" },
+  { status: "delivered", label: "Delivered" },
 ];
 
 function TrackingTimeline({ item, orderCreatedAt, ink, slate, sage, berry }) {
@@ -3019,6 +3022,24 @@ export default function Stallyard() {
     .filter((o) => o.items.some((i) => i.ownerUsername === currentUser))
     .sort((a, b) => b.createdAt - a.createdAt);
 
+  // Flattened view of just this seller's line items across all their sales,
+  // used for the dashboard's order-status breakdown (waiting to ship, in
+  // transit, completed, returns/disputes).
+  const mySoldItems = mySales.flatMap((o) =>
+    o.items
+      .filter((i) => i.ownerUsername === currentUser)
+      .map((i) => ({ ...i, orderId: o.id, isDisputed: o.isDisputed }))
+  );
+  const totalSalesRevenue = mySoldItems
+    .filter((i) => i.fulfillmentStatus !== "cancelled")
+    .reduce((s, i) => s + Number(i.price) * (i.qty || 1), 0);
+  const ordersWaitingToShip = mySoldItems.filter((i) => (i.fulfillmentStatus || "new") === "new").length;
+  const ordersInTransit = mySoldItems.filter((i) => i.fulfillmentStatus === "shipped").length;
+  const completedOrdersCount = mySoldItems.filter((i) => i.fulfillmentStatus === "delivered").length;
+  const activeReturnsDisputes = mySoldItems.filter(
+    (i) => i.returnStatus === "requested" || i.isDisputed
+  ).length;
+
   const myWalletTx = mySales.flatMap((o) => {
     const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
     return myItems.map((i) => {
@@ -3066,6 +3087,25 @@ export default function Stallyard() {
     .filter((w) => w.status === "paid")
     .reduce((s, w) => s + w.amount, 0);
   const walletNetAvailable = Math.max(0, walletAvailable - withdrawalsReserved);
+
+  const myRecentActivity = [
+    ...mySales.map((o) => {
+      const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
+      const total = myItems.reduce((s, i) => s + Number(i.price) * (i.qty || 1), 0);
+      return { id: `sale-${o.id}`, message: `New sale from ${o.buyerName} — $${total.toFixed(2)}`, at: o.createdAt };
+    }),
+    ...mySales
+      .filter((o) => o.isDisputed)
+      .map((o) => ({ id: `dispute-${o.id}`, message: `Dispute opened on order from ${o.buyerName}`, at: o.createdAt })),
+    ...mySoldItems
+      .filter((i) => i.returnStatus === "requested")
+      .map((i) => ({ id: `return-${i.id}`, message: `Return requested — ${i.title}`, at: i.returnRequestedAt || Date.now() })),
+    ...myWithdrawals
+      .filter((w) => w.status === "paid")
+      .map((w) => ({ id: `payout-${w.id}`, message: `Payout of $${Number(w.amount).toFixed(2)} completed`, at: w.requestedAt })),
+  ]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, 5);
 
   const myOrders = orders
     .filter((o) => o.buyerUsername === currentUser)
@@ -4763,38 +4803,66 @@ export default function Stallyard() {
                     ID verification not required (US resident)
                   </p>
                 ) : null}
-                <div className="flex gap-6 mt-4 mb-8">
-                  <div>
-                    <div
-                      className="text-3xl"
-                      style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
-                    >
+                <h3 className="text-sm font-semibold mb-3 mt-4" style={{ color: INK }}>
+                  Overview
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
                       {myListings.length}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
                       active listings
                     </div>
                   </div>
-                  <div>
-                    <div
-                      className="text-3xl"
-                      style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}
-                    >
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
                       ${myListings.reduce((s, l) => s + Number(l.price), 0).toFixed(2)}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
                       total inventory value
                     </div>
                   </div>
-                  <div>
-                    <div
-                      className="text-3xl"
-                      style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
-                    >
-                      {mySales.length}
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      ${totalSalesRevenue.toFixed(2)}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
-                      sales
+                      total sales ({mySales.length} order{mySales.length === 1 ? "" : "s"})
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#3B6E8F" }}>
+                      {ordersWaitingToShip}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      waiting to ship
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#6B8F71" }}>
+                      {ordersInTransit}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      in transit
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#2F6B3A" }}>
+                      {completedOrdersCount}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      completed
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: BERRY }}>
+                      {activeReturnsDisputes}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      returns/disputes
                     </div>
                   </div>
                 </div>
@@ -4872,6 +4940,64 @@ export default function Stallyard() {
                       Request withdrawal
                     </button>
                   </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-2" style={{ color: INK }}>
+                    Upcoming payouts
+                  </h3>
+                  {myWithdrawals.filter((w) => w.status === "processing").length === 0 ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      No payouts in progress right now.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {myWithdrawals
+                        .filter((w) => w.status === "processing")
+                        .slice(0, 5)
+                        .map((w) => (
+                          <div key={w.id} className="flex items-center justify-between text-sm">
+                            <span style={{ color: INK }}>
+                              ${Number(w.amount).toFixed(2)} to your bank
+                            </span>
+                            <span className="text-xs" style={{ color: SLATE }}>
+                              Requested {new Date(w.requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                      Recent activity
+                    </h3>
+                    <button
+                      onClick={() => setView("orders")}
+                      className="text-xs font-medium underline"
+                      style={{ color: SLATE }}
+                    >
+                      View all orders →
+                    </button>
+                  </div>
+                  {myRecentActivity.length === 0 ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      Nothing to show yet — activity will appear here once you make a sale.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {myRecentActivity.map((n) => (
+                        <div key={n.id} className="text-sm" style={{ color: INK }}>
+                          {n.message}
+                          <span className="text-xs ml-2" style={{ color: SLATE }}>
+                            {new Date(n.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
@@ -5042,6 +5168,7 @@ export default function Stallyard() {
                                       >
                                         <option value="new">New</option>
                                         <option value="shipped">Shipped</option>
+                                        <option value="delivered">Delivered</option>
                                         <option value="cancelled">Cancelled</option>
                                         <option value="returned">Returned</option>
                                       </select>
