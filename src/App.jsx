@@ -406,6 +406,33 @@ function containsContactInfo(text) {
 // Falls back to a general web search if the format isn't recognized —
 // this app has no live carrier API integration, so it can't confirm
 // the number is valid or show real-time scan events itself.
+// Lightweight, dependency-free parsing — just enough to show something
+// readable like "Chrome on Windows" rather than a raw user-agent string.
+function describeUserAgent(ua) {
+  if (!ua) return "Unknown device";
+  const browser = /Edg\//.test(ua)
+    ? "Edge"
+    : /Chrome\//.test(ua)
+    ? "Chrome"
+    : /Firefox\//.test(ua)
+    ? "Firefox"
+    : /Safari\//.test(ua)
+    ? "Safari"
+    : "Browser";
+  const os = /Windows/.test(ua)
+    ? "Windows"
+    : /Mac OS X/.test(ua)
+    ? "Mac"
+    : /Android/.test(ua)
+    ? "Android"
+    : /iPhone|iPad|iPod/.test(ua)
+    ? "iOS"
+    : /Linux/.test(ua)
+    ? "Linux"
+    : "an unknown device";
+  return `${browser} on ${os}`;
+}
+
 function buildTrackingUrl(raw) {
   const num = raw.trim();
   const digits = num.replace(/[^0-9]/g, "");
@@ -858,6 +885,8 @@ export default function Stallyard() {
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
   const [changePasswordForm, setChangePasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [loginHistory, setLoginHistory] = useState(null);
+  const [loadingLoginHistory, setLoadingLoginHistory] = useState(false);
   const [bankSaving, setBankSaving] = useState(false);
   const [threads, setThreads] = useState([]);
   const [messageReports, setMessageReports] = useState([]);
@@ -2292,6 +2321,22 @@ export default function Stallyard() {
 
   // Public trust signal — fetched on demand when a storefront opens, cached
   // per username so revisiting the same seller doesn't re-fetch.
+  const fetchLoginHistory = async () => {
+    if (loginHistory !== null) return;
+    setLoadingLoginHistory(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/login-history/mine`);
+      if (res.ok) {
+        const { history } = await res.json();
+        setLoginHistory(history);
+      }
+    } catch {
+      // couldn't reach backend — leave as null, "Show" button just won't populate
+    } finally {
+      setLoadingLoginHistory(false);
+    }
+  };
+
   const fetchSellerSalesCount = async (username) => {
     if (sellerSalesCounts[username] !== undefined) return;
     try {
@@ -7494,6 +7539,48 @@ export default function Stallyard() {
                       {changingPassword ? "Saving..." : "Save"}
                     </button>
                   </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                      Login history
+                    </h3>
+                    {loginHistory === null && (
+                      <button
+                        onClick={fetchLoginHistory}
+                        disabled={loadingLoginHistory}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        {loadingLoginHistory ? "Loading..." : "Show"}
+                      </button>
+                    )}
+                  </div>
+                  {loginHistory === null ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      See the last 20 times this account was signed into, with device and location info.
+                    </p>
+                  ) : loginHistory.length === 0 ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      No login history yet.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 mt-2">
+                      {loginHistory.map((h) => (
+                        <div key={h.id} className="flex items-center justify-between text-xs" style={{ color: INK }}>
+                          <span>
+                            {describeUserAgent(h.user_agent)}
+                            {h.ip ? ` · ${h.ip}` : ""}
+                          </span>
+                          <span style={{ color: SLATE }}>{new Date(h.created_at).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs mt-2" style={{ color: SLATE }}>
+                    Don't recognize something here? Change your password above right away.
+                  </p>
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
