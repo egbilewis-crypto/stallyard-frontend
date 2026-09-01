@@ -10682,6 +10682,104 @@ export default function Stallyard() {
         )}
       </main>
 
+      <footer style={{ backgroundColor: INK }} className="mt-16">
+        <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 sm:grid-cols-4 gap-8">
+          <div>
+            <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
+              Shop
+            </h3>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Browse listings
+              </button>
+              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Categories
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                How it works
+              </button>
+              {!currentUser && (
+                <button
+                  onClick={() => {
+                    setAuthMode("register");
+                    setView("signup");
+                  }}
+                  className="text-sm text-left"
+                  style={{ color: "#E5E7EB" }}
+                >
+                  Create an account
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
+              Sell
+            </h3>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => setView("sell")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Become a seller
+              </button>
+              <button onClick={() => setView("dashboard")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Seller dashboard
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Shipping & delivery
+              </button>
+              <button onClick={() => setView("wallet")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Getting paid
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
+              Support
+            </h3>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Contact support
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Help center
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Marketplace policies
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Returns & disputes
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
+              Stallyard
+            </h3>
+            <div className="flex flex-col gap-2">
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Seller rules
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Prohibited items
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Fees
+              </button>
+            </div>
+          </div>
+        </div>
+        <div
+          className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between flex-wrap gap-3"
+          style={{ borderTop: "1px solid rgba(255,255,255,0.1)" }}
+        >
+          <p className="text-xs" style={{ color: "#8A93A3" }}>
+            © {new Date().getFullYear()} Stallyard. Payments processed securely through Paystack.
+          </p>
+        </div>
+      </footer>
+
       {/* Detail modal */}
       {selected && (() => {
         const liveSelected = listings.find((l) => l.id === selected.id) || selected;
