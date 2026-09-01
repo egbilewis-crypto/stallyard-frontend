@@ -339,6 +339,12 @@ function backendOrderToFrontend(row) {
       carrier: i.carrier || "",
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
       proofOfDeliveryUrl: i.proof_of_delivery_url || "",
+      returnStatus: i.return_status || null,
+      returnReason: i.return_reason || "",
+      returnNote: i.return_note || "",
+      returnRequestedAt: i.return_requested_at ? new Date(i.return_requested_at).getTime() : null,
+      returnTrackingNumber: i.return_tracking_number || "",
+      returnEvidenceUrls: i.return_evidence_urls || [],
       statusHistory: [{ status: i.fulfillment_status || "new", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
     })),
   };
@@ -893,6 +899,7 @@ export default function Stallyard() {
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
+  const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [deliveryTokens, setDeliveryTokens] = useState({});
   const [generatingTokenKey, setGeneratingTokenKey] = useState(null);
@@ -2552,6 +2559,22 @@ export default function Stallyard() {
   };
 
   const updateReturnTracking = async (orderId, itemId, trackingNumber) => {
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/return-tracking`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackingNumber }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Couldn't save that tracking number — try again");
+      return;
+    }
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -2565,9 +2588,25 @@ export default function Stallyard() {
     showToast("Return tracking number saved");
   };
 
-  const requestReturn = async (orderId, itemId, reason, note) => {
+  const requestReturn = async (orderId, itemId, reason, note, evidenceUrls = []) => {
     if (!reason) {
       showToast("Pick a reason for the return");
+      return;
+    }
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/request-return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason, note: note.trim(), evidenceUrls }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Couldn't submit that return — try again");
       return;
     }
     await persistOrders(
@@ -2584,6 +2623,7 @@ export default function Stallyard() {
                       returnReason: reason,
                       returnNote: note.trim(),
                       returnRequestedAt: Date.now(),
+                      returnEvidenceUrls: evidenceUrls,
                     }
                   : i
               ),
@@ -2594,6 +2634,22 @@ export default function Stallyard() {
   };
 
   const approveReturn = async (orderId, itemId) => {
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/return-response`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "approved" }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Couldn't approve that return — try again");
+      return;
+    }
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -2617,6 +2673,22 @@ export default function Stallyard() {
   };
 
   const denyReturn = async (orderId, itemId) => {
+    let res;
+    try {
+      res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/return-response`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "denied" }),
+      });
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(data.error || "Couldn't deny that return — try again");
+      return;
+    }
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -2886,6 +2958,28 @@ export default function Stallyard() {
       showToast("Couldn't read that photo — try a different one");
     } finally {
       setUploadingPodKey(null);
+    }
+  };
+
+  const handleReturnEvidenceSelect = async (e, draftKey) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
+      return;
+    }
+    setUploadingReturnEvidenceKey(draftKey);
+    try {
+      const dataUrl = await resizeImageFile(file, 1400, 0.85);
+      setReturnDrafts((d) => ({
+        ...d,
+        [draftKey]: { ...d[draftKey], evidenceUrls: [...(d[draftKey]?.evidenceUrls || []), dataUrl] },
+      }));
+    } catch {
+      showToast("Couldn't read that photo — try a different one");
+    } finally {
+      setUploadingReturnEvidenceKey(null);
     }
   };
 
@@ -6060,6 +6154,20 @@ export default function Stallyard() {
                                         <span className="font-medium">Return requested:</span> {i.returnReason}
                                         {i.returnNote ? ` — "${i.returnNote}"` : ""}
                                       </div>
+                                      {i.returnEvidenceUrls && i.returnEvidenceUrls.length > 0 && (
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                          {i.returnEvidenceUrls.map((url, idx) => (
+                                            <a key={idx} href={url} target="_blank" rel="noreferrer">
+                                              <img
+                                                src={url}
+                                                alt={`Evidence ${idx + 1}`}
+                                                className="w-14 h-14 object-cover rounded-lg border"
+                                                style={{ borderColor: "#DDD8CC" }}
+                                              />
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
                                       <div className="flex items-center gap-3">
                                         <button
                                           onClick={() => approveReturn(o.id, i.id)}
@@ -6348,6 +6456,52 @@ export default function Stallyard() {
                                         className="w-full mb-2 px-2 py-1.5 rounded-lg border outline-none text-sm"
                                         style={{ borderColor: "#DDD8CC" }}
                                       />
+                                      <div className="mb-2">
+                                        <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                                          Evidence photos <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                                        </label>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          {(returnDrafts[draftKey].evidenceUrls || []).map((url, idx) => (
+                                            <div key={idx} className="relative">
+                                              <img
+                                                src={url}
+                                                alt={`Evidence ${idx + 1}`}
+                                                className="w-14 h-14 object-cover rounded-lg border"
+                                                style={{ borderColor: "#DDD8CC" }}
+                                              />
+                                              <button
+                                                onClick={() =>
+                                                  setReturnDrafts((d) => ({
+                                                    ...d,
+                                                    [draftKey]: {
+                                                      ...d[draftKey],
+                                                      evidenceUrls: d[draftKey].evidenceUrls.filter((_, i) => i !== idx),
+                                                    },
+                                                  }))
+                                                }
+                                                className="absolute -top-1.5 -right-1.5 rounded-full bg-white border"
+                                                style={{ borderColor: "#DDD8CC" }}
+                                                aria-label="Remove photo"
+                                              >
+                                                <X size={12} style={{ color: BERRY }} />
+                                              </button>
+                                            </div>
+                                          ))}
+                                          <label
+                                            className="w-14 h-14 rounded-lg border flex items-center justify-center cursor-pointer text-xs"
+                                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                                          >
+                                            {uploadingReturnEvidenceKey === draftKey ? "…" : "+"}
+                                            <input
+                                              type="file"
+                                              accept="image/*"
+                                              onChange={(e) => handleReturnEvidenceSelect(e, draftKey)}
+                                              className="hidden"
+                                              disabled={uploadingReturnEvidenceKey === draftKey}
+                                            />
+                                          </label>
+                                        </div>
+                                      </div>
                                       <div className="flex items-center gap-2">
                                         <button
                                           onClick={async () => {
@@ -6355,7 +6509,8 @@ export default function Stallyard() {
                                               o.id,
                                               item.id,
                                               returnDrafts[draftKey].reason,
-                                              returnDrafts[draftKey].note
+                                              returnDrafts[draftKey].note,
+                                              returnDrafts[draftKey].evidenceUrls || []
                                             );
                                             setReturnDrafts((d) => {
                                               const next = { ...d };
@@ -6386,7 +6541,7 @@ export default function Stallyard() {
                                   ) : (
                                     <button
                                       onClick={() =>
-                                        setReturnDrafts((d) => ({ ...d, [draftKey]: { reason: "", note: "" } }))
+                                        setReturnDrafts((d) => ({ ...d, [draftKey]: { reason: "", note: "", evidenceUrls: [] } }))
                                       }
                                       className="text-xs font-medium underline"
                                       style={{ color: SLATE }}
