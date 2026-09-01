@@ -1016,12 +1016,6 @@ export default function Stallyard() {
         setWatchlist([]);
       }
       try {
-        const notifRes = await window.storage.get("stallyard-notifications", true);
-        setNotifications(notifRes ? JSON.parse(notifRes.value) : []);
-      } catch {
-        setNotifications([]);
-      }
-      try {
         const readRes = await window.storage.get("stallyard-message-reads", false);
         setMessageReadState(readRes ? JSON.parse(readRes.value) : {});
       } catch {
@@ -1074,9 +1068,27 @@ export default function Stallyard() {
       if (!currentUser || !authToken) {
         setOrders([]);
         setWithdrawals([]);
+        setNotifications([]);
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
+      try {
+        const notifRes = await authFetch(`${BACKEND_URL}/notifications/mine`);
+        if (notifRes.ok) {
+          const { notifications: rows } = await notifRes.json();
+          setNotifications(
+            rows.map((n) => ({
+              id: n.id,
+              type: n.type,
+              message: n.message,
+              read: n.read,
+              createdAt: n.created_at ? new Date(n.created_at).getTime() : Date.now(),
+            }))
+          );
+        }
+      } catch {
+        // couldn't reach backend for notifications — leave empty
+      }
       try {
         const [mineRes, sellingRes, adminRes] = await Promise.all([
           authFetch(`${BACKEND_URL}/orders/mine`),
@@ -1458,7 +1470,6 @@ export default function Stallyard() {
     const newMember = backendUserToMember(data.user);
     await persistMembers([...members, newMember]);
     await saveAuthToken(data.token);
-    await pushNotification("new_account", `${newMember.displayName} (@${newMember.username}) created an account`);
     await setSession(newMember.username);
     setPendingEmailVerification(null);
     setEmailCodeInput("");
@@ -1773,28 +1784,22 @@ export default function Stallyard() {
     }
   };
 
-  const persistNotifications = async (next) => {
-    setNotifications(next);
+  const markNotificationRead = async (id) => {
+    setNotifications((ns) => ns.map((n) => (n.id === id ? { ...n, read: true } : n)));
     try {
-      await window.storage.set("stallyard-notifications", JSON.stringify(next), true);
+      await authFetch(`${BACKEND_URL}/notifications/${id}/read`, { method: "PATCH" });
     } catch {
-      // non-critical, fail silently
-    }
-  };
-
-  const pushNotification = async (type, message) => {
-    try {
-      const res = await window.storage.get("stallyard-notifications", true);
-      const current = res ? JSON.parse(res.value) : [];
-      const notif = { id: uid(), type, message, createdAt: Date.now(), read: false };
-      await persistNotifications([notif, ...current]);
-    } catch {
-      // non-critical, fail silently
+      // non-critical, fail silently — local state already updated
     }
   };
 
   const markNotificationsRead = async () => {
-    await persistNotifications(notifications.map((n) => ({ ...n, read: true })));
+    setNotifications((ns) => ns.map((n) => ({ ...n, read: true })));
+    try {
+      await authFetch(`${BACKEND_URL}/notifications/mark-all-read`, { method: "PATCH" });
+    } catch {
+      // non-critical, fail silently — local state already updated
+    }
   };
 
   const toggleWatchlist = (listingId) => {
@@ -4511,7 +4516,7 @@ export default function Stallyard() {
             <NavButton id="orders" icon={Receipt} label="Orders" />
             <NavButton id="help" icon={HelpCircle} label="Help" />
             {currentMember?.isAdmin && <NavButton id="admin" icon={Shield} label="Admin" />}
-            {currentMember?.isAdmin && (
+            {currentUser && (
               <button
                 onClick={() => setNotifPanelOpen((o) => !o)}
                 className="relative p-2 rounded-lg"
@@ -4573,7 +4578,7 @@ export default function Stallyard() {
         </div>
       </header>
 
-      {notifPanelOpen && currentMember?.isAdmin && (
+      {notifPanelOpen && currentUser && (
         <div
           className="fixed inset-0 z-30"
           onClick={() => setNotifPanelOpen(false)}
@@ -4604,9 +4609,10 @@ export default function Stallyard() {
             ) : (
               <div>
                 {notifications.map((n) => (
-                  <div
+                  <button
                     key={n.id}
-                    className="p-3 border-b text-sm"
+                    onClick={() => !n.read && markNotificationRead(n.id)}
+                    className="w-full text-left p-3 border-b text-sm"
                     style={{
                       borderColor: "#EFEBE0",
                       backgroundColor: n.read ? "white" : "#FBF0DC",
@@ -4617,7 +4623,7 @@ export default function Stallyard() {
                     <div className="text-xs mt-1" style={{ color: SLATE }}>
                       {new Date(n.createdAt).toLocaleString()}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
