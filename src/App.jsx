@@ -339,6 +339,12 @@ function backendUserToMember(user, existing) {
     idVerificationExempt:
       user.id_verification_exempt ?? existing?.idVerificationExempt ?? isUnitedStates(user.country),
     hasAppliedToSell: user.has_applied_to_sell || existing?.hasAppliedToSell || false,
+    verificationStatus:
+      user.verification_status ||
+      existing?.verificationStatus ||
+      (user.is_approved ? "approved" : user.has_applied_to_sell ? "pending" : "none"),
+    bankStatementUrl: user.bank_statement_url ?? existing?.bankStatementUrl ?? null,
+    rejectionReason: user.rejection_reason ?? existing?.rejectionReason ?? "",
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -401,6 +407,15 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
       };
       img.src = reader.result;
     };
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read file"));
+    reader.onload = () => resolve(reader.result);
     reader.readAsDataURL(file);
   });
 }
@@ -805,6 +820,10 @@ export default function Stallyard() {
   const [uploadingLicense, setUploadingLicense] = useState(false);
   const [idVerifyOpen, setIdVerifyOpen] = useState(false);
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
+  const [bankStatementDraft, setBankStatementDraft] = useState(null);
+  const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
+  const [rejectModalUsername, setRejectModalUsername] = useState(null);
+  const [rejectReasonDraft, setRejectReasonDraft] = useState("");
   const [vacationOpen, setVacationOpen] = useState(false);
   const [vacationForm, setVacationForm] = useState({ returnDate: "", message: "" });
   // Email verification (stage one of sign-up) — mirrors the phone
@@ -1120,9 +1139,37 @@ export default function Stallyard() {
   };
 
   const applyToSell = async () => {
+    const target = members.find((m) => m.username === currentUser);
+    if (target?.backendId) {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/profile/apply-to-sell`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bankStatementUrl: bankStatementDraft || null }),
+        });
+        if (!res.ok) {
+          showToast("Couldn't submit application — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
     await persistMembers(
-      members.map((m) => (m.username === currentUser ? { ...m, hasAppliedToSell: true } : m))
+      members.map((m) =>
+        m.username === currentUser
+          ? {
+              ...m,
+              hasAppliedToSell: true,
+              verificationStatus: "pending",
+              rejectionReason: "",
+              bankStatementUrl: bankStatementDraft || m.bankStatementUrl,
+            }
+          : m
+      )
     );
+    setBankStatementDraft(null);
     showToast("Seller application submitted — you'll be notified once reviewed");
   };
 
@@ -2477,6 +2524,28 @@ export default function Stallyard() {
     setAuthForm((f) => ({ ...f, licensePhotos: f.licensePhotos.filter((_, i) => i !== idx) }));
   };
 
+  const handleBankStatementSelect = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That file is too large — please upload something under 5MB");
+      return;
+    }
+    setUploadingBankStatement(true);
+    try {
+      const dataUrl = file.type.startsWith("image/")
+        ? await resizeImageFile(file, 1400, 0.85)
+        : await readFileAsDataURL(file);
+      setBankStatementDraft(dataUrl);
+      showToast("Bank statement attached");
+    } catch {
+      showToast("Couldn't read that file — try a different one");
+    } finally {
+      setUploadingBankStatement(false);
+    }
+  };
+
   const handleBannerImageSelect = async (e) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
@@ -2797,8 +2866,42 @@ export default function Stallyard() {
         return;
       }
     }
-    await persistMembers(members.map((m) => (m.username === username ? { ...m, isApproved: true } : m)));
+    await persistMembers(
+      members.map((m) =>
+        m.username === username
+          ? { ...m, isApproved: true, verificationStatus: "approved", rejectionReason: "" }
+          : m
+      )
+    );
     showToast("Seller approved — they can now list items");
+  };
+
+  const adminRejectMember = async (username, reason) => {
+    const target = members.find((m) => m.username === username);
+    if (target?.backendId) {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/reject`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: reason || "" }),
+        });
+        if (!res.ok) {
+          showToast("Couldn't reject member — try again");
+          return;
+        }
+      } catch {
+        showToast("Couldn't reach the server — try again");
+        return;
+      }
+    }
+    await persistMembers(
+      members.map((m) =>
+        m.username === username
+          ? { ...m, isApproved: false, verificationStatus: "rejected", rejectionReason: reason || "" }
+          : m
+      )
+    );
+    showToast("Seller application rejected");
   };
 
   const adminToggleVerify = async (username) => {
@@ -4161,11 +4264,45 @@ export default function Stallyard() {
               </p>
             )}
 
-            {currentUser && currentMember?.isApproved === false && !currentMember?.hasAppliedToSell && (
+            {currentUser &&
+              currentMember?.isApproved === false &&
+              (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
+              !currentMember?.hasAppliedToSell && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm mb-2" style={{ color: INK }}>
                   Selling outside the US requires admin approval. Apply for a seller account to get started.
                 </p>
+                <div className="mb-3">
+                  <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                    Bank statement <span className="font-normal" style={{ color: SLATE }}>(optional, helps speed up review)</span>
+                  </label>
+                  {bankStatementDraft ? (
+                    <div className="flex items-center gap-2 text-xs" style={{ color: SLATE }}>
+                      <span>File attached</span>
+                      <button
+                        onClick={() => setBankStatementDraft(null)}
+                        className="underline font-medium"
+                        style={{ color: BERRY }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <label
+                      className="inline-block px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer"
+                      style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
+                    >
+                      {uploadingBankStatement ? "Uploading…" : "Upload bank statement"}
+                      <input
+                        type="file"
+                        accept="image/*,.pdf"
+                        onChange={handleBankStatementSelect}
+                        className="hidden"
+                        disabled={uploadingBankStatement}
+                      />
+                    </label>
+                  )}
+                </div>
                 <button
                   onClick={applyToSell}
                   className="px-4 py-2 rounded-lg font-medium text-sm"
@@ -4176,11 +4313,33 @@ export default function Stallyard() {
               </div>
             )}
 
-            {currentUser && currentMember?.isApproved === false && currentMember?.hasAppliedToSell && (
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
-                <p className="text-sm" style={{ color: INK }}>
+                <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={MARIGOLD}>Pending</Tag>
                   Your seller application is under review. You'll be able to publish listings once approved.
                 </p>
+              </div>
+            )}
+
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "rejected" && (
+              <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
+                <p className="text-sm mb-1 flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={BERRY}>Rejected</Tag>
+                  Your seller application wasn't approved.
+                </p>
+                {currentMember?.rejectionReason && (
+                  <p className="text-xs mb-2" style={{ color: SLATE }}>
+                    Reason: {currentMember.rejectionReason}
+                  </p>
+                )}
+                <button
+                  onClick={applyToSell}
+                  className="px-4 py-2 rounded-lg font-medium text-sm"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Re-apply
+                </button>
               </div>
             )}
 
@@ -4523,7 +4682,10 @@ export default function Stallyard() {
                 </button>
               )}
             </div>
-            {currentUser && currentMember?.isApproved === false && !currentMember?.hasAppliedToSell && (
+            {currentUser &&
+              currentMember?.isApproved === false &&
+              (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
+              !currentMember?.hasAppliedToSell && (
               <div
                 className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
@@ -4540,14 +4702,33 @@ export default function Stallyard() {
                 </button>
               </div>
             )}
-            {currentUser && currentMember?.isApproved === false && currentMember?.hasAppliedToSell && (
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
               <div
                 className="mb-4 p-4 rounded-lg border"
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
               >
-                <p className="text-sm" style={{ color: INK }}>
+                <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={MARIGOLD}>Pending</Tag>
                   Your seller application is under review.
                 </p>
+              </div>
+            )}
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "rejected" && (
+              <div
+                className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
+                style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}
+              >
+                <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={BERRY}>Rejected</Tag>
+                  Your seller application wasn't approved.
+                </p>
+                <button
+                  onClick={applyToSell}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Re-apply
+                </button>
               </div>
             )}
             {currentUser && needsIdVerification && (
@@ -6437,7 +6618,8 @@ export default function Stallyard() {
                       (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "")
                     )
                     .map((m) => {
-                    const hasDocs = m.idType || m.licenseNumber || (m.licensePhotos && m.licensePhotos.length > 0);
+                    const hasDocs =
+                      m.idType || m.licenseNumber || m.bankStatementUrl || (m.licensePhotos && m.licensePhotos.length > 0);
                     const docsOpen = expandedDocsUsername === m.username;
                     return (
                     <div
@@ -6451,10 +6633,14 @@ export default function Stallyard() {
                           {m.displayName}
                           {m.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
                           {m.isVerified && <Tag color={SAGE}>Verified</Tag>}
-                          {m.isApproved === false && m.hasAppliedToSell && (
+                          {m.isApproved === false && m.verificationStatus === "pending" && (
                             <Tag color={MARIGOLD}>Seller application pending</Tag>
                           )}
-                          {m.isApproved === false && !m.hasAppliedToSell && (
+                          {m.isApproved === false && m.verificationStatus === "rejected" && (
+                            <Tag color={BERRY}>Seller application rejected</Tag>
+                          )}
+                          {m.isApproved === false &&
+                            (m.verificationStatus === "none" || !m.verificationStatus) && (
                             <Tag color={SLATE}>Buyer only</Tag>
                           )}
                           {m.isSuspended && <Tag color={BERRY}>Suspended</Tag>}
@@ -6474,13 +6660,25 @@ export default function Stallyard() {
                       </div>
                       {!m.isAdmin && (
                         <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
-                          {m.isApproved === false && m.hasAppliedToSell && (
+                          {m.isApproved === false && m.verificationStatus === "pending" && (
                             <button
                               onClick={() => adminApproveMember(m.username)}
                               className="text-xs font-medium underline"
                               style={{ color: SAGE }}
                             >
                               Approve seller
+                            </button>
+                          )}
+                          {m.isApproved === false && m.verificationStatus === "pending" && (
+                            <button
+                              onClick={() => {
+                                setRejectModalUsername(m.username);
+                                setRejectReasonDraft("");
+                              }}
+                              className="text-xs font-medium underline"
+                              style={{ color: BERRY }}
+                            >
+                              Reject
                             </button>
                           )}
                           <button
@@ -6518,7 +6716,37 @@ export default function Stallyard() {
                             {m.idCountry && <div>Issuing country: {m.idCountry}</div>}
                             {m.licenseNumber && <div>License number: {m.licenseNumber}</div>}
                             {m.idVerificationExempt && <div>US-based — ID verification exempt</div>}
+                            {m.verificationStatus === "rejected" && m.rejectionReason && (
+                              <div>Rejection reason: {m.rejectionReason}</div>
+                            )}
                           </div>
+                          {m.bankStatementUrl && (
+                            <div className="mb-2">
+                              <p className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                Bank statement
+                              </p>
+                              {m.bankStatementUrl.startsWith("data:image") ? (
+                                <a href={m.bankStatementUrl} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={m.bankStatementUrl}
+                                    alt={`${m.displayName} bank statement`}
+                                    className="w-24 h-24 object-cover rounded-lg border"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  />
+                                </a>
+                              ) : (
+                                <a
+                                  href={m.bankStatementUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs font-medium underline"
+                                  style={{ color: INK }}
+                                >
+                                  View bank statement
+                                </a>
+                              )}
+                            </div>
+                          )}
                           {m.licensePhotos && m.licensePhotos.length > 0 ? (
                             <div className="flex flex-wrap gap-2">
                               {m.licensePhotos.map((src, idx) => (
@@ -7807,6 +8035,52 @@ export default function Stallyard() {
                 Save & continue selling
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {rejectModalUsername && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setRejectModalUsername(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setRejectModalUsername(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Reject seller application
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              Let {rejectModalUsername} know why, so they can fix it and re-apply.
+            </p>
+            <textarea
+              value={rejectReasonDraft}
+              onChange={(e) => setRejectReasonDraft(e.target.value)}
+              placeholder="e.g. Bank statement doesn't match the name on file"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg border outline-none mb-3"
+              style={{ borderColor: "#DDD8CC" }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                adminRejectMember(rejectModalUsername, rejectReasonDraft.trim());
+                setRejectModalUsername(null);
+              }}
+              className="w-full py-2.5 rounded-lg font-medium"
+              style={{ backgroundColor: BERRY, color: "white" }}
+            >
+              Reject application
+            </button>
           </div>
         </div>
       )}
