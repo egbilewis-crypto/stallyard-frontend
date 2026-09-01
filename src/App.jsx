@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell } from "lucide-react";
+import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -267,6 +267,8 @@ function backendMessageToFrontend(row, members) {
     text: row.body || "",
     amount: row.offer_amount != null ? Number(row.offer_amount) : undefined,
     status: row.offer_status,
+    imageUrl: row.image_url || "",
+    orderId: row.order_id || null,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
   };
 }
@@ -845,7 +847,9 @@ export default function Stallyard() {
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
   const [bankSaving, setBankSaving] = useState(false);
   const [threads, setThreads] = useState([]);
+  const [messageReports, setMessageReports] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
+  const [activeThreadOrderId, setActiveThreadOrderId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
   const [viewingSeller, setViewingSeller] = useState(null);
   const [bidAmount, setBidAmount] = useState("");
@@ -894,6 +898,9 @@ export default function Stallyard() {
   const [generatingTokenKey, setGeneratingTokenKey] = useState(null);
   const [redeemTokenDrafts, setRedeemTokenDrafts] = useState({});
   const [redeemingTokenKey, setRedeemingTokenKey] = useState(null);
+  const [uploadingMessagePhoto, setUploadingMessagePhoto] = useState(false);
+  const [reportMessageId, setReportMessageId] = useState(null);
+  const [reportReasonDraft, setReportReasonDraft] = useState("");
   const [rejectModalUsername, setRejectModalUsername] = useState(null);
   const [rejectReasonDraft, setRejectReasonDraft] = useState("");
   const [vacationOpen, setVacationOpen] = useState(false);
@@ -1091,6 +1098,17 @@ export default function Stallyard() {
         setWithdrawals([...byId.values()].sort((a, b) => b.requestedAt - a.requestedAt));
       } catch {
         // couldn't reach backend for withdrawals — leave empty
+      }
+      if (isAdmin) {
+        try {
+          const reportsRes = await authFetch(`${BACKEND_URL}/message-reports`);
+          if (reportsRes.ok) {
+            const { reports } = await reportsRes.json();
+            setMessageReports(reports);
+          }
+        } catch {
+          // couldn't reach backend for message reports — leave empty
+        }
       }
       try {
         const cartRes = await authFetch(`${BACKEND_URL}/cart`);
@@ -1676,6 +1694,7 @@ export default function Stallyard() {
     await setSession(null);
     await saveAuthToken(null);
     setActiveThreadId(null);
+    setActiveThreadOrderId(null);
     setSelected(null);
     setView("browse");
     showToast("Logged out");
@@ -2024,7 +2043,7 @@ export default function Stallyard() {
     }
   };
 
-  const startOrOpenThread = async (listing) => {
+  const startOrOpenThread = async (listing, orderId = null) => {
     if (!currentUser) {
       setCartOpen(false);
       setSelected(null);
@@ -2075,14 +2094,15 @@ export default function Stallyard() {
     }
     setSelected(null);
     setActiveThreadId(threadId);
+    setActiveThreadOrderId(orderId);
     markThreadRead(threadId);
     setView("messages");
   };
 
-  const sendMessage = async (threadId, text) => {
+  const sendMessage = async (threadId, text, imageUrl = null) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    if (containsContactInfo(trimmed)) {
+    if (!trimmed && !imageUrl) return;
+    if (trimmed && containsContactInfo(trimmed)) {
       setMessageError("Messages can't include email addresses or phone numbers — keep contact on Stallyard.");
       return;
     }
@@ -2092,7 +2112,13 @@ export default function Stallyard() {
       res = await authFetch(`${BACKEND_URL}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threadId, body: trimmed, messageType: "text" }),
+        body: JSON.stringify({
+          threadId,
+          body: trimmed,
+          messageType: "text",
+          imageUrl: imageUrl || undefined,
+          orderId: activeThreadOrderId || undefined,
+        }),
       });
     } catch {
       setMessageError("Couldn't reach the server — try again.");
@@ -2110,6 +2136,58 @@ export default function Stallyard() {
       )
     );
     setMessageInput("");
+  };
+
+  const handleMessagePhotoSelect = async (e, threadId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
+      return;
+    }
+    setUploadingMessagePhoto(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 1200, 0.8);
+      await sendMessage(threadId, "", dataUrl);
+    } catch {
+      showToast("Couldn't send that photo — try again");
+    } finally {
+      setUploadingMessagePhoto(false);
+    }
+  };
+
+  const reportMessage = async (messageId, reason) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/messages/${messageId}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason || "" }),
+      });
+      if (!res.ok) {
+        showToast("Couldn't submit that report — try again");
+        return;
+      }
+      showToast("Reported — an admin will take a look");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const adminResolveMessageReport = async (reportId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/message-reports/${reportId}/resolve`, { method: "PATCH" });
+      if (!res.ok) {
+        showToast("Couldn't resolve that report — try again");
+        return;
+      }
+      setMessageReports((reports) =>
+        reports.map((r) => (r.id === reportId ? { ...r, status: "resolved" } : r))
+      );
+      showToast("Report resolved");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const sendOffer = async (threadId, amount) => {
@@ -6145,6 +6223,18 @@ export default function Stallyard() {
                                 sage={SAGE}
                                 berry={BERRY}
                               />
+                              <button
+                                onClick={() =>
+                                  startOrOpenThread(
+                                    { id: item.listingId, ownerUsername: item.ownerUsername, sellerName: item.sellerName },
+                                    o.id
+                                  )
+                                }
+                                className="text-xs font-medium underline mt-2 inline-block"
+                                style={{ color: INK }}
+                              >
+                                Message seller about this order
+                              </button>
                               {(item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && item.trackingNumber && (
                                 <div className="text-xs mt-2" style={{ color: SLATE }}>
                                   {item.carrier ? `${item.carrier} tracking: ` : "Tracking: "}
@@ -7001,6 +7091,7 @@ export default function Stallyard() {
                           key={t.id}
                           onClick={() => {
                             setActiveThreadId(t.id);
+                            setActiveThreadOrderId(null);
                             markThreadRead(t.id);
                           }}
                           className="w-full text-left flex items-center gap-3 p-3 rounded-lg border bg-white"
@@ -7040,6 +7131,7 @@ export default function Stallyard() {
                 <button
                   onClick={() => {
                     setActiveThreadId(null);
+                    setActiveThreadOrderId(null);
                     setMessageError("");
                   }}
                   className="text-xs font-medium underline mb-3"
@@ -7147,15 +7239,39 @@ export default function Stallyard() {
                             color: mine ? "white" : INK,
                           }}
                         >
+                          {m.imageUrl && (
+                            <a href={m.imageUrl} target="_blank" rel="noreferrer">
+                              <img
+                                src={m.imageUrl}
+                                alt="Attachment"
+                                className="rounded-lg mb-1 max-w-full"
+                                style={{ maxHeight: "200px" }}
+                              />
+                            </a>
+                          )}
                           {m.text}
                           <div
-                            className="text-[10px] mt-1"
+                            className="flex items-center gap-2 text-[10px] mt-1"
                             style={{ color: mine ? "#C9CCD3" : SLATE }}
                           >
                             {new Date(m.createdAt).toLocaleTimeString(undefined, {
                               hour: "numeric",
                               minute: "2-digit",
                             })}
+                            {!mine && (
+                              <button
+                                onClick={() => {
+                                  setReportMessageId(m.id);
+                                  setReportReasonDraft("");
+                                }}
+                                className="underline flex items-center gap-0.5"
+                                style={{ color: mine ? "#C9CCD3" : SLATE }}
+                                title="Report this message"
+                              >
+                                <Flag size={10} />
+                                Report
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -7219,6 +7335,20 @@ export default function Stallyard() {
                       $
                     </button>
                   )}
+                  <label
+                    className="p-2.5 rounded-lg border shrink-0 cursor-pointer flex items-center justify-center"
+                    style={{ borderColor: "#DDD8CC", color: SLATE }}
+                    title="Attach a photo"
+                  >
+                    <ImageIcon size={16} />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleMessagePhotoSelect(e, activeThread.id)}
+                      className="hidden"
+                      disabled={uploadingMessagePhoto}
+                    />
+                  </label>
                   <input
                     value={messageInput}
                     onChange={(e) => {
@@ -7328,6 +7458,10 @@ export default function Stallyard() {
                 { id: "members", label: `Members (${members.length})` },
                 { id: "orders", label: `Orders (${orders.length})` },
                 { id: "disputes", label: `Disputes (${disputedOrders.length})` },
+                {
+                  id: "reports",
+                  label: `Message reports (${messageReports.filter((r) => r.status === "open").length})`,
+                },
                 { id: "settings", label: "Settings" },
                 { id: "content", label: "Content" },
                 {
@@ -8331,6 +8465,72 @@ export default function Stallyard() {
                   ))}
               </div>
             )}
+
+            {adminTab === "reports" && (
+              <div className="space-y-3">
+                {messageReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No reported messages.
+                  </p>
+                )}
+                {messageReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          Reported by {r.reporter_display_name || r.reporter_username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      {r.listing_title && (
+                        <div className="text-xs mb-2" style={{ color: SLATE }}>
+                          Re: {r.listing_title}
+                        </div>
+                      )}
+                      <div
+                        className="text-sm p-3 rounded-lg mb-2"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        <div className="text-xs font-medium mb-1" style={{ color: SLATE }}>
+                          From {r.sender_display_name || r.sender_username}
+                        </div>
+                        {r.message_image_url && (
+                          <img
+                            src={r.message_image_url}
+                            alt="Reported attachment"
+                            className="rounded-lg mb-1 max-w-full"
+                            style={{ maxHeight: "160px" }}
+                          />
+                        )}
+                        {r.message_body || <em>No text</em>}
+                      </div>
+                      {r.reason && (
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>
+                          <span className="font-medium">Reason:</span> {r.reason}
+                        </div>
+                      )}
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveMessageReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </main>
@@ -9234,6 +9434,52 @@ export default function Stallyard() {
               style={{ backgroundColor: MARIGOLD, color: INK }}
             >
               Print
+            </button>
+          </div>
+        </div>
+      )}
+
+      {reportMessageId && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setReportMessageId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setReportMessageId(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Report this message
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              An admin will review it. This doesn't notify the other person.
+            </p>
+            <textarea
+              value={reportReasonDraft}
+              onChange={(e) => setReportReasonDraft(e.target.value)}
+              placeholder="What's wrong with this message? (optional)"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg border outline-none mb-3"
+              style={{ borderColor: "#DDD8CC" }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                reportMessage(reportMessageId, reportReasonDraft.trim());
+                setReportMessageId(null);
+              }}
+              className="w-full py-2.5 rounded-lg font-medium"
+              style={{ backgroundColor: BERRY, color: "white" }}
+            >
+              Submit report
             </button>
           </div>
         </div>
