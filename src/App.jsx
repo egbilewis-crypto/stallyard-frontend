@@ -9497,34 +9497,34 @@ export default function Stallyard() {
 
             {adminTab === "overview" && (
               <div>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-8">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Marketplace totals
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                   {[
-                    { label: "Total users", value: members.length, color: INK },
                     {
-                      label: "Active listings",
-                      value: listings.filter((l) => l.status === "approved").length,
-                      color: INK,
-                    },
-                    {
-                      label: "Sales",
+                      label: "Total sales",
                       value: `$${orders.reduce((s, o) => s + o.total, 0).toFixed(2)}`,
                       color: SAGE,
                     },
                     {
-                      label: "Commission earned",
+                      label: "Marketplace commission",
                       value: `$${orders.reduce((s, o) => s + (o.commissionAmount || 0), 0).toFixed(2)}`,
                       color: SAGE,
                     },
+                    { label: "Total users", value: members.length, color: INK, tab: "members" },
                     {
-                      label: "Disputes",
-                      value: disputedOrders.length,
-                      color: disputedOrders.length > 0 ? BERRY : INK,
+                      label: "Active listings",
+                      value: listings.filter((l) => l.status === "approved").length,
+                      color: INK,
+                      tab: "listings",
                     },
                   ].map((s) => (
-                    <div
+                    <button
                       key={s.label}
-                      className="p-4 rounded-lg border bg-white"
-                      style={{ borderColor: "#DDD8CC" }}
+                      onClick={() => s.tab && setAdminTab(s.tab)}
+                      className="p-4 rounded-lg border bg-white text-left"
+                      style={{ borderColor: "#DDD8CC", cursor: s.tab ? "pointer" : "default" }}
                     >
                       <div className="text-xs uppercase tracking-wide mb-1" style={{ color: SLATE }}>
                         {s.label}
@@ -9535,8 +9535,104 @@ export default function Stallyard() {
                       >
                         {s.value}
                       </div>
-                    </div>
+                    </button>
                   ))}
+                </div>
+
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Needs your attention
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  {(() => {
+                    const pendingOrders = orders.reduce(
+                      (s, o) => s + o.items.filter((i) => (i.fulfillmentStatus || "new") === "new").length,
+                      0
+                    );
+                    const awaitingConfirmation = orders.reduce(
+                      (s, o) =>
+                        s +
+                        o.items.filter(
+                          (i) =>
+                            (i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") &&
+                            !i.buyerConfirmedAt
+                        ).length,
+                      0
+                    );
+                    const pendingSellerApps = members.filter((m) => m.verificationStatus === "pending").length;
+                    const refundRequests = orders.reduce(
+                      (s, o) => s + o.items.filter((i) => i.returnStatus === "requested").length,
+                      0
+                    );
+                    const suspendedUsers = members.filter((m) => m.isSuspended).length;
+                    const suspiciousActivity = accountReports.filter((r) => r.status === "open").length;
+                    const systemAlerts = withdrawals.filter((w) => w.status === "failed").length;
+
+                    return [
+                      { label: "Pending orders", value: pendingOrders, tab: "orders" },
+                      { label: "Awaiting delivery confirmation", value: awaitingConfirmation, tab: "orders" },
+                      { label: "Seller apps awaiting verification", value: pendingSellerApps, tab: "members" },
+                      { label: "Open disputes", value: disputedOrders.length, tab: "disputes" },
+                      { label: "Refund requests", value: refundRequests, tab: "orders" },
+                      { label: "Suspended users", value: suspendedUsers, tab: "members" },
+                      { label: "Suspicious activity reports", value: suspiciousActivity, tab: "accountReports" },
+                      { label: "System alerts", value: systemAlerts, tab: "withdrawals" },
+                    ].map((s) => (
+                      <button
+                        key={s.label}
+                        onClick={() => setAdminTab(s.tab)}
+                        className="p-4 rounded-lg border bg-white text-left"
+                        style={{ borderColor: s.value > 0 ? BERRY : "#DDD8CC" }}
+                      >
+                        <div className="text-xs mb-1" style={{ color: SLATE }}>
+                          {s.label}
+                        </div>
+                        <div
+                          className="text-2xl font-semibold"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: s.value > 0 ? BERRY : INK }}
+                        >
+                          {s.value}
+                        </div>
+                      </button>
+                    ));
+                  })()}
+                </div>
+
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Money
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  {(() => {
+                    const processingWithdrawals = withdrawals.filter((w) => w.status === "processing");
+                    const moneyAwaitingPayout = processingWithdrawals.reduce((s, w) => s + Number(w.amount), 0);
+                    return [
+                      {
+                        label: "Money awaiting payout",
+                        value: `$${moneyAwaitingPayout.toFixed(2)}`,
+                        sub: `${processingWithdrawals.length} request${processingWithdrawals.length === 1 ? "" : "s"}`,
+                        tab: "withdrawals",
+                      },
+                    ].map((s) => (
+                      <button
+                        key={s.label}
+                        onClick={() => setAdminTab(s.tab)}
+                        className="p-4 rounded-lg border bg-white text-left"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <div className="text-xs mb-1" style={{ color: SLATE }}>
+                          {s.label}
+                        </div>
+                        <div
+                          className="text-2xl font-semibold"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
+                        >
+                          {s.value}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {s.sub}
+                        </div>
+                      </button>
+                    ));
+                  })()}
                 </div>
 
                 <div className="grid sm:grid-cols-2 gap-6">
