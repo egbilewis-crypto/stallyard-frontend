@@ -10351,25 +10351,44 @@ export default function Stallyard() {
                   Marketplace totals
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-                  {[
-                    {
-                      label: "Total sales",
-                      value: `$${orders.reduce((s, o) => s + o.total, 0).toFixed(2)}`,
-                      color: SAGE,
-                    },
-                    {
-                      label: "Marketplace commission",
-                      value: `$${orders.reduce((s, o) => s + (o.commissionAmount || 0), 0).toFixed(2)}`,
-                      color: SAGE,
-                    },
-                    { label: "Total users", value: members.length, color: INK, tab: "members" },
-                    {
-                      label: "Active listings",
-                      value: listings.filter((l) => l.status === "approved").length,
-                      color: INK,
-                      tab: "listings",
-                    },
-                  ].map((s) => (
+                  {(() => {
+                    // Orders can be placed in more than one currency (USD,
+                    // NGN, etc), so these get summed per-currency rather
+                    // than mixed into one number under a single symbol —
+                    // adding a $1,000 order to a ₦1,000 order isn't $2,000
+                    // or ₦2,000, it's two separate totals.
+                    const salesByCurrency = {};
+                    const commissionByCurrency = {};
+                    orders.forEach((o) => {
+                      const cur = o.currency || "USD";
+                      salesByCurrency[cur] = (salesByCurrency[cur] || 0) + (o.total || 0);
+                      commissionByCurrency[cur] = (commissionByCurrency[cur] || 0) + (o.commissionAmount || 0);
+                    });
+                    const formatByCurrency = (byCurrency) => {
+                      const entries = Object.entries(byCurrency);
+                      if (entries.length === 0) return formatMoney(0, "USD");
+                      return entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ");
+                    };
+                    return [
+                      {
+                        label: "Total sales",
+                        value: formatByCurrency(salesByCurrency),
+                        color: SAGE,
+                      },
+                      {
+                        label: "Marketplace commission",
+                        value: formatByCurrency(commissionByCurrency),
+                        color: SAGE,
+                      },
+                      { label: "Total users", value: members.length, color: INK, tab: "members" },
+                      {
+                        label: "Active listings",
+                        value: listings.filter((l) => l.status === "approved").length,
+                        color: INK,
+                        tab: "listings",
+                      },
+                    ];
+                  })().map((s) => (
                     <button
                       key={s.label}
                       onClick={() => s.tab && setAdminTab(s.tab)}
