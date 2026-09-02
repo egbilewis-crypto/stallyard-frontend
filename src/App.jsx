@@ -887,6 +887,12 @@ export default function Stallyard() {
   const [openFaqId, setOpenFaqId] = useState(null);
   const [listings, setListings] = useState([]);
   const [membersLoaded, setMembersLoaded] = useState(false);
+  // True only once the saved session (if any) has actually been read back
+  // from storage — distinct from membersLoaded, which flips true slightly
+  // earlier in the same startup sequence, before currentUser is resolved.
+  // Anything that redirects based on "is someone logged in" needs to wait
+  // for this, not just membersLoaded, or it acts on a stale null.
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -1158,6 +1164,7 @@ export default function Stallyard() {
       } catch {
         // not logged in yet
       }
+      setSessionChecked(true);
       try {
         const cartRes = await window.storage.get("stallyard-cart", false);
         setCart(cartRes ? JSON.parse(cartRes.value) : []);
@@ -2014,6 +2021,8 @@ export default function Stallyard() {
     setActiveThreadOrderId(null);
     setSelected(null);
     setView("browse");
+    setAdminLoginMode(false);
+    if (window.location.pathname === ADMIN_SECRET_PATH) window.history.pushState({}, "", "/");
     showToast("Logged out");
   };
 
@@ -2030,29 +2039,35 @@ export default function Stallyard() {
     if (view !== "admin") return;
     const interval = setInterval(() => {
       if (!adminUnlockedUntil || Date.now() > adminUnlockedUntil) {
-        setView("browse");
         setAdminUnlockedUntil(null);
         showToast("Your admin session locked — re-enter your password to continue");
+        openAdminPanel();
       }
     }, 15000);
     return () => clearInterval(interval);
   }, [view, adminUnlockedUntil]);
 
   // Gives the admin panel its own address rather than living as just
-  // another tab — reflects the current view in the URL, and handles
-  // someone landing directly on the secret admin path.
+  // another tab — reflects the current view in the URL. Deliberately
+  // one-directional: it only ever pushes TOWARD the admin path when `view`
+  // becomes "admin". Leaving that URL is handled explicitly at each actual
+  // exit point (logout, session timeout, the home/logo buttons) instead of
+  // reactively here — a reactive "kick away" version of this effect used to
+  // sit right next to the detection effect below, and because React batches
+  // state updates from one effect into a *later* render rather than
+  // reflecting them immediately for a sibling effect in the same commit,
+  // it kept winning the race and pushing the URL back to "/" a beat before
+  // the detection effect below had a chance to show the re-auth modal —
+  // making an already-logged-in admin look signed out on every refresh.
   useEffect(() => {
-    const path = window.location.pathname;
-    if (view === "admin") {
-      if (path !== ADMIN_SECRET_PATH) window.history.pushState({}, "", ADMIN_SECRET_PATH);
-    } else if (path === ADMIN_SECRET_PATH) {
-      window.history.pushState({}, "", "/");
+    if (view === "admin" && window.location.pathname !== ADMIN_SECRET_PATH) {
+      window.history.pushState({}, "", ADMIN_SECRET_PATH);
     }
   }, [view]);
 
   useEffect(() => {
     if (window.location.pathname !== ADMIN_SECRET_PATH) return;
-    if (!membersLoaded) return; // wait until we actually know who's logged in
+    if (!sessionChecked) return; // wait until we actually know who's logged in
     if (!currentUser) {
       setAdminLoginMode(true);
       // already on ADMIN_SECRET_PATH, no session found — show the login form
@@ -2068,7 +2083,7 @@ export default function Stallyard() {
     // straight to the normal re-auth gate for opening the panel.
     setAdminLoginMode(false);
     openAdminPanel();
-  }, [membersLoaded, currentUser, currentMember?.isAdmin]);
+  }, [sessionChecked, currentUser, currentMember?.isAdmin]);
 
   const persistCart = async (next) => {
     setCart(next);
@@ -5904,6 +5919,7 @@ export default function Stallyard() {
             onClick={() => {
               setSelected(null);
               setView("browse");
+              if (window.location.pathname === ADMIN_SECRET_PATH) window.history.pushState({}, "", "/");
             }}
             className="flex items-center gap-2"
             aria-label="Go to home"
