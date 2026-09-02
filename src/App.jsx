@@ -2053,16 +2053,20 @@ export default function Stallyard() {
   useEffect(() => {
     if (window.location.pathname !== ADMIN_SECRET_PATH) return;
     if (!membersLoaded) return; // wait until we actually know who's logged in
-    if (adminLoginMode) return;
     if (!currentUser) {
       setAdminLoginMode(true);
-      // already on ADMIN_SECRET_PATH — just show the login form
+      // already on ADMIN_SECRET_PATH, no session found — show the login form
       return;
     }
     if (!currentMember?.isAdmin) {
       window.history.replaceState({}, "", "/");
+      setAdminLoginMode(false);
       return;
     }
+    // Already logged in as an admin (e.g. this is a refresh, not a fresh
+    // visit) — skip the raw username/password form entirely and go
+    // straight to the normal re-auth gate for opening the panel.
+    setAdminLoginMode(false);
     openAdminPanel();
   }, [membersLoaded, currentUser, currentMember?.isAdmin]);
 
