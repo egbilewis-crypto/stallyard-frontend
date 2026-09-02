@@ -908,6 +908,20 @@ export default function Stallyard() {
   const [pendingTwoFactor, setPendingTwoFactor] = useState(null);
   const [twoFactorCodeInput, setTwoFactorCodeInput] = useState("");
   const [savingTwoFactorToggle, setSavingTwoFactorToggle] = useState(false);
+  // Turning 2FA ON now requires emailing + confirming a code first, tracked
+  // separately from savingTwoFactorToggle (which still covers turning OFF).
+  const [enable2FAStep, setEnable2FAStep] = useState("idle"); // "idle" | "code"
+  const [enable2FACodeInput, setEnable2FACodeInput] = useState("");
+  const [enable2FAError, setEnable2FAError] = useState("");
+  const [sendingEnable2FACode, setSendingEnable2FACode] = useState(false);
+  const [verifyingEnable2FACode, setVerifyingEnable2FACode] = useState(false);
+  // Admin accounts use an authenticator app instead of email codes — this
+  // holds the in-progress QR/secret from /admin/totp/setup until confirmed.
+  const [adminTotpSetup, setAdminTotpSetup] = useState(null); // { secret, otpauthUrl, qrCodeUrl } | null
+  const [adminTotpCodeInput, setAdminTotpCodeInput] = useState("");
+  const [adminTotpError, setAdminTotpError] = useState("");
+  const [startingAdminTotpSetup, setStartingAdminTotpSetup] = useState(false);
+  const [confirmingAdminTotpSetup, setConfirmingAdminTotpSetup] = useState(false);
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -1806,7 +1820,7 @@ export default function Stallyard() {
       return;
     }
     if (data.twoFactorRequired) {
-      setPendingTwoFactor({ userId: data.userId, username });
+      setPendingTwoFactor({ userId: data.userId, username, method: data.method || "email" });
       setTwoFactorCodeInput("");
       return;
     }
@@ -2656,7 +2670,7 @@ export default function Stallyard() {
 
   const submitAdminReauthCode = async () => {
     if (!adminReauthCode.trim()) {
-      setAdminReauthError("Enter the code we emailed you");
+      setAdminReauthError("Enter the code from your authenticator app");
       return;
     }
     setAdminReauthSubmitting(true);
@@ -2735,7 +2749,7 @@ export default function Stallyard() {
 
   const submitAdminLoginTwoFactor = async () => {
     if (!adminLoginCode.trim()) {
-      setAdminLoginError("Enter the code we emailed you");
+      setAdminLoginError("Enter the code from your authenticator app");
       return;
     }
     setAdminLoginSubmitting(true);
@@ -3677,6 +3691,117 @@ export default function Stallyard() {
       showToast("Couldn't reach the server — try again");
     } finally {
       setSavingTwoFactorToggle(false);
+    }
+  };
+
+  // Step 1: request the code. Doesn't touch twoFactorEnabled — the account
+  // only actually becomes 2FA-on once verifyEnableTwoFactorCode succeeds.
+  const sendEnableTwoFactorCode = async () => {
+    setSendingEnable2FACode(true);
+    setEnable2FAError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/two-factor/enable/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEnable2FAError(data.error || "Couldn't send a code — try again");
+        return;
+      }
+      setEnable2FAStep("code");
+      setEnable2FACodeInput("");
+      showToast("Code sent — check your email");
+    } catch {
+      setEnable2FAError("Couldn't reach the server — try again");
+    } finally {
+      setSendingEnable2FACode(false);
+    }
+  };
+
+  // Step 2: the emailed code actually flips two_factor_enabled to true.
+  const verifyEnableTwoFactorCode = async () => {
+    if (!enable2FACodeInput.trim()) {
+      setEnable2FAError("Enter the code we emailed you");
+      return;
+    }
+    setVerifyingEnable2FACode(true);
+    setEnable2FAError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/profile/two-factor/enable/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: enable2FACodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEnable2FAError(data.error || "That code didn't work");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, twoFactorEnabled: data.twoFactorEnabled } : m))
+      );
+      setEnable2FAStep("idle");
+      setEnable2FACodeInput("");
+      showToast("Two-factor authentication turned on");
+    } catch {
+      setEnable2FAError("Couldn't reach the server — try again");
+    } finally {
+      setVerifyingEnable2FACode(false);
+    }
+  };
+
+  // Admin-only step 1: fetch a fresh secret + QR code to scan into an
+  // authenticator app. Doesn't turn 2FA on yet — that's confirmAdminTotpSetup.
+  const startAdminTotpSetup = async () => {
+    setStartingAdminTotpSetup(true);
+    setAdminTotpError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/totp/setup`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminTotpError(data.error || "Couldn't start setup — try again");
+        return;
+      }
+      setAdminTotpSetup(data);
+      setAdminTotpCodeInput("");
+    } catch {
+      setAdminTotpError("Couldn't reach the server — try again");
+    } finally {
+      setStartingAdminTotpSetup(false);
+    }
+  };
+
+  // Admin-only step 2: the code from the authenticator app confirms setup
+  // and actually flips two_factor_enabled on.
+  const confirmAdminTotpSetup = async () => {
+    if (!adminTotpCodeInput.trim()) {
+      setAdminTotpError("Enter the code from your authenticator app");
+      return;
+    }
+    setConfirmingAdminTotpSetup(true);
+    setAdminTotpError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/totp/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: adminTotpCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAdminTotpError(data.error || "That code didn't work");
+        return;
+      }
+      await persistMembers(
+        members.map((m) => (m.username === currentUser ? { ...m, twoFactorEnabled: data.twoFactorEnabled } : m))
+      );
+      setAdminTotpSetup(null);
+      setAdminTotpCodeInput("");
+      showToast("Two-factor authentication turned on");
+    } catch {
+      setAdminTotpError("Couldn't reach the server — try again");
+    } finally {
+      setConfirmingAdminTotpSetup(false);
     }
   };
 
@@ -5094,7 +5219,7 @@ export default function Stallyard() {
                   Enter your code
                 </h2>
                 <p className="text-sm mb-4" style={{ color: SLATE }}>
-                  We emailed a 6-digit code to confirm it's you.
+                  Enter the 6-digit code from your authenticator app.
                 </p>
                 <input
                   value={adminLoginCode}
@@ -5212,7 +5337,9 @@ export default function Stallyard() {
                     Enter your code
                   </h1>
                   <p className="text-sm mb-4" style={{ color: SLATE }}>
-                    We emailed a 6-digit code to confirm it's really you.
+                    {pendingTwoFactor.method === "totp"
+                      ? "Enter the 6-digit code from your authenticator app."
+                      : "We emailed a 6-digit code to confirm it's really you."}
                   </p>
                   <input
                     value={twoFactorCodeInput}
@@ -8796,24 +8923,164 @@ export default function Stallyard() {
                         Two-factor authentication
                       </h3>
                       <p className="text-xs mt-1" style={{ color: SLATE }}>
-                        {currentMember?.twoFactorEnabled
+                        {currentMember?.isAdmin
+                          ? currentMember?.twoFactorEnabled
+                            ? "On — required for admin accounts, via your authenticator app."
+                            : "Required for admin accounts — set up an authenticator app below."
+                          : currentMember?.twoFactorEnabled
                           ? "On — we'll email a code each time you log in."
                           : "Off — add a one-time email code to your login."}
                       </p>
                     </div>
-                    <button
-                      onClick={() => toggleTwoFactor(!currentMember?.twoFactorEnabled)}
-                      disabled={savingTwoFactorToggle}
-                      className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
-                      style={
-                        currentMember?.twoFactorEnabled
-                          ? { borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white", border: "1px solid #DDD8CC" }
-                          : { backgroundColor: MARIGOLD, color: INK }
-                      }
-                    >
-                      {currentMember?.twoFactorEnabled ? "Turn off" : "Turn on"}
-                    </button>
+                    {currentMember?.isAdmin ? (
+                      !currentMember?.twoFactorEnabled &&
+                      !adminTotpSetup && (
+                        <button
+                          onClick={startAdminTotpSetup}
+                          disabled={startingAdminTotpSetup}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {startingAdminTotpSetup ? "Generating..." : "Set up"}
+                        </button>
+                      )
+                    ) : currentMember?.twoFactorEnabled ? (
+                      <button
+                        onClick={() => toggleTwoFactor(false)}
+                        disabled={savingTwoFactorToggle}
+                        className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                        style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white", border: "1px solid #DDD8CC" }}
+                      >
+                        Turn off
+                      </button>
+                    ) : (
+                      enable2FAStep === "idle" && (
+                        <button
+                          onClick={sendEnableTwoFactorCode}
+                          disabled={sendingEnable2FACode}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 shrink-0"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {sendingEnable2FACode ? "Sending code..." : "Turn on"}
+                        </button>
+                      )
+                    )}
                   </div>
+
+                  {/* Admin: authenticator app (TOTP) setup */}
+                  {currentMember?.isAdmin && !currentMember?.twoFactorEnabled && adminTotpSetup && (
+                    <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
+                      <p className="text-xs mb-2" style={{ color: SLATE }}>
+                        Scan this QR code with your authenticator app:
+                      </p>
+                      <img
+                        src={adminTotpSetup.qrCodeUrl}
+                        alt="Authenticator app QR code"
+                        className="mb-3 rounded-lg border"
+                        style={{ borderColor: "#DDD8CC", width: 160, height: 160 }}
+                      />
+                      <p className="text-xs mb-1" style={{ color: SLATE }}>
+                        Can't scan? Enter this key manually:
+                      </p>
+                      <p
+                        className="text-xs mb-3 px-2 py-1.5 rounded border break-all"
+                        style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                      >
+                        {adminTotpSetup.secret}
+                      </p>
+                      <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                        Then enter the 6-digit code it's showing
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={adminTotpCodeInput}
+                        onChange={(e) => setAdminTotpCodeInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && confirmAdminTotpSetup()}
+                        className="w-full px-3 py-2 rounded-lg border mb-2"
+                        style={{ borderColor: "#DDD8CC" }}
+                        placeholder="123456"
+                      />
+                      {adminTotpError && (
+                        <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                          {adminTotpError}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={confirmAdminTotpSetup}
+                          disabled={confirmingAdminTotpSetup}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {confirmingAdminTotpSetup ? "Confirming..." : "Confirm code"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAdminTotpSetup(null);
+                            setAdminTotpCodeInput("");
+                            setAdminTotpError("");
+                          }}
+                          className="text-xs underline disabled:opacity-50"
+                          style={{ color: SLATE }}
+                        >
+                          Start over
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {currentMember?.isAdmin && !currentMember?.twoFactorEnabled && !adminTotpSetup && adminTotpError && (
+                    <p className="text-xs mt-2" style={{ color: "#B4432A" }}>
+                      {adminTotpError}
+                    </p>
+                  )}
+
+                  {/* Non-admin: email code flow */}
+                  {!currentMember?.isAdmin && !currentMember?.twoFactorEnabled && enable2FAStep === "code" && (
+                    <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
+                      <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                        Enter the 6-digit code we emailed you
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={enable2FACodeInput}
+                        onChange={(e) => setEnable2FACodeInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && verifyEnableTwoFactorCode()}
+                        className="w-full px-3 py-2 rounded-lg border mb-2"
+                        style={{ borderColor: "#DDD8CC" }}
+                        placeholder="123456"
+                      />
+                      {enable2FAError && (
+                        <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                          {enable2FAError}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={verifyEnableTwoFactorCode}
+                          disabled={verifyingEnable2FACode}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {verifyingEnable2FACode ? "Confirming..." : "Confirm code"}
+                        </button>
+                        <button
+                          onClick={sendEnableTwoFactorCode}
+                          disabled={sendingEnable2FACode}
+                          className="text-xs underline disabled:opacity-50"
+                          style={{ color: SLATE }}
+                        >
+                          Resend code
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {!currentMember?.isAdmin && !currentMember?.twoFactorEnabled && enable2FAStep === "idle" && enable2FAError && (
+                    <p className="text-xs mt-2" style={{ color: "#B4432A" }}>
+                      {enable2FAError}
+                    </p>
+                  )}
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
@@ -9861,19 +10128,90 @@ export default function Stallyard() {
               Two-factor required
             </h2>
             <p className="text-sm mb-5" style={{ color: SLATE }}>
-              Admin accounts must have two-factor authentication turned on before you can open this panel.
-              We'll email a code to confirm it's you.
+              Admin accounts must set up an authenticator app (Google Authenticator, Authy, 1Password, etc.)
+              before you can open this panel.
             </p>
-            <button
-              onClick={() => toggleTwoFactor(true)}
-              disabled={savingTwoFactorToggle}
-              className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              style={{ backgroundColor: MARIGOLD, color: INK }}
-            >
-              {savingTwoFactorToggle ? "Turning on..." : "Turn on two-factor authentication"}
-            </button>
+            {!adminTotpSetup ? (
+              <div>
+                {adminTotpError && (
+                  <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                    {adminTotpError}
+                  </p>
+                )}
+                <button
+                  onClick={startAdminTotpSetup}
+                  disabled={startingAdminTotpSetup}
+                  className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {startingAdminTotpSetup ? "Generating..." : "Set up authenticator app"}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm mb-2" style={{ color: SLATE }}>
+                  Scan this QR code with your authenticator app:
+                </p>
+                <img
+                  src={adminTotpSetup.qrCodeUrl}
+                  alt="Authenticator app QR code"
+                  className="mb-3 rounded-lg border"
+                  style={{ borderColor: "#DDD8CC", width: 180, height: 180 }}
+                />
+                <p className="text-xs mb-1" style={{ color: SLATE }}>
+                  Can't scan? Enter this key manually:
+                </p>
+                <p
+                  className="text-xs mb-3 px-2 py-1.5 rounded border break-all"
+                  style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                >
+                  {adminTotpSetup.secret}
+                </p>
+                <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                  Then enter the 6-digit code it's showing
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={adminTotpCodeInput}
+                  onChange={(e) => setAdminTotpCodeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && confirmAdminTotpSetup()}
+                  className="w-full px-3 py-2 rounded-lg border mb-2"
+                  style={{ borderColor: "#DDD8CC" }}
+                  placeholder="123456"
+                  autoFocus
+                />
+                {adminTotpError && (
+                  <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                    {adminTotpError}
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={confirmAdminTotpSetup}
+                    disabled={confirmingAdminTotpSetup}
+                    className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    {confirmingAdminTotpSetup ? "Confirming..." : "Confirm code"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAdminTotpSetup(null);
+                      setAdminTotpCodeInput("");
+                      setAdminTotpError("");
+                    }}
+                    className="text-xs underline disabled:opacity-50"
+                    style={{ color: SLATE }}
+                  >
+                    Start over
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+
 
         {view === "admin" && currentMember?.isAdmin && currentMember?.twoFactorEnabled && (
           <div>
@@ -12502,7 +12840,7 @@ export default function Stallyard() {
             ) : (
               <>
                 <p className="text-sm mb-3" style={{ color: SLATE }}>
-                  We emailed a code to unlock the admin panel.
+                  Enter the 6-digit code from your authenticator app.
                 </p>
                 <input
                   value={adminReauthCode}
