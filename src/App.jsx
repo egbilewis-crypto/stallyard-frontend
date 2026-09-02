@@ -10405,7 +10405,7 @@ export default function Stallyard() {
                       },
                       { label: "Total users", value: members.length, color: INK, tab: "members" },
                       {
-                        label: "Active listings",
+                        label: "Approved listings",
                         value: listings.filter((l) => l.status === "approved").length,
                         color: INK,
                         tab: "listings",
@@ -10499,7 +10499,7 @@ export default function Stallyard() {
                     return [
                       {
                         label: "Money awaiting payout",
-                        value: `$${moneyAwaitingPayout.toFixed(2)}`,
+                        value: `${CURRENCIES.NGN.symbol}${moneyAwaitingPayout.toFixed(2)}`,
                         sub: `${processingWithdrawals.length} request${processingWithdrawals.length === 1 ? "" : "s"}`,
                         tab: "withdrawals",
                       },
