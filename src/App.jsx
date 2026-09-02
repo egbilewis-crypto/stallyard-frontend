@@ -842,7 +842,7 @@ export default function Stallyard() {
     () => typeof window !== "undefined" && window.location.pathname === ADMIN_SECRET_PATH
   );
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
-  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code"
+  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email"
   const [adminLoginCode, setAdminLoginCode] = useState("");
   const [adminLoginPendingUserId, setAdminLoginPendingUserId] = useState(null);
   const [adminLoginError, setAdminLoginError] = useState("");
@@ -850,7 +850,7 @@ export default function Stallyard() {
   const [authReturnView, setAuthReturnView] = useState("browse");
   const [adminTab, setAdminTab] = useState("overview");
   const [adminUnlockedUntil, setAdminUnlockedUntil] = useState(null);
-  const [adminReauthStep, setAdminReauthStep] = useState(null); // null | "password" | "code"
+  const [adminReauthStep, setAdminReauthStep] = useState(null); // null | "password" | "code" | "code-email"
   const [adminReauthPassword, setAdminReauthPassword] = useState("");
   const [adminReauthCode, setAdminReauthCode] = useState("");
   const [adminReauthSubmitting, setAdminReauthSubmitting] = useState(false);
@@ -1827,12 +1827,16 @@ export default function Stallyard() {
     await completeLogin(data, username);
   };
 
+  // Handles both steps of admin login (authenticator app, then the
+  // auto-sent email code) as well as the single-step email flow for
+  // non-admin accounts, based on pendingTwoFactor.method.
   const verifyTwoFactorCode = async () => {
     if (!pendingTwoFactor) return;
     setAuthError("");
+    const endpoint = pendingTwoFactor.method === "totp-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/login/verify-2fa`, {
+      res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: pendingTwoFactor.userId, code: twoFactorCodeInput.trim() }),
@@ -1844,6 +1848,13 @@ export default function Stallyard() {
     const data = await res.json();
     if (!res.ok) {
       setAuthError(data.error || "That code didn't work.");
+      return;
+    }
+    if (data.emailStepRequired) {
+      // Authenticator step passed — now the mandatory email step.
+      setPendingTwoFactor((p) => ({ ...p, method: "totp-email" }));
+      setTwoFactorCodeInput("");
+      showToast("Authenticator code confirmed — check your email for the next code");
       return;
     }
     const username = pendingTwoFactor.username;
@@ -2668,14 +2679,20 @@ export default function Stallyard() {
     }
   };
 
+  // Handles both steps of the reauth gate: authenticator app first
+  // (adminReauthStep === "code"), then the auto-sent email code
+  // (adminReauthStep === "code-email"). Both are mandatory.
   const submitAdminReauthCode = async () => {
     if (!adminReauthCode.trim()) {
-      setAdminReauthError("Enter the code from your authenticator app");
+      setAdminReauthError(
+        adminReauthStep === "code-email" ? "Enter the code we emailed you" : "Enter the code from your authenticator app"
+      );
       return;
     }
     setAdminReauthSubmitting(true);
+    const endpoint = adminReauthStep === "code-email" ? "/admin/reauth/verify-email" : "/admin/reauth/verify";
     try {
-      const res = await authFetch(`${BACKEND_URL}/admin/reauth/verify`, {
+      const res = await authFetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: adminReauthCode.trim() }),
@@ -2683,6 +2700,12 @@ export default function Stallyard() {
       const data = await res.json();
       if (!res.ok) {
         setAdminReauthError(data.error || "That code didn't work");
+        return;
+      }
+      if (data.emailStepRequired) {
+        setAdminReauthStep("code-email");
+        setAdminReauthCode("");
+        showToast("Authenticator code confirmed — check your email for the next code");
         return;
       }
       setAdminUnlockedUntil(Date.now() + ADMIN_SESSION_IDLE_MS);
@@ -2747,15 +2770,21 @@ export default function Stallyard() {
     }
   };
 
+  // Handles both steps of the dedicated admin login's 2FA: authenticator
+  // app first (adminLoginStep === "code"), then the auto-sent email code
+  // (adminLoginStep === "code-email"). Both are mandatory.
   const submitAdminLoginTwoFactor = async () => {
     if (!adminLoginCode.trim()) {
-      setAdminLoginError("Enter the code from your authenticator app");
+      setAdminLoginError(
+        adminLoginStep === "code-email" ? "Enter the code we emailed you" : "Enter the code from your authenticator app"
+      );
       return;
     }
     setAdminLoginSubmitting(true);
     setAdminLoginError("");
+    const endpoint = adminLoginStep === "code-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     try {
-      const res = await fetch(`${BACKEND_URL}/login/verify-2fa`, {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: adminLoginPendingUserId, code: adminLoginCode.trim() }),
@@ -2763,6 +2792,12 @@ export default function Stallyard() {
       const data = await res.json();
       if (!res.ok) {
         setAdminLoginError(data.error || "That code didn't work");
+        return;
+      }
+      if (data.emailStepRequired) {
+        setAdminLoginStep("code-email");
+        setAdminLoginCode("");
+        showToast("Authenticator code confirmed — check your email for the next code");
         return;
       }
       await finishAdminLogin(data, adminLoginForm.username.trim().toLowerCase());
@@ -5219,7 +5254,9 @@ export default function Stallyard() {
                   Enter your code
                 </h2>
                 <p className="text-sm mb-4" style={{ color: SLATE }}>
-                  Enter the 6-digit code from your authenticator app.
+                  {adminLoginStep === "code-email"
+                    ? "Now enter the 6-digit code we just emailed you. (2 of 2)"
+                    : "Enter the 6-digit code from your authenticator app. (1 of 2 — an email code comes next.)"}
                 </p>
                 <input
                   value={adminLoginCode}
@@ -5242,7 +5279,7 @@ export default function Stallyard() {
                   className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  {adminLoginSubmitting ? "Verifying..." : "Sign in"}
+                  {adminLoginSubmitting ? "Verifying..." : adminLoginStep === "code-email" ? "Sign in" : "Continue"}
                 </button>
                 <button
                   onClick={() => {
@@ -5338,7 +5375,9 @@ export default function Stallyard() {
                   </h1>
                   <p className="text-sm mb-4" style={{ color: SLATE }}>
                     {pendingTwoFactor.method === "totp"
-                      ? "Enter the 6-digit code from your authenticator app."
+                      ? "Enter the 6-digit code from your authenticator app. (1 of 2 — an email code comes next.)"
+                      : pendingTwoFactor.method === "totp-email"
+                      ? "Now enter the 6-digit code we just emailed you. (2 of 2)"
                       : "We emailed a 6-digit code to confirm it's really you."}
                   </p>
                   <input
@@ -5361,7 +5400,7 @@ export default function Stallyard() {
                     className="w-full py-2.5 rounded-lg font-medium mt-1"
                     style={{ backgroundColor: MARIGOLD, color: INK }}
                   >
-                    Verify & log in
+                    {pendingTwoFactor.method === "totp" ? "Continue" : "Verify & log in"}
                   </button>
                   <button
                     type="button"
@@ -12840,7 +12879,9 @@ export default function Stallyard() {
             ) : (
               <>
                 <p className="text-sm mb-3" style={{ color: SLATE }}>
-                  Enter the 6-digit code from your authenticator app.
+                  {adminReauthStep === "code-email"
+                    ? "Now enter the 6-digit code we just emailed you. (2 of 2)"
+                    : "Enter the 6-digit code from your authenticator app. (1 of 2 — an email code comes next.)"}
                 </p>
                 <input
                   value={adminReauthCode}
@@ -12863,7 +12904,7 @@ export default function Stallyard() {
                   className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  {adminReauthSubmitting ? "Verifying..." : "Unlock admin panel"}
+                  {adminReauthSubmitting ? "Verifying..." : adminReauthStep === "code-email" ? "Unlock admin panel" : "Continue"}
                 </button>
               </>
             )}
