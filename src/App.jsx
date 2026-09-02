@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
 
 const INK = "#1B2430";
@@ -10649,21 +10649,35 @@ export default function Stallyard() {
                   </button>
                 )}
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
-                  Sorted A–Z by name — documents for each member are under "View documents" below their info.
+                  Admin staff are listed separately from regular members, each sorted A–Z — documents for each
+                  member are under "View documents" below their info.
                 </p>
                 <div className="space-y-2">
                   {members
                     .slice()
-                    .sort((a, b) =>
-                      (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "")
-                    )
-                    .map((m) => {
+                    .sort((a, b) => {
+                      if (!!a.isAdmin !== !!b.isAdmin) return a.isAdmin ? -1 : 1;
+                      return (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "");
+                    })
+                    .map((m, i, sorted) => {
                     const hasDocs =
                       m.idType || m.licenseNumber || m.bankStatementUrl || (m.licensePhotos && m.licensePhotos.length > 0);
                     const docsOpen = expandedDocsUsername === m.username;
+                    const showAdminHeader = i === 0 && m.isAdmin;
+                    const showMemberHeader = !m.isAdmin && (i === 0 || sorted[i - 1].isAdmin);
                     return (
+                    <React.Fragment key={m.username}>
+                      {showAdminHeader && (
+                        <h4 className="text-xs font-semibold uppercase tracking-wide pt-1" style={{ color: SLATE }}>
+                          Admin staff
+                        </h4>
+                      )}
+                      {showMemberHeader && (
+                        <h4 className="text-xs font-semibold uppercase tracking-wide pt-3" style={{ color: SLATE }}>
+                          Members
+                        </h4>
+                      )}
                     <div
-                      key={m.username}
                       className="p-3 rounded-lg border bg-white"
                       style={{ borderColor: "#DDD8CC" }}
                     >
@@ -10841,6 +10855,7 @@ export default function Stallyard() {
                         </div>
                       )}
                     </div>
+                    </React.Fragment>
                     );
                   })}
                 </div>
