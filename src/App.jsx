@@ -6611,18 +6611,12 @@ export default function Stallyard() {
                     {form.listingType === "auction" ? "Starting bid" : "Price"}
                   </label>
                   <div className="flex gap-2">
-                    <select
-                      value={form.currency}
-                      onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                      className="px-2 py-2 rounded-lg border outline-none bg-white text-sm"
-                      style={{ borderColor: "#DDD8CC" }}
+                    <span
+                      className="px-2 py-2 rounded-lg border bg-white text-sm flex items-center"
+                      style={{ borderColor: "#DDD8CC", color: SLATE }}
                     >
-                      {Object.entries(CURRENCIES).map(([code, c]) => (
-                        <option key={code} value={code}>
-                          {c.symbol} {code}
-                        </option>
-                      ))}
-                    </select>
+                      {CURRENCIES.NGN.symbol} NGN
+                    </span>
                     <input
                       type="number"
                       min="0"
@@ -7100,7 +7094,21 @@ export default function Stallyard() {
                   </div>
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
-                      ${myListings.reduce((s, l) => s + Number(l.price), 0).toFixed(2)}
+                      {(() => {
+                        // A seller can list in more than one currency, so
+                        // this sums per-currency rather than mixing an NGN
+                        // listing's price into a USD listing's price under
+                        // one $ sign.
+                        const byCurrency = {};
+                        myListings.forEach((l) => {
+                          const cur = l.currency || "USD";
+                          byCurrency[cur] = (byCurrency[cur] || 0) + Number(l.price || 0);
+                        });
+                        const entries = Object.entries(byCurrency);
+                        return entries.length
+                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
+                          : formatMoney(0, "USD");
+                      })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
                       total inventory value
@@ -7108,7 +7116,22 @@ export default function Stallyard() {
                   </div>
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                      ${totalSalesRevenue.toFixed(2)}
+                      {(() => {
+                        // Same reasoning as inventory value above — sum
+                        // per-currency rather than blending sales made in
+                        // different currencies into one number.
+                        const byCurrency = {};
+                        mySoldItems
+                          .filter((i) => i.fulfillmentStatus !== "cancelled")
+                          .forEach((i) => {
+                            const cur = i.currency || "USD";
+                            byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
+                          });
+                        const entries = Object.entries(byCurrency);
+                        return entries.length
+                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
+                          : formatMoney(0, "USD");
+                      })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
                       total sales ({mySales.length} order{mySales.length === 1 ? "" : "s"})
