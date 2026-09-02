@@ -10638,14 +10638,16 @@ export default function Stallyard() {
 
             {adminTab === "members" && (
               <div>
-                <button
-                  onClick={() => setAddMemberOpen(true)}
-                  className="mb-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-                  style={{ backgroundColor: INK, color: "white" }}
-                >
-                  <Plus size={16} />
-                  Add member
-                </button>
+                {hasAdminPermission(currentMember, "user_management") && (
+                  <button
+                    onClick={() => setAddMemberOpen(true)}
+                    className="mb-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: INK, color: "white" }}
+                  >
+                    <Plus size={16} />
+                    Add member
+                  </button>
+                )}
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
                   Sorted A–Z by name — documents for each member are under "View documents" below their info.
                 </p>
