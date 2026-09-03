@@ -197,6 +197,8 @@ const RETURN_REASONS = [
   "Not as described",
   "Damaged or defective",
   "Wrong item received",
+  "Fake or counterfeit",
+  "Item missing / never arrived",
   "Changed my mind",
   "Other",
 ];
@@ -8563,7 +8565,7 @@ export default function Stallyard() {
                                       className="text-xs font-medium underline"
                                       style={{ color: SLATE }}
                                     >
-                                      Request a return
+                                      Report a problem
                                     </button>
                                   )
                                 ) : (
