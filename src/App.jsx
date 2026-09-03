@@ -304,6 +304,7 @@ function backendListingToFrontend(row, existing) {
     shippingMethods: row.shipping_methods || [],
     returnPolicy: row.return_policy || "",
     vin: row.vin || "",
+    shipsToUsa: !!row.ships_to_usa,
     sellerName: row.seller_name,
     ownerUsername: row.owner_username,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
@@ -783,6 +784,11 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
           <p className="mt-1 text-xs" style={{ color: SLATE }}>
             {listing.shippingFee ? `+ ${formatMoney(listing.shippingFee, listing.currency)} shipping` : "Free shipping"}
           </p>
+          {listing.shipsToUsa && (
+            <div className="mt-1">
+              <Tag color="#3B6E8F">Ships to USA</Tag>
+            </div>
+          )}
         </div>
       </button>
       <div className="px-5 pl-6 pb-4">
@@ -904,6 +910,7 @@ export default function Stallyard() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [conditionFilter, setConditionFilter] = useState("All");
+  const [shipsToUsaFilter, setShipsToUsaFilter] = useState(false);
   const [sortBy, setSortBy] = useState("featured");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -1076,6 +1083,7 @@ export default function Stallyard() {
     shippingMethods: [],
     returnPolicy: "",
     vin: "",
+    shipsToUsa: false,
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
@@ -4505,6 +4513,7 @@ export default function Stallyard() {
       shippingMethods: [],
       returnPolicy: "",
       vin: "",
+      shipsToUsa: false,
     });
     setEditingId(null);
     setPreviewOpen(false);
@@ -4775,6 +4784,7 @@ export default function Stallyard() {
             shippingMethods: form.shippingMethods,
             returnPolicy: form.returnPolicy,
             vin: form.vin,
+            shipsToUsa: form.shipsToUsa,
           }),
         });
       } catch {
@@ -4821,6 +4831,7 @@ export default function Stallyard() {
       shippingMethods: listing.shippingMethods || [],
       returnPolicy: listing.returnPolicy || "",
       vin: listing.vin || "",
+      shipsToUsa: !!listing.shipsToUsa,
     });
     setEditingId(listing.id);
     setAdminEditContext(fromAdmin);
@@ -5470,7 +5481,8 @@ export default function Stallyard() {
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
-      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
+      const matchesShipsToUsa = !shipsToUsaFilter || l.shipsToUsa;
+      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice && matchesShipsToUsa;
     })
     .sort((a, b) => {
       if (sortBy === "price-asc") return Number(a.price) - Number(b.price);
@@ -5837,7 +5849,7 @@ export default function Stallyard() {
                     >
                       <option value="">Country of residence</option>
                       <option value="Nigeria">Nigeria</option>
-                      <option value="United States">United States (coming soon)</option>
+                      <option value="United States">United States</option>
                     </select>
                     <div className="flex gap-3">
                       <div className="flex-1">
@@ -6659,12 +6671,26 @@ export default function Stallyard() {
                     ))}
                   </select>
                 </div>
-                {(priceMin || priceMax || conditionFilter !== "All") && (
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                    Shipping
+                  </label>
+                  <label className="flex items-center gap-1.5 text-sm px-2 py-1.5" style={{ color: INK }}>
+                    <input
+                      type="checkbox"
+                      checked={shipsToUsaFilter}
+                      onChange={(e) => setShipsToUsaFilter(e.target.checked)}
+                    />
+                    Ships to USA
+                  </label>
+                </div>
+                {(priceMin || priceMax || conditionFilter !== "All" || shipsToUsaFilter) && (
                   <button
                     onClick={() => {
                       setPriceMin("");
                       setPriceMax("");
                       setConditionFilter("All");
+                      setShipsToUsaFilter(false);
                     }}
                     className="text-xs font-medium underline"
                     style={{ color: SLATE }}
@@ -7086,6 +7112,14 @@ export default function Stallyard() {
                   ))}
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-sm" style={{ color: INK }}>
+                <input
+                  type="checkbox"
+                  checked={form.shipsToUsa}
+                  onChange={(e) => setForm({ ...form, shipsToUsa: e.target.checked })}
+                />
+                Ships to USA
+              </label>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                   Return policy <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
@@ -10011,13 +10045,16 @@ export default function Stallyard() {
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <input
+                        <select
                           value={addressDraft.country}
                           onChange={(e) => setAddressDraft({ ...addressDraft, country: e.target.value })}
-                          placeholder="Country"
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                          style={{ borderColor: "#DDD8CC", color: addressDraft.country ? INK : SLATE }}
+                        >
+                          <option value="">Country</option>
+                          <option value="Nigeria">Nigeria</option>
+                          <option value="United States">United States</option>
+                        </select>
                       </div>
                       {addressError && (
                         <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
@@ -13173,13 +13210,16 @@ export default function Stallyard() {
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <input
+                        <select
                           value={shippingForm.country}
                           onChange={(e) => setShippingForm({ ...shippingForm, country: e.target.value })}
-                          placeholder="Country"
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                          style={{ borderColor: "#DDD8CC", color: shippingForm.country ? INK : SLATE }}
+                        >
+                          <option value="">Country</option>
+                          <option value="Nigeria">Nigeria</option>
+                          <option value="United States">United States</option>
+                        </select>
                       </div>
                       <label className="flex items-center gap-2 text-xs pt-1" style={{ color: SLATE }}>
                         <input
