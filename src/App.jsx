@@ -959,6 +959,8 @@ export default function Stallyard() {
   // Most-recently-viewed listing ids, newest first, capped at 12 — stored
   // the same way as cart/watchlist (local to this browser).
   const [recentlyViewedIds, setRecentlyViewedIds] = useState([]);
+  const [savedCards, setSavedCards] = useState([]);
+  const [savedAddresses, setSavedAddresses] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
@@ -977,6 +979,7 @@ export default function Stallyard() {
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [checkoutVerifying, setCheckoutVerifying] = useState(false);
   const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
+  const [saveCardAtCheckout, setSaveCardAtCheckout] = useState(false);
   const [orders, setOrders] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.05, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
@@ -1298,6 +1301,8 @@ export default function Stallyard() {
         setMyWarnings([]);
         setMyTickets([]);
         setAdminTickets([]);
+        setSavedCards([]);
+        setSavedAddresses([]);
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -1463,6 +1468,18 @@ export default function Stallyard() {
         }
       } else {
         setThreads([]);
+      }
+      try {
+        const cardsRes = await authFetch(`${BACKEND_URL}/saved-cards`);
+        if (cardsRes.ok) setSavedCards(await cardsRes.json());
+      } catch {
+        // couldn't reach backend for saved cards — leave empty
+      }
+      try {
+        const addressesRes = await authFetch(`${BACKEND_URL}/addresses`);
+        if (addressesRes.ok) setSavedAddresses(await addressesRes.json());
+      } catch {
+        // couldn't reach backend for saved addresses — leave empty
       }
     })();
   }, [currentUser, authToken, members, listings]);
@@ -4259,6 +4276,7 @@ export default function Stallyard() {
           items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty })),
           shippingAddress: { ...shippingForm },
           currency: cartCurrency,
+          saveCard: saveCardAtCheckout,
         }),
       });
     } catch {
@@ -4307,6 +4325,78 @@ export default function Stallyard() {
       setCheckoutVerifyError("Couldn't reach the server — contact support if you were charged.");
     } finally {
       setCheckoutVerifying(false);
+    }
+  };
+
+  // One-tap checkout with a card saved from an earlier purchase — no
+  // redirect to Paystack needed, the charge happens directly.
+  const payWithSavedCard = async (cardId) => {
+    if (cartItems.length === 0) return;
+    if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
+      setShippingError("Fill in your name, street, city, ZIP, and country to ship this order.");
+      return;
+    }
+    setShippingError("");
+    setCheckoutSubmitting(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/checkout/pay-with-saved-card`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty })),
+          shippingAddress: { ...shippingForm },
+          currency: cartCurrency,
+          cardId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setShippingError(data.error || "That card couldn't be charged — try a different one.");
+        return;
+      }
+      if (saveShippingAddress) {
+        await persistMembers(
+          members.map((m) => (m.username === currentUser ? { ...m, shippingAddress: { ...shippingForm } } : m))
+        );
+      }
+      const order = backendOrderToFrontend(data.order);
+      const purchasedIds = new Set(order.items.map((i) => i.listingId));
+      await persistListings(listings.map((l) => (purchasedIds.has(l.id) ? { ...l, status: "sold" } : l)));
+      await persistOrders([order, ...orders.filter((o) => o.id !== order.id)]);
+      await persistCart([]);
+      setCartOpen(false);
+      setConfirmedOrder(order);
+    } catch {
+      setShippingError("Couldn't reach the server — check your connection and try again.");
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const setDefaultSavedCard = async (cardId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/saved-cards/${cardId}/default`, { method: "PATCH" });
+      if (!res.ok) {
+        showToast("Couldn't update your saved cards");
+        return;
+      }
+      setSavedCards((cards) => cards.map((c) => ({ ...c, is_default: c.id === cardId })));
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const deleteSavedCard = async (cardId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/saved-cards/${cardId}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that card");
+        return;
+      }
+      setSavedCards((cards) => cards.filter((c) => c.id !== cardId));
+      showToast("Card removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
     }
   };
 
@@ -9663,6 +9753,58 @@ export default function Stallyard() {
                   )}
                 </div>
 
+                {savedCards.length > 0 && (
+                  <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                    <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
+                      Saved cards
+                    </h3>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      Cards you've chosen to save for one-tap checkout. Stallyard never sees or stores full card
+                      numbers — this list only holds a secure token from Paystack.
+                    </p>
+                    <div className="space-y-2">
+                      {savedCards.map((c) => (
+                        <div
+                          key={c.id}
+                          className="flex items-center justify-between p-3 rounded-lg border"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <div>
+                            <div className="text-sm" style={{ color: INK }}>
+                              {c.card_type ? c.card_type.charAt(0).toUpperCase() + c.card_type.slice(1) : "Card"}
+                              {c.last4 ? ` ending in ${c.last4}` : ""}
+                              {c.is_default ? " (default)" : ""}
+                            </div>
+                            {c.exp_month && c.exp_year && (
+                              <div className="text-xs" style={{ color: SLATE }}>
+                                Expires {c.exp_month}/{c.exp_year}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {!c.is_default && (
+                              <button
+                                onClick={() => setDefaultSavedCard(c.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Make default
+                              </button>
+                            )}
+                            <button
+                              onClick={() => deleteSavedCard(c.id)}
+                              className="text-xs font-medium underline"
+                              style={{ color: BERRY }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-sm font-semibold" style={{ color: INK }}>
@@ -12795,6 +12937,32 @@ export default function Stallyard() {
                   </div>
                 )}
 
+                {savedCards.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-medium mb-2" style={{ color: SLATE }}>
+                      Pay with a saved card
+                    </p>
+                    <div className="space-y-2">
+                      {savedCards.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => payWithSavedCard(c.id)}
+                          disabled={checkoutSubmitting}
+                          className="w-full text-left px-3 py-2 rounded-lg border bg-white text-sm disabled:opacity-50"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        >
+                          {c.card_type ? c.card_type.charAt(0).toUpperCase() + c.card_type.slice(1) : "Card"}
+                          {c.last4 ? ` ending in ${c.last4}` : ""}
+                          {c.is_default ? " (default)" : ""}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-center mt-2" style={{ color: SLATE }}>
+                      Or pay with a new card below
+                    </p>
+                  </div>
+                )}
+
                 <button
                   onClick={checkout}
                   disabled={checkoutSubmitting}
@@ -12803,6 +12971,14 @@ export default function Stallyard() {
                 >
                   {checkoutSubmitting ? "Starting checkout…" : "Checkout"}
                 </button>
+                <label className="flex items-center gap-2 text-xs mt-2 justify-center" style={{ color: SLATE }}>
+                  <input
+                    type="checkbox"
+                    checked={saveCardAtCheckout}
+                    onChange={(e) => setSaveCardAtCheckout(e.target.checked)}
+                  />
+                  Save this card for future purchases
+                </label>
                 <p className="text-xs text-center mt-2" style={{ color: SLATE }}>
                   You'll be taken to Paystack to pay securely.
                 </p>
