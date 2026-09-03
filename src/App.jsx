@@ -4400,6 +4400,88 @@ export default function Stallyard() {
     }
   };
 
+  const [addressDraft, setAddressDraft] = useState(null); // null | {id?, label, street, city, state, zip, country}
+  const [addressSaving, setAddressSaving] = useState(false);
+  const [addressError, setAddressError] = useState("");
+
+  const startNewAddress = () => {
+    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "" });
+    setAddressError("");
+  };
+
+  const startEditAddress = (a) => {
+    setAddressDraft({
+      id: a.id,
+      label: a.label || "",
+      street: a.street || "",
+      city: a.city || "",
+      state: a.state || "",
+      zip: a.zip || "",
+      country: a.country || "",
+    });
+    setAddressError("");
+  };
+
+  const saveAddressDraft = async () => {
+    if (!addressDraft.street.trim() || !addressDraft.city.trim() || !addressDraft.country.trim()) {
+      setAddressError("Street, city, and country are required.");
+      return;
+    }
+    setAddressSaving(true);
+    setAddressError("");
+    try {
+      const isEdit = !!addressDraft.id;
+      const res = await authFetch(`${BACKEND_URL}/addresses${isEdit ? `/${addressDraft.id}` : ""}`, {
+        method: isEdit ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(addressDraft),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAddressError(data.error || "Couldn't save that address");
+        return;
+      }
+      if (isEdit) {
+        setSavedAddresses((addrs) => addrs.map((a) => (a.id === data.id ? data : a)));
+      } else {
+        setSavedAddresses((addrs) => [data, ...addrs]);
+      }
+      setAddressDraft(null);
+      showToast(isEdit ? "Address updated" : "Address saved");
+    } catch {
+      setAddressError("Couldn't reach the server — try again");
+    } finally {
+      setAddressSaving(false);
+    }
+  };
+
+  const setDefaultSavedAddress = async (id) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/addresses/${id}/default`, { method: "PATCH" });
+      if (!res.ok) {
+        showToast("Couldn't update your addresses");
+        return;
+      }
+      setSavedAddresses((addrs) => addrs.map((a) => ({ ...a, is_default: a.id === id })));
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const deleteSavedAddress = async (id) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/addresses/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToast("Couldn't remove that address");
+        return;
+      }
+      setSavedAddresses((addrs) => addrs.filter((a) => a.id !== id));
+      showToast("Address removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
   const resetForm = () => {
     setForm({
       title: "",
@@ -9808,6 +9890,164 @@ export default function Stallyard() {
                 <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
                   <div className="flex items-center justify-between mb-1">
                     <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                      Saved addresses
+                    </h3>
+                    {!addressDraft && (
+                      <button
+                        onClick={startNewAddress}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Add address
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs mb-3" style={{ color: SLATE }}>
+                    Pick one at checkout instead of retyping your address every time.
+                  </p>
+
+                  {savedAddresses.length === 0 && !addressDraft && (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      No saved addresses yet.
+                    </p>
+                  )}
+
+                  {!addressDraft && (
+                    <div className="space-y-2">
+                      {savedAddresses.map((a) => (
+                        <div
+                          key={a.id}
+                          className="flex items-center justify-between p-3 rounded-lg border"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <div>
+                            {a.label && (
+                              <div className="text-xs font-semibold mb-0.5" style={{ color: INK }}>
+                                {a.label}
+                                {a.is_default ? " (default)" : ""}
+                              </div>
+                            )}
+                            {!a.label && a.is_default && (
+                              <div className="text-xs font-semibold mb-0.5" style={{ color: INK }}>
+                                Default
+                              </div>
+                            )}
+                            <div className="text-xs" style={{ color: SLATE }}>
+                              {a.street}, {a.city}
+                              {a.state ? `, ${a.state}` : ""} {a.zip} {a.country}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 pl-3">
+                            {!a.is_default && (
+                              <button
+                                onClick={() => setDefaultSavedAddress(a.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Make default
+                              </button>
+                            )}
+                            <button
+                              onClick={() => startEditAddress(a)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => deleteSavedAddress(a.id)}
+                              className="text-xs font-medium underline"
+                              style={{ color: BERRY }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {addressDraft && (
+                    <div className="p-3 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
+                      <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                        Label (optional — e.g. "Home", "Work")
+                      </label>
+                      <input
+                        value={addressDraft.label}
+                        onChange={(e) => setAddressDraft({ ...addressDraft, label: e.target.value })}
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                        Street
+                      </label>
+                      <input
+                        value={addressDraft.street}
+                        onChange={(e) => setAddressDraft({ ...addressDraft, street: e.target.value })}
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          value={addressDraft.city}
+                          onChange={(e) => setAddressDraft({ ...addressDraft, city: e.target.value })}
+                          placeholder="City"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <input
+                          value={addressDraft.state}
+                          onChange={(e) => setAddressDraft({ ...addressDraft, state: e.target.value })}
+                          placeholder="State"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      <div className="flex gap-2 mb-2">
+                        <input
+                          value={addressDraft.zip}
+                          onChange={(e) => setAddressDraft({ ...addressDraft, zip: e.target.value })}
+                          placeholder="ZIP"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <input
+                          value={addressDraft.country}
+                          onChange={(e) => setAddressDraft({ ...addressDraft, country: e.target.value })}
+                          placeholder="Country"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      {addressError && (
+                        <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                          {addressError}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={saveAddressDraft}
+                          disabled={addressSaving}
+                          className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {addressSaving ? "Saving..." : "Save address"}
+                        </button>
+                        <button
+                          onClick={() => setAddressDraft(null)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SLATE }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-sm font-semibold" style={{ color: INK }}>
                       Login history
                     </h3>
                     {loginHistory === null && (
@@ -12870,6 +13110,30 @@ export default function Stallyard() {
                     <h4 className="text-sm font-semibold mb-2" style={{ color: INK }}>
                       Shipping address
                     </h4>
+                    {savedAddresses.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {savedAddresses.map((a) => (
+                          <button
+                            key={a.id}
+                            onClick={() =>
+                              setShippingForm({
+                                ...shippingForm,
+                                fullName: shippingForm.fullName,
+                                street: a.street,
+                                city: a.city,
+                                state: a.state,
+                                zip: a.zip,
+                                country: a.country,
+                              })
+                            }
+                            className="text-xs px-2 py-1 rounded-full border"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
+                          >
+                            {a.label || `${a.city}, ${a.country}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <input
                         value={shippingForm.fullName}
