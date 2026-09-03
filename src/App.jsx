@@ -11863,7 +11863,7 @@ export default function Stallyard() {
                           No payment tracking data (order placed before this feature).
                         </p>
                       )}
-                      {o.paymentStatus === "held" && (
+                      {o.paymentStatus === "held" && hasAdminPermission(currentMember, "finance") && (
                         <div className="flex items-center gap-3">
                           <button
                             onClick={() => releasePayout(o.id)}
