@@ -376,6 +376,11 @@ function backendOrderToFrontend(row) {
     commissionRate: row.commission_rate !== undefined ? Number(row.commission_rate) : 0.05,
     commissionAmount: Number(row.commission_amount) || 0,
     paymentStatus: row.payment_status || "held",
+    paystackReference: row.paystack_reference || null,
+    paymentChannel: row.payment_channel || null,
+    paymentCardType: row.payment_card_type || null,
+    paymentBank: row.payment_bank || null,
+    paymentLast4: row.payment_last4 || null,
     isDisputed: !!row.is_disputed,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     items: (row.items || []).map((i) => ({
@@ -5181,6 +5186,39 @@ export default function Stallyard() {
   ).length;
   const buyerPendingReturnsCount = myPurchasedItems.filter((i) => i.returnStatus === "requested").length;
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
+
+  // View-only list of how this buyer has actually paid in the past,
+  // deduplicated and sourced straight from real Paystack transactions —
+  // not something they manage or add to themselves.
+  const myPaymentMethods = (() => {
+    const seen = new Map();
+    myOrders.forEach((o) => {
+      if (!o.paymentChannel) return;
+      const key = `${o.paymentChannel}-${o.paymentCardType || ""}-${o.paymentBank || ""}-${o.paymentLast4 || ""}`;
+      const existing = seen.get(key);
+      if (!existing || o.createdAt > existing.lastUsedAt) {
+        seen.set(key, {
+          channel: o.paymentChannel,
+          cardType: o.paymentCardType,
+          bank: o.paymentBank,
+          last4: o.paymentLast4,
+          lastUsedAt: o.createdAt,
+        });
+      }
+    });
+    return Array.from(seen.values()).sort((a, b) => b.lastUsedAt - a.lastUsedAt);
+  })();
+  const paymentMethodLabel = (m) => {
+    if (m.channel === "card") {
+      return `${m.cardType ? m.cardType.charAt(0).toUpperCase() + m.cardType.slice(1) : "Card"}${m.last4 ? ` ending in ${m.last4}` : ""}`;
+    }
+    if (m.channel === "bank_transfer" || m.channel === "bank") {
+      return `Bank transfer${m.bank ? ` via ${m.bank}` : ""}`;
+    }
+    if (m.channel === "ussd") return `USSD${m.bank ? ` via ${m.bank}` : ""}`;
+    return m.channel.charAt(0).toUpperCase() + m.channel.slice(1);
+  };
+
   const disputedOrders = orders.filter((o) => o.isDisputed);
   const myThreads = threads
     .filter((t) => t.buyerUsername === currentUser || t.sellerUsername === currentUser)
@@ -8311,6 +8349,34 @@ export default function Stallyard() {
                       </button>
                     ))}
                 </div>
+              </div>
+            )}
+
+            {myPaymentMethods.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+                  Payment methods used
+                </h3>
+                <div className="space-y-2">
+                  {myPaymentMethods.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 rounded-lg border bg-white"
+                      style={{ borderColor: "#DDD8CC" }}
+                    >
+                      <span className="text-sm" style={{ color: INK }}>
+                        {paymentMethodLabel(m)}
+                      </span>
+                      <span className="text-xs" style={{ color: SLATE }}>
+                        Last used{" "}
+                        {new Date(m.lastUsedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  Shown for your reference only — payments are handled securely by Paystack, and Stallyard never sees or stores full card numbers.
+                </p>
               </div>
             )}
           </div>
