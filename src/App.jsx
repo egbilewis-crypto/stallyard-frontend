@@ -5085,6 +5085,24 @@ export default function Stallyard() {
   const myOrders = orders
     .filter((o) => o.buyerUsername === currentUser)
     .sort((a, b) => b.createdAt - a.createdAt);
+
+  // Flattened view of everything this buyer has purchased across all their
+  // orders, used for the buyer dashboard's status breakdown — mirrors
+  // mySoldItems above, just from the buyer's side instead of the seller's.
+  const myPurchasedItems = myOrders.flatMap((o) =>
+    o.items.map((i) => ({ ...i, orderId: o.id, orderCreatedAt: o.createdAt, isDisputed: o.isDisputed }))
+  );
+  const buyerActiveOrdersCount = myOrders.filter((o) =>
+    o.items.some((i) => i.fulfillmentStatus !== "delivered" && i.fulfillmentStatus !== "cancelled")
+  ).length;
+  const buyerOrdersWaitingToShip = myPurchasedItems.filter((i) => (i.fulfillmentStatus || "new") === "new").length;
+  const buyerOrdersInTransit = myPurchasedItems.filter((i) => i.fulfillmentStatus === "shipped").length;
+  const buyerCompletedCount = myPurchasedItems.filter((i) => i.fulfillmentStatus === "delivered").length;
+  const buyerActiveReturnsDisputes = myPurchasedItems.filter(
+    (i) => i.returnStatus === "requested" || i.isDisputed
+  ).length;
+  const buyerPendingReturnsCount = myPurchasedItems.filter((i) => i.returnStatus === "requested").length;
+  const unreadNotifCount = notifications.filter((n) => !n.read).length;
   const disputedOrders = orders.filter((o) => o.isDisputed);
   const myThreads = threads
     .filter((t) => t.buyerUsername === currentUser || t.sellerUsername === currentUser)
@@ -5941,6 +5959,7 @@ export default function Stallyard() {
             <NavButton id="browse" icon={LayoutGrid} label="Browse" />
             <NavButton id="sell" icon={Plus} label="Sell" />
             <NavButton id="dashboard" icon={Store} label="My Stall" />
+            {currentUser && <NavButton id="buyerHome" icon={PackageOpen} label="Dashboard" />}
             {currentUser && <NavButton id="watchlist" icon={Heart} label="Watchlist" />}
             {currentUser && <NavButton id="wallet" icon={Wallet} label="Wallet" />}
             {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
@@ -7952,6 +7971,230 @@ export default function Stallyard() {
           </div>
         )}
 
+        {view === "buyerHome" && currentUser && (
+          <div>
+            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Dashboard
+            </h2>
+            <p className="text-sm mb-5" style={{ color: SLATE }}>
+              Everything about your orders, messages, and alerts in one place.
+            </p>
+
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+              Needs your attention
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+              <button
+                onClick={() => setView("messages")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: unreadThreadsCount ? MARIGOLD : INK }}
+                >
+                  {unreadThreadsCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  unread messages
+                </div>
+              </button>
+              <button
+                onClick={() => setView("orders")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerPendingReturnsCount ? "#3B6E8F" : INK }}
+                >
+                  {buyerPendingReturnsCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  pending returns
+                </div>
+              </button>
+              <button
+                onClick={() => setView("orders")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerActiveReturnsDisputes ? BERRY : INK }}
+                >
+                  {buyerActiveReturnsDisputes}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  open disputes
+                </div>
+              </button>
+              <button
+                onClick={() => setNotifPanelOpen(true)}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: unreadNotifCount ? MARIGOLD : INK }}
+                >
+                  {unreadNotifCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  new alerts
+                </div>
+              </button>
+            </div>
+
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+              Orders
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#3B6E8F" }}>
+                  {buyerOrdersWaitingToShip}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  waiting to ship
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#6B8F71" }}>
+                  {buyerOrdersInTransit}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  in transit
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#2F6B3A" }}>
+                  {buyerCompletedCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  completed
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                  {buyerActiveOrdersCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  active orders
+                </div>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: SLATE }}>
+                    Recent orders
+                  </h3>
+                  <button
+                    onClick={() => setView("orders")}
+                    className="text-xs font-medium underline"
+                    style={{ color: SLATE }}
+                  >
+                    View all →
+                  </button>
+                </div>
+                {myOrders.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No orders yet. Anything you buy will show up here.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {myOrders.slice(0, 3).map((o) => (
+                      <button
+                        key={o.id}
+                        onClick={() => setView("orders")}
+                        className="w-full text-left p-3 rounded-lg border bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="text-xs font-medium"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {orderNumber(o.id)}
+                          </span>
+                          <span
+                            className="text-sm font-semibold"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {formatMoney(o.total, o.currency)}
+                          </span>
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {new Date(o.createdAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: SLATE }}>
+                    Recent messages
+                  </h3>
+                  <button
+                    onClick={() => setView("messages")}
+                    className="text-xs font-medium underline"
+                    style={{ color: SLATE }}
+                  >
+                    View all →
+                  </button>
+                </div>
+                {myThreads.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No messages yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {myThreads.slice(0, 3).map((t) => {
+                      const otherName = t.buyerUsername === currentUser ? t.sellerName : t.buyerName;
+                      const lastMsg = t.messages[t.messages.length - 1];
+                      const isUnread =
+                        lastMsg &&
+                        lastMsg.senderUsername !== currentUser &&
+                        lastMsg.createdAt > (messageReadState[t.id] || 0);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            setActiveThreadId(t.id);
+                            setActiveThreadOrderId(null);
+                            markThreadRead(t.id);
+                            setView("messages");
+                          }}
+                          className="w-full text-left flex items-center gap-2 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: isUnread ? MARIGOLD : "#DDD8CC" }}
+                        >
+                          <span className="text-xl shrink-0">{t.listingEmoji}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate" style={{ color: INK, fontWeight: isUnread ? 700 : 500 }}>
+                              {otherName}
+                            </div>
+                            <div className="text-xs truncate" style={{ color: SLATE }}>
+                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: $${lastMsg.amount.toFixed(2)}` : lastMsg.text) : ""}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {view === "orders" && (
           <div>
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
@@ -7966,7 +8209,74 @@ export default function Stallyard() {
                 No orders yet. Anything you buy will show up here.
               </p>
             ) : (
-              <div className="space-y-4 mt-4">
+              <div>
+                <div className="grid grid-cols-2 gap-3 mt-4 mb-3">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      {buyerActiveOrdersCount}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      active orders
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
+                      {(() => {
+                        // Sum per-currency rather than blending a USD
+                        // purchase and an NGN purchase into one number.
+                        const byCurrency = {};
+                        myPurchasedItems
+                          .filter((i) => i.fulfillmentStatus !== "cancelled")
+                          .forEach((i) => {
+                            const cur = i.currency || "USD";
+                            byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
+                          });
+                        const entries = Object.entries(byCurrency);
+                        return entries.length
+                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
+                          : formatMoney(0, "USD");
+                      })()}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      total spent ({myOrders.length} order{myOrders.length === 1 ? "" : "s"})
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#3B6E8F" }}>
+                      {buyerOrdersWaitingToShip}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      waiting to ship
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#6B8F71" }}>
+                      {buyerOrdersInTransit}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      in transit
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#2F6B3A" }}>
+                      {buyerCompletedCount}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      completed
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: BERRY }}>
+                      {buyerActiveReturnsDisputes}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      returns/disputes
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-4">
                 {myOrders.map((o) => (
                   <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="flex items-center justify-between mb-1">
@@ -8433,6 +8743,7 @@ export default function Stallyard() {
                     </div>
                   </div>
                 ))}
+              </div>
               </div>
             )}
           </div>
