@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
 
 const INK = "#1B2430";
@@ -969,6 +969,9 @@ export default function Stallyard() {
   const [saveShippingAddress, setSaveShippingAddress] = useState(true);
   const [shippingError, setShippingError] = useState("");
   const [confirmedOrder, setConfirmedOrder] = useState(null);
+  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
+  const [checkoutVerifying, setCheckoutVerifying] = useState(false);
+  const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
   const [orders, setOrders] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.05, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
@@ -2104,6 +2107,21 @@ export default function Stallyard() {
     setAdminLoginMode(false);
     openAdminPanel();
   }, [sessionChecked, currentUser, currentMember?.isAdmin]);
+
+  // Paystack redirects the buyer back to /order-confirmation?reference=...
+  // once they've paid (or canceled). Confirms the payment actually
+  // succeeded and finalizes the order — see verifyCheckout above.
+  const orderConfirmationHandled = useRef(false);
+  useEffect(() => {
+    if (window.location.pathname !== "/order-confirmation") return;
+    if (!sessionChecked || !currentUser) return; // need the auth token to call verify
+    if (orderConfirmationHandled.current) return;
+    const reference = new URLSearchParams(window.location.search).get("reference");
+    window.history.replaceState({}, "", "/");
+    if (!reference) return;
+    orderConfirmationHandled.current = true;
+    verifyCheckout(reference);
+  }, [sessionChecked, currentUser]);
 
   const persistCart = async (next) => {
     setCart(next);
@@ -4226,9 +4244,10 @@ export default function Stallyard() {
       return;
     }
     setShippingError("");
+    setCheckoutSubmitting(true);
     let res;
     try {
-      res = await authFetch(`${BACKEND_URL}/checkout`, {
+      res = await authFetch(`${BACKEND_URL}/checkout/initialize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4239,25 +4258,51 @@ export default function Stallyard() {
       });
     } catch {
       setShippingError("Couldn't reach the server — check your connection and try again.");
+      setCheckoutSubmitting(false);
       return;
     }
     const data = await res.json();
     if (!res.ok) {
-      setShippingError(data.error || "Something went wrong placing this order.");
+      setShippingError(data.error || "Something went wrong starting checkout.");
+      setCheckoutSubmitting(false);
       return;
     }
-    const order = backendOrderToFrontend(data.order);
-    const purchasedIds = new Set(order.items.map((i) => i.listingId));
-    await persistListings(listings.map((l) => (purchasedIds.has(l.id) ? { ...l, status: "sold" } : l)));
-    await persistOrders([order, ...orders]);
     if (saveShippingAddress) {
       await persistMembers(
         members.map((m) => (m.username === currentUser ? { ...m, shippingAddress: { ...shippingForm } } : m))
       );
     }
-    await persistCart([]);
-    setCartOpen(false);
-    setConfirmedOrder(order);
+    // The cart, order, and listing status all stay exactly as they are
+    // until payment actually succeeds — verifyCheckout (triggered by
+    // Paystack redirecting back to /order-confirmation) is what finalizes
+    // all of that, not this step.
+    window.location.href = data.authorizationUrl;
+  };
+
+  // Called once Paystack redirects back to /order-confirmation?reference=...
+  // Confirms the payment actually went through, then finalizes everything
+  // locally that the backend already finalized on its end: adds the real
+  // order, marks the purchased listings sold, and clears the cart.
+  const verifyCheckout = async (reference) => {
+    setCheckoutVerifying(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/checkout/verify/${reference}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setCheckoutVerifyError(data.error || "We couldn't confirm this payment — contact support if you were charged.");
+        return;
+      }
+      const order = backendOrderToFrontend(data.order);
+      const purchasedIds = new Set(order.items.map((i) => i.listingId));
+      await persistListings(listings.map((l) => (purchasedIds.has(l.id) ? { ...l, status: "sold" } : l)));
+      await persistOrders([order, ...orders.filter((o) => o.id !== order.id)]);
+      await persistCart([]);
+      setConfirmedOrder(order);
+    } catch {
+      setCheckoutVerifyError("Couldn't reach the server — contact support if you were charged.");
+    } finally {
+      setCheckoutVerifying(false);
+    }
   };
 
   const resetForm = () => {
@@ -12686,16 +12731,49 @@ export default function Stallyard() {
 
                 <button
                   onClick={checkout}
-                  className="w-full py-2.5 rounded-lg font-medium"
+                  disabled={checkoutSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium disabled:opacity-50"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  Checkout
+                  {checkoutSubmitting ? "Starting checkout…" : "Checkout"}
                 </button>
                 <p className="text-xs text-center mt-2" style={{ color: SLATE }}>
-                  No payment is processed — this saves your order to your account.
+                  You'll be taken to Paystack to pay securely.
                 </p>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Shown right after Paystack redirects back, while /checkout/verify
+          confirms the payment actually succeeded. */}
+      {checkoutVerifying && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.5)" }}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm text-center">
+            <p className="text-sm" style={{ color: INK }}>
+              Confirming your payment…
+            </p>
+          </div>
+        </div>
+      )}
+
+      {checkoutVerifyError && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.5)" }}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm text-center">
+            <h2 className="text-xl mb-2" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Couldn't confirm payment
+            </h2>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              {checkoutVerifyError}
+            </p>
+            <button
+              onClick={() => setCheckoutVerifyError("")}
+              className="px-4 py-2 rounded-lg text-sm font-medium"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
