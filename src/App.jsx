@@ -951,6 +951,9 @@ export default function Stallyard() {
   const [toast, setToast] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [cart, setCart] = useState([]);
+  // Most-recently-viewed listing ids, newest first, capped at 12 — stored
+  // the same way as cart/watchlist (local to this browser).
+  const [recentlyViewedIds, setRecentlyViewedIds] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
@@ -1180,6 +1183,12 @@ export default function Stallyard() {
         setWatchlist([]);
       }
       try {
+        const recentRes = await window.storage.get("stallyard-recently-viewed", false);
+        setRecentlyViewedIds(recentRes ? JSON.parse(recentRes.value) : []);
+      } catch {
+        setRecentlyViewedIds([]);
+      }
+      try {
         const readRes = await window.storage.get("stallyard-message-reads", false);
         setMessageReadState(readRes ? JSON.parse(readRes.value) : {});
       } catch {
@@ -1259,6 +1268,15 @@ export default function Stallyard() {
       setLoaded(true);
     })();
   }, []);
+
+  // Records a listing as viewed the moment it's opened, regardless of which
+  // of the several places in the app opened it (search results, a seller's
+  // storefront, watchlist, etc) — one hook point instead of several.
+  useEffect(() => {
+    if (selected?.id) recordRecentlyViewed(selected.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
+
 
   // Orders and withdrawals are private, per-user data — load them fresh from
   // the real backend whenever the signed-in user (or their token) changes,
@@ -2144,6 +2162,19 @@ export default function Stallyard() {
       await authFetch(`${BACKEND_URL}/notifications/mark-all-read`, { method: "PATCH" });
     } catch {
       // non-critical, fail silently — local state already updated
+    }
+  };
+
+  // Local-only for now (no backend table for this yet, unlike cart/watchlist
+  // which also sync to the server) — tracked per browser, capped at 12,
+  // newest first, with no duplicates.
+  const recordRecentlyViewed = async (listingId) => {
+    const next = [listingId, ...recentlyViewedIds.filter((id) => id !== listingId)].slice(0, 12);
+    setRecentlyViewedIds(next);
+    try {
+      await window.storage.set("stallyard-recently-viewed", JSON.stringify(next), false);
+    } catch {
+      // non-critical, fail silently
     }
   };
 
@@ -8194,6 +8225,49 @@ export default function Stallyard() {
                 )}
               </div>
             </div>
+
+            {recentlyViewedIds.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+                  Recently viewed
+                </h3>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {recentlyViewedIds
+                    .map((id) => listings.find((l) => l.id === id))
+                    .filter(Boolean)
+                    .map((l) => (
+                      <button
+                        key={l.id}
+                        onClick={() => {
+                          setSelected(l);
+                          setView("browse");
+                        }}
+                        className="w-32 shrink-0 text-left rounded-lg border bg-white overflow-hidden"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        {l.images && l.images.length > 0 ? (
+                          <img src={l.images[0]} alt={l.title} className="w-full h-24 object-cover" />
+                        ) : (
+                          <div className="w-full h-24 flex items-center justify-center text-3xl" style={{ backgroundColor: CANVAS }}>
+                            {l.emoji}
+                          </div>
+                        )}
+                        <div className="p-2">
+                          <div className="text-xs truncate" style={{ color: INK }}>
+                            {l.title}
+                          </div>
+                          <div
+                            className="text-xs font-semibold"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {formatMoney(l.price, l.currency)}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
