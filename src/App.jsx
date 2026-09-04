@@ -6763,7 +6763,7 @@ export default function Stallyard() {
             ) : (
               <p className="text-sm mb-6" style={{ color: SLATE }}>
                 Selling as <strong style={{ color: INK }}>{currentMember.displayName}</strong>
-                {currentMember.isVerified && <Tag color={SAGE}>Verified</Tag>}
+                {currentMember.isVerified && <Tag color={SAGE}>Identity verified</Tag>}
               </p>
             )}
 
@@ -9210,7 +9210,9 @@ export default function Stallyard() {
                             {seller.displayName}
                           </h2>
                           {seller.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
-                          {seller.isVerified && <Tag color={SAGE}>Verified</Tag>}
+                          {seller.isVerified && <Tag color={SAGE}>Identity verified</Tag>}
+                          {seller.isEmailVerified && <Tag color={SAGE}>✓ Email verified</Tag>}
+                          {seller.isPhoneVerified && <Tag color={SAGE}>✓ Phone verified</Tag>}
                           {seller.vacationMode && <Tag color={MARIGOLD}>🌴 On vacation</Tag>}
                           {reputation && (
                             <Tag color={reputation.positivePct >= 90 ? SAGE : reputation.positivePct >= 70 ? MARIGOLD : BERRY}>
@@ -11637,7 +11639,7 @@ export default function Stallyard() {
                         <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
                           {m.displayName}
                           {m.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
-                          {m.isVerified && <Tag color={SAGE}>Verified</Tag>}
+                          {m.isVerified && <Tag color={SAGE}>Identity verified</Tag>}
                           {m.isApproved === false && m.verificationStatus === "pending" && (
                             <Tag color={MARIGOLD}>Seller application pending</Tag>
                           )}
