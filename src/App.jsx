@@ -376,6 +376,7 @@ function backendOrderToFrontend(row) {
     total: Number(row.total) || 0,
     commissionRate: row.commission_rate !== undefined ? Number(row.commission_rate) : 0.05,
     commissionAmount: Number(row.commission_amount) || 0,
+    taxAmount: Number(row.tax_amount) || 0,
     paymentStatus: row.payment_status || "held",
     paystackReference: row.paystack_reference || null,
     paymentChannel: row.payment_channel || null,
@@ -784,11 +785,6 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
           <p className="mt-1 text-xs" style={{ color: SLATE }}>
             {listing.shippingFee ? `+ ${formatMoney(listing.shippingFee, listing.currency)} shipping` : "Free shipping"}
           </p>
-          {listing.shipsToUsa && (
-            <div className="mt-1">
-              <Tag color="#3B6E8F">Ships to USA</Tag>
-            </div>
-          )}
         </div>
       </button>
       <div className="px-5 pl-6 pb-4">
@@ -910,7 +906,6 @@ export default function Stallyard() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [conditionFilter, setConditionFilter] = useState("All");
-  const [shipsToUsaFilter, setShipsToUsaFilter] = useState(false);
   const [sortBy, setSortBy] = useState("featured");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -988,7 +983,7 @@ export default function Stallyard() {
   const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
   const [saveCardAtCheckout, setSaveCardAtCheckout] = useState(false);
   const [orders, setOrders] = useState([]);
-  const [settings, setSettings] = useState({ commissionRate: 0.05, authImage: "" });
+  const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [policies, setPolicies] = useState({
     seller_rules: "", prohibited_items: "", fees: "",
@@ -1218,7 +1213,7 @@ export default function Stallyard() {
         const settingsRes = await fetch(`${BACKEND_URL}/settings`);
         if (settingsRes.ok) {
           const raw = await settingsRes.json();
-          setSettings({ commissionRate: raw.commissionRate, authImage: raw.authImage || "" });
+          setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "" });
         }
       } catch {
         // keep default settings
@@ -2372,7 +2367,8 @@ export default function Stallyard() {
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartSubtotal = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
   const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0), 0);
-  const cartTotal = cartSubtotal + cartShipping;
+  const cartTax = Math.round(cartSubtotal * (settings.taxRate || 0) * 100) / 100;
+  const cartTotal = cartSubtotal + cartShipping + cartTax;
   const cartCurrency = cartItems[0]?.currency || "USD";
 
   const persistOrders = async (next) => {
@@ -2387,6 +2383,7 @@ export default function Stallyard() {
   const persistSettings = async (next) => {
     const body = {};
     if (next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
+    if (next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
       setSettings(next);
@@ -2403,7 +2400,7 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't save settings — try again");
         return;
       }
-      setSettings({ commissionRate: data.commissionRate, authImage: data.authImage || "" });
+      setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "" });
       showToast("Settings saved");
     } catch {
       showToast("Couldn't reach the server — try again");
@@ -5481,8 +5478,7 @@ export default function Stallyard() {
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
-      const matchesShipsToUsa = !shipsToUsaFilter || l.shipsToUsa;
-      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice && matchesShipsToUsa;
+      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
     })
     .sort((a, b) => {
       if (sortBy === "price-asc") return Number(a.price) - Number(b.price);
@@ -5849,7 +5845,6 @@ export default function Stallyard() {
                     >
                       <option value="">Country of residence</option>
                       <option value="Nigeria">Nigeria</option>
-                      <option value="United States">United States</option>
                     </select>
                     <div className="flex gap-3">
                       <div className="flex-1">
@@ -6671,26 +6666,12 @@ export default function Stallyard() {
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
-                    Shipping
-                  </label>
-                  <label className="flex items-center gap-1.5 text-sm px-2 py-1.5" style={{ color: INK }}>
-                    <input
-                      type="checkbox"
-                      checked={shipsToUsaFilter}
-                      onChange={(e) => setShipsToUsaFilter(e.target.checked)}
-                    />
-                    Ships to USA
-                  </label>
-                </div>
-                {(priceMin || priceMax || conditionFilter !== "All" || shipsToUsaFilter) && (
+                {(priceMin || priceMax || conditionFilter !== "All") && (
                   <button
                     onClick={() => {
                       setPriceMin("");
                       setPriceMax("");
                       setConditionFilter("All");
-                      setShipsToUsaFilter(false);
                     }}
                     className="text-xs font-medium underline"
                     style={{ color: SLATE }}
@@ -7112,14 +7093,6 @@ export default function Stallyard() {
                   ))}
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-sm" style={{ color: INK }}>
-                <input
-                  type="checkbox"
-                  checked={form.shipsToUsa}
-                  onChange={(e) => setForm({ ...form, shipsToUsa: e.target.checked })}
-                />
-                Ships to USA
-              </label>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                   Return policy <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
@@ -10053,7 +10026,6 @@ export default function Stallyard() {
                         >
                           <option value="">Country</option>
                           <option value="Nigeria">Nigeria</option>
-                          <option value="United States">United States</option>
                         </select>
                       </div>
                       {addressError && (
@@ -11958,6 +11930,34 @@ export default function Stallyard() {
                     <p className="text-xs mt-3" style={{ color: SLATE }}>
                       Applies to new orders going forward — existing orders keep the rate they were placed under.
                     </p>
+
+                    <label className="block text-sm font-medium mb-1 mt-6" style={{ color: INK }}>
+                      Tax rate
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      A flat rate applied to every checkout's item subtotal (not shipping), added on top of what
+                      the buyer pays.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={Math.round((settings.taxRate || 0) * 1000) / 10}
+                        onChange={(e) => setSettings({ ...settings, taxRate: Number(e.target.value) / 100 })}
+                        className="w-24 px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <span style={{ color: SLATE }}>%</span>
+                      <button
+                        onClick={() => persistSettings(settings)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Save
+                      </button>
+                    </div>
                   </>
                 )}
 
@@ -13129,6 +13129,14 @@ export default function Stallyard() {
                       {cartShipping > 0 ? formatMoney(cartShipping, cartCurrency) : "Free"}
                     </span>
                   </div>
+                  {cartTax > 0 && (
+                    <div className="flex items-center justify-between text-sm mb-2">
+                      <span style={{ color: SLATE }}>Tax ({Math.round((settings.taxRate || 0) * 1000) / 10}%)</span>
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                        {formatMoney(cartTax, cartCurrency)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: "#EFEBE0" }}>
                     <span className="text-sm" style={{ color: SLATE }}>
                       Total
@@ -13218,7 +13226,6 @@ export default function Stallyard() {
                         >
                           <option value="">Country</option>
                           <option value="Nigeria">Nigeria</option>
-                          <option value="United States">United States</option>
                         </select>
                       </div>
                       <label className="flex items-center gap-2 text-xs pt-1" style={{ color: SLATE }}>
