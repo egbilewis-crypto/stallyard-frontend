@@ -53,6 +53,13 @@ const NIGERIAN_STATES = [
   "FCT (Abuja)",
 ];
 
+const MIN_LISTING_PHOTOS = 3;
+const MAX_LISTING_PHOTOS = 12;
+const MAX_LISTING_PHOTO_BYTES = 12 * 1024 * 1024; // 12 MB
+const MIN_LISTING_PHOTO_DIM = 500; // reject below this
+const RECOMMENDED_LISTING_PHOTO_DIM = 1200; // warn (not block) below this
+const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
+
 const SHIPPING_METHODS = [
   { value: "self_delivery", label: "Self delivery" },
   { value: "dhl", label: "DHL" },
@@ -543,6 +550,45 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
   });
 }
 
+// Used specifically for listing photos, where we need the ORIGINAL
+// dimensions too (to reject/warn on low-resolution uploads before they
+// ever get resized down) — kept separate from resizeImageFile above so
+// the many other places that already call it (avatars, ID photos, review
+// photos, etc) don't need to change what they expect back.
+function resizeListingPhoto(file, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Couldn't read image"));
+      img.onload = () => {
+        const originalWidth = img.width;
+        const originalHeight = img.height;
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else if (height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve({
+          dataUrl: canvas.toDataURL("image/jpeg", quality),
+          originalWidth,
+          originalHeight,
+        });
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -955,6 +1001,7 @@ export default function Stallyard() {
   });
   const [selected, setSelected] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
+  const [galleryZoomOpen, setGalleryZoomOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [cart, setCart] = useState([]);
@@ -1086,6 +1133,7 @@ export default function Stallyard() {
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
   const [uploading, setUploading] = useState(false);
+  const [photoUploadProgress, setPhotoUploadProgress] = useState([]); // [{name, status: 'uploading'|'done'|'error', message}]
   const [uploadingLicense, setUploadingLicense] = useState(false);
   const [idVerifyOpen, setIdVerifyOpen] = useState(false);
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
@@ -1288,6 +1336,7 @@ export default function Stallyard() {
   // storefront, watchlist, etc) — one hook point instead of several.
   useEffect(() => {
     if (selected?.id) recordRecentlyViewed(selected.id);
+    setGalleryZoomOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.id]);
 
@@ -4520,46 +4569,94 @@ export default function Stallyard() {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
     if (files.length === 0) return;
-    const room = 5 - form.images.length;
+    const room = MAX_LISTING_PHOTOS - form.images.length;
     if (room <= 0) {
-      showToast("You can add up to 5 photos");
+      showToast(`You can add up to ${MAX_LISTING_PHOTOS} photos`);
       return;
     }
+    const toProcess = files.slice(0, room);
+    if (files.length > room) showToast(`Only added the first ${room === 1 ? "photo" : `${room} photos`} — you're at the ${MAX_LISTING_PHOTOS}-photo limit`);
+
     setUploading(true);
-    try {
-      const toProcess = files.slice(0, room);
-      const dataUrls = await Promise.all(toProcess.map((f) => resizeImageFile(f)));
-      // Test step for the new Cloudinary pipeline — each resized image now
-      // gets uploaded for real instead of just being kept as a local data
-      // URL. If any single upload fails, that one is skipped with a toast
-      // rather than silently keeping a fake/local image in the listing.
-      const uploaded = [];
-      for (const dataUrl of dataUrls) {
-        try {
-          const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dataUrl }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            showToast(data.error || "One photo failed to upload");
-            continue;
-          }
-          uploaded.push(data.url);
-        } catch {
-          showToast("Couldn't reach the server for one of those photos");
+    setPhotoUploadProgress(toProcess.map((f) => ({ name: f.name, status: "uploading", message: "" })));
+
+    const setStatus = (index, status, message = "") => {
+      setPhotoUploadProgress((prev) => {
+        const next = [...prev];
+        next[index] = { ...next[index], status, message };
+        return next;
+      });
+    };
+
+    const uploaded = [];
+    for (let i = 0; i < toProcess.length; i++) {
+      const file = toProcess[i];
+      try {
+        if (file.size > MAX_LISTING_PHOTO_BYTES) {
+          setStatus(i, "error", "Over 12 MB");
+          continue;
         }
+        if (file.type && !ACCEPTED_PHOTO_TYPES.includes(file.type)) {
+          setStatus(i, "error", "Unsupported file type");
+          continue;
+        }
+
+        let resized;
+        try {
+          resized = await resizeListingPhoto(file);
+        } catch {
+          setStatus(i, "error", "Couldn't read this file — it may be corrupted");
+          continue;
+        }
+
+        if (resized.originalWidth < MIN_LISTING_PHOTO_DIM || resized.originalHeight < MIN_LISTING_PHOTO_DIM) {
+          setStatus(i, "error", `Too small — needs to be at least ${MIN_LISTING_PHOTO_DIM}×${MIN_LISTING_PHOTO_DIM}px`);
+          continue;
+        }
+        const belowRecommended =
+          resized.originalWidth < RECOMMENDED_LISTING_PHOTO_DIM || resized.originalHeight < RECOMMENDED_LISTING_PHOTO_DIM;
+
+        const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dataUrl: resized.dataUrl }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(i, "error", data.error || "Upload failed");
+          continue;
+        }
+        uploaded.push(data.url);
+        setStatus(i, "done", belowRecommended ? `Added — a higher-resolution photo (${RECOMMENDED_LISTING_PHOTO_DIM}×${RECOMMENDED_LISTING_PHOTO_DIM}px+) would look sharper` : "Added");
+      } catch {
+        setStatus(i, "error", "Couldn't reach the server");
       }
-      if (uploaded.length) {
-        setForm((f) => ({ ...f, images: [...f.images, ...uploaded].slice(0, 5) }));
-      }
-      if (files.length > room) showToast("Only added the first 5 photos");
-    } catch {
-      showToast("Couldn't process one of those photos");
-    } finally {
-      setUploading(false);
     }
+
+    if (uploaded.length) {
+      setForm((f) => ({ ...f, images: [...f.images, ...uploaded].slice(0, MAX_LISTING_PHOTOS) }));
+    }
+    setUploading(false);
+    // Leave the progress list showing briefly so the seller can see what
+    // happened to each file (especially any that failed), then clear it.
+    setTimeout(() => setPhotoUploadProgress([]), 4000);
+  };
+
+  // Drag-to-reorder for listing photos. The first photo is always the
+  // main/cover image, so reordering is also how a seller picks a new one —
+  // drag any other photo to the front.
+  const [draggedPhotoIndex, setDraggedPhotoIndex] = useState(null);
+  const reorderListingPhotos = (fromIndex, toIndex) => {
+    setForm((f) => {
+      const next = [...f.images];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return { ...f, images: next };
+    });
+  };
+  const makeListingPhotoMain = (index) => {
+    if (index === 0) return;
+    reorderListingPhotos(index, 0);
   };
 
   const removePhoto = (idx) => {
@@ -4714,6 +4811,10 @@ export default function Stallyard() {
     }
     if (!isDraft && !form.price) {
       showToast("Give it a price before publishing");
+      return;
+    }
+    if (!isDraft && form.images.length < MIN_LISTING_PHOTOS) {
+      showToast(`Add at least ${MIN_LISTING_PHOTOS} photos before publishing`);
       return;
     }
     if (form.listingType === "auction" && isUnitedStates(currentMember?.country)) {
@@ -7213,17 +7314,52 @@ export default function Stallyard() {
               )}
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: INK }}>
-                  Photos ({form.images.length}/5)
+                  Photos ({form.images.length}/{MAX_LISTING_PHOTOS}) {form.images.length < MIN_LISTING_PHOTOS && (
+                    <span className="font-normal" style={{ color: BERRY }}>
+                      — at least {MIN_LISTING_PHOTOS} required to publish
+                    </span>
+                  )}
                 </label>
                 {form.images.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-2">
                     {form.images.map((src, idx) => (
-                      <div key={idx} className="relative w-20 h-20">
+                      <div
+                        key={idx}
+                        className="relative w-20 h-20"
+                        draggable
+                        onDragStart={() => setDraggedPhotoIndex(idx)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (draggedPhotoIndex !== null && draggedPhotoIndex !== idx) {
+                            reorderListingPhotos(draggedPhotoIndex, idx);
+                          }
+                          setDraggedPhotoIndex(null);
+                        }}
+                        style={{ cursor: "grab", opacity: draggedPhotoIndex === idx ? 0.4 : 1 }}
+                      >
                         <img
                           src={src}
                           alt={`Photo ${idx + 1}`}
                           className="w-full h-full object-cover rounded-lg"
                         />
+                        {idx === 0 ? (
+                          <span
+                            className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg"
+                            style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
+                          >
+                            Main
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => makeListingPhotoMain(idx)}
+                            className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg opacity-0 hover:opacity-100"
+                            style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
+                          >
+                            Make main
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => removePhoto(idx)}
@@ -7237,15 +7373,31 @@ export default function Stallyard() {
                     ))}
                   </div>
                 )}
-                {form.images.length < 5 && (
+                {photoUploadProgress.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {photoUploadProgress.map((p, i) => (
+                      <div key={i} className="text-xs flex items-center gap-2">
+                        <span
+                          style={{
+                            color: p.status === "error" ? BERRY : p.status === "done" ? "#2F6B3A" : SLATE,
+                          }}
+                        >
+                          {p.status === "uploading" ? "⏳" : p.status === "done" ? "✓" : "✕"} {p.name}
+                          {p.message ? ` — ${p.message}` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {form.images.length < MAX_LISTING_PHOTOS && (
                   <label
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
                     style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
                   >
-                    {uploading ? "Processing..." : "Add photos"}
+                    {uploading ? "Uploading..." : "Add photos"}
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/avif"
                       multiple
                       onChange={handlePhotoSelect}
                       disabled={uploading}
@@ -7254,7 +7406,15 @@ export default function Stallyard() {
                   </label>
                 )}
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  Up to 5 photos. First one is the cover photo.
+                  Up to {MAX_LISTING_PHOTOS} photos, at least {MIN_LISTING_PHOTOS} required. Drag to reorder — the
+                  first photo is the cover image buyers see first. Recommended size: {RECOMMENDED_LISTING_PHOTO_DIM}×
+                  {RECOMMENDED_LISTING_PHOTO_DIM}px or larger (minimum {MIN_LISTING_PHOTO_DIM}×{MIN_LISTING_PHOTO_DIM}px).
+                </p>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  Upload clear photographs of the actual item. Use bright lighting and a clean, neutral background.
+                  Show the front, back, sides, manufacturer label, part number, connectors and any damage. Do not
+                  upload screenshots, copied internet pictures, phone numbers, watermarks, logos, promotional text
+                  or heavily compressed WhatsApp images.
                 </p>
               </div>
               <div>
@@ -12830,11 +12990,57 @@ export default function Stallyard() {
             </button>
             {selected.images && selected.images.length > 0 ? (
               <div className="mb-3">
-                <img
-                  src={selected.images[activeImg]}
-                  alt={selected.title}
-                  className="w-full h-56 object-cover rounded-xl"
-                />
+                <div
+                  className="relative"
+                  tabIndex={0}
+                  role="group"
+                  aria-label={`Photo ${activeImg + 1} of ${selected.images.length}`}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowLeft") setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
+                    if (e.key === "ArrowRight") setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
+                  }}
+                >
+                  <img
+                    src={selected.images[activeImg]}
+                    alt={`${selected.title} — photo ${activeImg + 1} of ${selected.images.length}`}
+                    className="w-full h-56 object-cover rounded-xl cursor-zoom-in"
+                    onClick={() => setGalleryZoomOpen(true)}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null;
+                      e.currentTarget.src =
+                        "data:image/svg+xml;utf8," +
+                        encodeURIComponent(
+                          `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'><rect width='100%' height='100%' fill='#F6F3EC'/><text x='50%' y='50%' text-anchor='middle' fill='#667085' font-family='sans-serif' font-size='16'>Photo unavailable</text></svg>`
+                        );
+                    }}
+                  />
+                  {selected.images.length > 1 && (
+                    <>
+                      <button
+                        onClick={() => setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1))}
+                        aria-label="Previous photo"
+                        className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: "rgba(27,36,48,0.6)", color: "white" }}
+                      >
+                        ‹
+                      </button>
+                      <button
+                        onClick={() => setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0))}
+                        aria-label="Next photo"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: "rgba(27,36,48,0.6)", color: "white" }}
+                      >
+                        ›
+                      </button>
+                      <span
+                        className="absolute bottom-2 right-2 text-xs px-2 py-0.5 rounded-full"
+                        style={{ backgroundColor: "rgba(27,36,48,0.6)", color: "white" }}
+                      >
+                        {activeImg + 1} of {selected.images.length}
+                      </span>
+                    </>
+                  )}
+                </div>
                 {selected.images.length > 1 && (
                   <div className="flex gap-2 mt-2">
                     {selected.images.map((src, idx) => (
@@ -12843,6 +13049,8 @@ export default function Stallyard() {
                         onClick={() => setActiveImg(idx)}
                         className="w-14 h-14 rounded-lg overflow-hidden border-2"
                         style={{ borderColor: idx === activeImg ? MARIGOLD : "transparent" }}
+                        aria-label={`View photo ${idx + 1}`}
+                        aria-current={idx === activeImg}
                       >
                         <img src={src} alt="" className="w-full h-full object-cover" />
                       </button>
@@ -13065,6 +13273,70 @@ export default function Stallyard() {
         </div>
         );
       })()}
+
+      {/* Full-screen zoomed gallery — opened by tapping the main photo above */}
+      {galleryZoomOpen && selected?.images?.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: "rgba(0,0,0,0.92)" }}
+          onClick={() => setGalleryZoomOpen(false)}
+          role="dialog"
+          aria-label="Zoomed photo viewer"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setGalleryZoomOpen(false);
+            if (e.key === "ArrowLeft") setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
+            if (e.key === "ArrowRight") setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
+          }}
+        >
+          <button
+            onClick={() => setGalleryZoomOpen(false)}
+            aria-label="Close zoomed view"
+            className="absolute top-4 right-4 w-10 h-10 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white" }}
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={selected.images[activeImg]}
+            alt={`${selected.title} — zoomed photo ${activeImg + 1} of ${selected.images.length}`}
+            className="max-w-full max-h-full object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          {selected.images.length > 1 && (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
+                }}
+                aria-label="Previous photo"
+                className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white" }}
+              >
+                ‹
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
+                }}
+                aria-label="Next photo"
+                className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full flex items-center justify-center"
+                style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white" }}
+              >
+                ›
+              </button>
+              <span
+                className="absolute bottom-4 left-1/2 -translate-x-1/2 text-sm px-3 py-1 rounded-full"
+                style={{ backgroundColor: "rgba(255,255,255,0.15)", color: "white" }}
+              >
+                {activeImg + 1} of {selected.images.length}
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Cart drawer */}
       {cartOpen && (
