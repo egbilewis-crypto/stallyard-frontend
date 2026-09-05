@@ -1245,6 +1245,10 @@ export default function Stallyard() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
   const [expandedListingImagesId, setExpandedListingImagesId] = useState(null);
+  // Which photo (if any) is mid-way through being hidden, so a reason can
+  // be collected before actually confirming — { listingId, url } | null.
+  const [hidingImageDraft, setHidingImageDraft] = useState(null);
+  const [hideImageReason, setHideImageReason] = useState("");
   const [salesTab, setSalesTab] = useState("all");
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
@@ -5246,12 +5250,12 @@ export default function Stallyard() {
   // Hides or unhides one specific photo on a listing — the listing itself
   // and its other photos are untouched. Hidden photos stay in allImages
   // (nothing is deleted) but drop out of the buyer-facing images array.
-  const adminToggleImageVisibility = async (listingId, url, hidden) => {
+  const adminToggleImageVisibility = async (listingId, url, hidden, reason = "") => {
     try {
       const res = await authFetch(`${BACKEND_URL}/listings/${listingId}/image-visibility`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, hidden }),
+        body: JSON.stringify({ url, hidden, reason }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -11970,6 +11974,7 @@ export default function Stallyard() {
                         <div className="flex flex-wrap gap-3">
                           {(l.allImages || l.images || []).map((url, idx) => {
                             const isHidden = (l.hiddenImageUrls || []).includes(url);
+                            const isDraftingHide = hidingImageDraft?.listingId === l.id && hidingImageDraft?.url === url;
                             return (
                               <div key={idx} className="relative">
                                 <img
@@ -11986,13 +11991,56 @@ export default function Stallyard() {
                                     Hidden
                                   </span>
                                 )}
-                                <button
-                                  onClick={() => adminToggleImageVisibility(l.id, url, !isHidden)}
-                                  className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg"
-                                  style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
-                                >
-                                  {isHidden ? "Unhide" : "Hide"}
-                                </button>
+                                {isDraftingHide ? (
+                                  <div
+                                    className="absolute inset-0 p-1.5 flex flex-col justify-end gap-1"
+                                    style={{ backgroundColor: "rgba(27,36,48,0.85)" }}
+                                  >
+                                    <input
+                                      autoFocus
+                                      value={hideImageReason}
+                                      onChange={(e) => setHideImageReason(e.target.value)}
+                                      placeholder="Reason (optional)"
+                                      className="w-full px-1.5 py-1 rounded text-xs"
+                                      style={{ border: "none" }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => {
+                                          adminToggleImageVisibility(l.id, url, true, hideImageReason.trim());
+                                          setHidingImageDraft(null);
+                                          setHideImageReason("");
+                                        }}
+                                        className="flex-1 text-xs py-0.5 rounded font-medium"
+                                        style={{ backgroundColor: BERRY, color: "white" }}
+                                      >
+                                        Confirm
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setHidingImageDraft(null);
+                                          setHideImageReason("");
+                                        }}
+                                        className="flex-1 text-xs py-0.5 rounded font-medium"
+                                        style={{ backgroundColor: "rgba(255,255,255,0.2)", color: "white" }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() =>
+                                      isHidden
+                                        ? adminToggleImageVisibility(l.id, url, false)
+                                        : setHidingImageDraft({ listingId: l.id, url })
+                                    }
+                                    className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg"
+                                    style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
+                                  >
+                                    {isHidden ? "Unhide" : "Hide"}
+                                  </button>
+                                )}
                               </div>
                             );
                           })}
