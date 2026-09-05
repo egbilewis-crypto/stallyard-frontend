@@ -4528,8 +4528,32 @@ export default function Stallyard() {
     setUploading(true);
     try {
       const toProcess = files.slice(0, room);
-      const results = await Promise.all(toProcess.map((f) => resizeImageFile(f)));
-      setForm((f) => ({ ...f, images: [...f.images, ...results].slice(0, 5) }));
+      const dataUrls = await Promise.all(toProcess.map((f) => resizeImageFile(f)));
+      // Test step for the new Cloudinary pipeline — each resized image now
+      // gets uploaded for real instead of just being kept as a local data
+      // URL. If any single upload fails, that one is skipped with a toast
+      // rather than silently keeping a fake/local image in the listing.
+      const uploaded = [];
+      for (const dataUrl of dataUrls) {
+        try {
+          const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dataUrl }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showToast(data.error || "One photo failed to upload");
+            continue;
+          }
+          uploaded.push(data.url);
+        } catch {
+          showToast("Couldn't reach the server for one of those photos");
+        }
+      }
+      if (uploaded.length) {
+        setForm((f) => ({ ...f, images: [...f.images, ...uploaded].slice(0, 5) }));
+      }
       if (files.length > room) showToast("Only added the first 5 photos");
     } catch {
       showToast("Couldn't process one of those photos");
