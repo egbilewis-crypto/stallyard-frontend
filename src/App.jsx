@@ -299,6 +299,7 @@ function backendListingToFrontend(row, existing) {
     images: (row.images || []).filter((url) => !(row.hidden_image_urls || []).includes(url)),
     allImages: row.images || [],
     hiddenImageUrls: row.hidden_image_urls || [],
+    flaggedImages: row.flagged_images || [],
     listingType: row.listing_type || "fixed",
     currency: row.currency || "USD",
     status: row.status || "pending",
@@ -5265,6 +5266,26 @@ export default function Stallyard() {
       const updated = backendListingToFrontend(data.listing, listings.find((l) => l.id === listingId));
       await persistListings(listings.map((l) => (l.id === listingId ? updated : l)));
       showToast(hidden ? "Photo hidden from buyers" : "Photo restored");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const dismissImageFlag = async (listingId, url) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/listings/${listingId}/dismiss-flag`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't dismiss that flag");
+        return;
+      }
+      const updated = backendListingToFrontend(data.listing, listings.find((l) => l.id === listingId));
+      await persistListings(listings.map((l) => (l.id === listingId ? updated : l)));
+      showToast("Flag dismissed");
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -11974,6 +11995,7 @@ export default function Stallyard() {
                         <div className="flex flex-wrap gap-3">
                           {(l.allImages || l.images || []).map((url, idx) => {
                             const isHidden = (l.hiddenImageUrls || []).includes(url);
+                            const flagEntry = (l.flaggedImages || []).find((f) => f.url === url);
                             const isDraftingHide = hidingImageDraft?.listingId === l.id && hidingImageDraft?.url === url;
                             return (
                               <div key={idx} className="relative">
@@ -11981,8 +12003,17 @@ export default function Stallyard() {
                                   src={url}
                                   alt={`${l.title} photo ${idx + 1}`}
                                   className="w-28 h-28 object-cover rounded-lg"
-                                  style={{ opacity: isHidden ? 0.4 : 1 }}
+                                  style={{ opacity: isHidden ? 0.4 : 1, border: flagEntry ? `2px solid ${MARIGOLD}` : "none" }}
                                 />
+                                {flagEntry && (
+                                  <span
+                                    className="absolute top-1 right-1 text-xs px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                                    title={flagEntry.reasons.join("; ")}
+                                  >
+                                    ⚠ Flagged
+                                  </span>
+                                )}
                                 {isHidden && (
                                   <span
                                     className="absolute top-1 left-1 text-xs px-1.5 py-0.5 rounded"
@@ -12039,6 +12070,15 @@ export default function Stallyard() {
                                     style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
                                   >
                                     {isHidden ? "Unhide" : "Hide"}
+                                  </button>
+                                )}
+                                {flagEntry && !isDraftingHide && (
+                                  <button
+                                    onClick={() => dismissImageFlag(l.id, url)}
+                                    className="absolute bottom-5 left-0 right-0 text-center text-xs py-0.5"
+                                    style={{ backgroundColor: "rgba(232,169,77,0.9)", color: INK }}
+                                  >
+                                    Dismiss flag
                                   </button>
                                 )}
                               </div>
