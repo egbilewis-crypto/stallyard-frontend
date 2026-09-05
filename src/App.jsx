@@ -296,7 +296,9 @@ function backendListingToFrontend(row, existing) {
     fitMake: row.fit_make || "",
     fitModel: row.fit_model || "",
     fitYear: row.fit_year || "",
-    images: row.images || [],
+    images: (row.images || []).filter((url) => !(row.hidden_image_urls || []).includes(url)),
+    allImages: row.images || [],
+    hiddenImageUrls: row.hidden_image_urls || [],
     listingType: row.listing_type || "fixed",
     currency: row.currency || "USD",
     status: row.status || "pending",
@@ -1060,6 +1062,61 @@ export default function Stallyard() {
   const [selected, setSelected] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
   const [galleryZoomOpen, setGalleryZoomOpen] = useState(false);
+  // Pinch-to-zoom state for the full-screen gallery — scale/offset are what
+  // actually render; the ref below tracks in-progress touch math without
+  // triggering a re-render on every finger movement.
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomOffset, setZoomOffset] = useState({ x: 0, y: 0 });
+  const touchState = useRef({});
+  useEffect(() => {
+    setZoomScale(1);
+    setZoomOffset({ x: 0, y: 0 });
+  }, [activeImg, galleryZoomOpen]);
+
+  const getTouchDistance = (touches) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+  const handleZoomTouchStart = (e) => {
+    if (e.touches.length === 2) {
+      touchState.current.pinchStartDist = getTouchDistance(e.touches);
+      touchState.current.pinchStartScale = zoomScale;
+    } else if (e.touches.length === 1) {
+      touchState.current.startX = e.touches[0].clientX;
+      touchState.current.startY = e.touches[0].clientY;
+      touchState.current.panStartOffset = zoomOffset;
+    }
+  };
+  const handleZoomTouchMove = (e) => {
+    if (e.touches.length === 2 && touchState.current.pinchStartDist) {
+      const dist = getTouchDistance(e.touches);
+      const nextScale = Math.min(
+        4,
+        Math.max(1, touchState.current.pinchStartScale * (dist / touchState.current.pinchStartDist))
+      );
+      setZoomScale(nextScale);
+    } else if (e.touches.length === 1 && zoomScale > 1 && touchState.current.startX != null) {
+      const dx = e.touches[0].clientX - touchState.current.startX;
+      const dy = e.touches[0].clientY - touchState.current.startY;
+      setZoomOffset({
+        x: touchState.current.panStartOffset.x + dx,
+        y: touchState.current.panStartOffset.y + dy,
+      });
+    }
+  };
+  const handleZoomTouchEnd = (e) => {
+    // Only treat this as a swipe-to-change-photo when the image isn't
+    // currently zoomed in — otherwise a swipe while zoomed should just pan.
+    if (zoomScale <= 1 && touchState.current.startX != null && e.changedTouches.length === 1 && selected?.images.length > 1) {
+      const deltaX = e.changedTouches[0].clientX - touchState.current.startX;
+      if (Math.abs(deltaX) > 40) {
+        if (deltaX < 0) setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
+        else setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
+      }
+    }
+    touchState.current = {};
+  };
   const [toast, setToast] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [cart, setCart] = useState([]);
@@ -1187,6 +1244,7 @@ export default function Stallyard() {
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
+  const [expandedListingImagesId, setExpandedListingImagesId] = useState(null);
   const [salesTab, setSalesTab] = useState("all");
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
@@ -4654,14 +4712,39 @@ export default function Stallyard() {
           setStatus(i, "error", "Over 12 MB");
           continue;
         }
-        if (file.type && !ACCEPTED_PHOTO_TYPES.includes(file.type)) {
+        // Browsers can't natively decode HEIC/HEIF (the format iPhones use
+        // by default), so it has to be converted to JPEG first. Some
+        // browsers/OSes report the wrong MIME type (or none at all, or a
+        // generic one) for these files, so the filename extension is
+        // checked too — and checked before the type-rejection below, so a
+        // real HEIC file with a mislabeled type doesn't get bounced before
+        // it's even recognized as HEIC.
+        const looksLikeHeic = file.type === "image/heic" || file.type === "image/heif" || /\.hei[cf]$/i.test(file.name);
+
+        if (!looksLikeHeic && file.type && !ACCEPTED_PHOTO_TYPES.includes(file.type)) {
           setStatus(i, "error", "Unsupported file type");
           continue;
         }
 
+        // The conversion library itself is only downloaded when someone
+        // actually uploads a HEIC file — not part of everyone's page load.
+        let fileToProcess = file;
+        if (looksLikeHeic) {
+          setStatus(i, "uploading", "Converting HEIC photo…");
+          try {
+            const heic2any = (await import("heic2any")).default;
+            const converted = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.9 });
+            const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
+            fileToProcess = new File([convertedBlob], file.name.replace(/\.hei[cf]$/i, ".jpg"), { type: "image/jpeg" });
+          } catch {
+            setStatus(i, "error", "Couldn't convert this HEIC photo — try exporting it as JPEG first");
+            continue;
+          }
+        }
+
         let resized;
         try {
-          resized = await resizeListingPhoto(file);
+          resized = await resizeListingPhoto(fileToProcess);
         } catch {
           setStatus(i, "error", "Couldn't read this file — it may be corrupted");
           continue;
@@ -5158,6 +5241,29 @@ export default function Stallyard() {
     if (!(await patchListingOnBackend(id, { status: "removed" }))) return;
     await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "removed" } : l)));
     showToast("Listing taken down");
+  };
+
+  // Hides or unhides one specific photo on a listing — the listing itself
+  // and its other photos are untouched. Hidden photos stay in allImages
+  // (nothing is deleted) but drop out of the buyer-facing images array.
+  const adminToggleImageVisibility = async (listingId, url, hidden) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/listings/${listingId}/image-visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, hidden }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't update that photo");
+        return;
+      }
+      const updated = backendListingToFrontend(data.listing, listings.find((l) => l.id === listingId));
+      await persistListings(listings.map((l) => (l.id === listingId ? updated : l)));
+      showToast(hidden ? "Photo hidden from buyers" : "Photo restored");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const adminRestoreListing = async (id) => {
@@ -11758,8 +11864,8 @@ export default function Stallyard() {
                   </p>
                 )}
                 {listings.map((l) => (
+                  <div key={l.id}>
                   <div
-                    key={l.id}
                     className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white flex-wrap"
                     style={{ borderColor: l.status === "removed" ? BERRY : "#DDD8CC" }}
                   >
@@ -11825,6 +11931,13 @@ export default function Stallyard() {
                         </button>
                       )}
                       <button
+                        onClick={() => setExpandedListingImagesId((id) => (id === l.id ? null : l.id))}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Photos ({(l.allImages || l.images || []).length})
+                      </button>
+                      <button
                         onClick={() => adminToggleFeature(l.id)}
                         className="text-xs font-medium underline"
                         style={{ color: SLATE }}
@@ -11842,6 +11955,51 @@ export default function Stallyard() {
                         <Trash2 size={16} style={{ color: BERRY }} />
                       </button>
                     </div>
+                  </div>
+                  {expandedListingImagesId === l.id && (
+                    <div className="p-3 rounded-lg border bg-white mt-1 mb-2" style={{ borderColor: "#DDD8CC" }}>
+                      <p className="text-xs mb-2" style={{ color: SLATE }}>
+                        All photos on this listing, at full resolution. Hiding a photo removes it from what buyers
+                        see, without touching the rest of the listing.
+                      </p>
+                      {(l.allImages || l.images || []).length === 0 ? (
+                        <p className="text-xs" style={{ color: SLATE }}>
+                          No photos on this listing.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-3">
+                          {(l.allImages || l.images || []).map((url, idx) => {
+                            const isHidden = (l.hiddenImageUrls || []).includes(url);
+                            return (
+                              <div key={idx} className="relative">
+                                <img
+                                  src={url}
+                                  alt={`${l.title} photo ${idx + 1}`}
+                                  className="w-28 h-28 object-cover rounded-lg"
+                                  style={{ opacity: isHidden ? 0.4 : 1 }}
+                                />
+                                {isHidden && (
+                                  <span
+                                    className="absolute top-1 left-1 text-xs px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: BERRY, color: "white" }}
+                                  >
+                                    Hidden
+                                  </span>
+                                )}
+                                <button
+                                  onClick={() => adminToggleImageVisibility(l.id, url, !isHidden)}
+                                  className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg"
+                                  style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
+                                >
+                                  {isHidden ? "Unhide" : "Hide"}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   </div>
                 ))}
               </div>
@@ -13066,6 +13224,22 @@ export default function Stallyard() {
                     if (e.key === "ArrowLeft") setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
                     if (e.key === "ArrowRight") setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
                   }}
+                  onTouchStart={(e) => {
+                    touchState.current.startX = e.touches[0].clientX;
+                  }}
+                  onTouchEnd={(e) => {
+                    const startX = touchState.current.startX;
+                    if (startX == null || selected.images.length <= 1) return;
+                    const deltaX = e.changedTouches[0].clientX - startX;
+                    // A deliberate swipe, not just a tap — 40px is enough to
+                    // feel responsive without triggering on an accidental
+                    // finger drift while tapping the photo to zoom.
+                    if (Math.abs(deltaX) > 40) {
+                      if (deltaX < 0) setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
+                      else setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
+                    }
+                    touchState.current.startX = null;
+                  }}
                 >
                   <img
                     src={selected.images[activeImg]}
@@ -13344,9 +13518,9 @@ export default function Stallyard() {
       {/* Full-screen zoomed gallery — opened by tapping the main photo above */}
       {galleryZoomOpen && selected?.images?.length > 0 && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden"
           style={{ backgroundColor: "rgba(0,0,0,0.92)" }}
-          onClick={() => setGalleryZoomOpen(false)}
+          onClick={() => zoomScale <= 1 && setGalleryZoomOpen(false)}
           role="dialog"
           aria-label="Zoomed photo viewer"
           tabIndex={0}
@@ -13355,6 +13529,9 @@ export default function Stallyard() {
             if (e.key === "ArrowLeft") setActiveImg((i) => (i > 0 ? i - 1 : selected.images.length - 1));
             if (e.key === "ArrowRight") setActiveImg((i) => (i < selected.images.length - 1 ? i + 1 : 0));
           }}
+          onTouchStart={handleZoomTouchStart}
+          onTouchMove={handleZoomTouchMove}
+          onTouchEnd={handleZoomTouchEnd}
         >
           <button
             onClick={() => setGalleryZoomOpen(false)}
@@ -13368,6 +13545,10 @@ export default function Stallyard() {
             src={selected.images[activeImg]}
             alt={`${selected.title} — zoomed photo ${activeImg + 1} of ${selected.images.length}`}
             className="max-w-full max-h-full object-contain"
+            style={{
+              transform: `scale(${zoomScale}) translate(${zoomOffset.x / zoomScale}px, ${zoomOffset.y / zoomScale}px)`,
+              touchAction: "none",
+            }}
             onClick={(e) => e.stopPropagation()}
           />
           {selected.images.length > 1 && (
