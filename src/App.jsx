@@ -555,6 +555,62 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
 // ever get resized down) — kept separate from resizeImageFile above so
 // the many other places that already call it (avatars, ID photos, review
 // photos, etc) don't need to change what they expect back.
+// Runs entirely in the browser, no external service — downsamples the
+// photo to a small analysis size for speed, then checks two things:
+// average brightness (catches too-dark or overexposed shots) and Laplacian
+// variance (a standard, well-established blur estimator: a sharp photo has
+// lots of fine edge detail, which the Laplacian highlights strongly; a
+// blurry one is smooth, so the variance of that filtered image comes out
+// low). The thresholds below are reasonable starting points, not exact
+// science — the same way any auto-quality check needs a bit of tuning
+// once real seller photos start coming through.
+function analyzeImageQuality(img) {
+  const SAMPLE_SIZE = 100;
+  const canvas = document.createElement("canvas");
+  canvas.width = SAMPLE_SIZE;
+  canvas.height = SAMPLE_SIZE;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+  const { data } = ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+
+  const gray = new Float32Array(SAMPLE_SIZE * SAMPLE_SIZE);
+  let brightnessSum = 0;
+  for (let i = 0; i < gray.length; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    const v = 0.299 * r + 0.587 * g + 0.114 * b;
+    gray[i] = v;
+    brightnessSum += v;
+  }
+  const brightness = brightnessSum / gray.length; // 0 (black) – 255 (white)
+
+  // 3x3 Laplacian kernel over the grayscale grid, skipping the 1px border.
+  const laplacian = [];
+  for (let y = 1; y < SAMPLE_SIZE - 1; y++) {
+    for (let x = 1; x < SAMPLE_SIZE - 1; x++) {
+      const idx = y * SAMPLE_SIZE + x;
+      const value =
+        -4 * gray[idx] +
+        gray[idx - 1] +
+        gray[idx + 1] +
+        gray[idx - SAMPLE_SIZE] +
+        gray[idx + SAMPLE_SIZE];
+      laplacian.push(value);
+    }
+  }
+  const lapMean = laplacian.reduce((s, v) => s + v, 0) / laplacian.length;
+  const blurVariance = laplacian.reduce((s, v) => s + (v - lapMean) ** 2, 0) / laplacian.length;
+
+  return {
+    brightness,
+    blurVariance,
+    isTooDark: brightness < 40,
+    isTooBright: brightness > 225,
+    isBlurry: blurVariance < 90,
+  };
+}
+
 function resizeListingPhoto(file, maxDim = 1600, quality = 0.82) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -565,6 +621,7 @@ function resizeListingPhoto(file, maxDim = 1600, quality = 0.82) {
       img.onload = () => {
         const originalWidth = img.width;
         const originalHeight = img.height;
+        const quality_check = analyzeImageQuality(img);
         let { width, height } = img;
         if (width > height && width > maxDim) {
           height = Math.round((height * maxDim) / width);
@@ -581,6 +638,7 @@ function resizeListingPhoto(file, maxDim = 1600, quality = 0.82) {
           dataUrl: canvas.toDataURL("image/jpeg", quality),
           originalWidth,
           originalHeight,
+          ...quality_check,
         });
       };
       img.src = reader.result;
@@ -4615,6 +4673,11 @@ export default function Stallyard() {
         }
         const belowRecommended =
           resized.originalWidth < RECOMMENDED_LISTING_PHOTO_DIM || resized.originalHeight < RECOMMENDED_LISTING_PHOTO_DIM;
+        const qualityWarnings = [];
+        if (resized.isBlurry) qualityWarnings.push("looks blurry");
+        if (resized.isTooDark) qualityWarnings.push("looks too dark");
+        if (resized.isTooBright) qualityWarnings.push("looks overexposed");
+        if (belowRecommended) qualityWarnings.push(`below the recommended ${RECOMMENDED_LISTING_PHOTO_DIM}×${RECOMMENDED_LISTING_PHOTO_DIM}px`);
 
         const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
           method: "POST",
@@ -4627,7 +4690,11 @@ export default function Stallyard() {
           continue;
         }
         uploaded.push(data.url);
-        setStatus(i, "done", belowRecommended ? `Added — a higher-resolution photo (${RECOMMENDED_LISTING_PHOTO_DIM}×${RECOMMENDED_LISTING_PHOTO_DIM}px+) would look sharper` : "Added");
+        setStatus(
+          i,
+          "done",
+          qualityWarnings.length ? `Added, but this photo ${qualityWarnings.join(" and ")} — consider replacing it` : "Added"
+        );
       } catch {
         setStatus(i, "error", "Couldn't reach the server");
       }
