@@ -4813,7 +4813,14 @@ export default function Stallyard() {
         return;
       }
       if (!res.ok) {
-        showToast(isDraft ? "Couldn't save that draft — try again" : "Couldn't publish that listing — try again");
+        let message = isDraft ? "Couldn't save that draft — try again" : "Couldn't publish that listing — try again";
+        try {
+          const data = await res.json();
+          if (data?.error) message = data.error;
+        } catch {
+          // response wasn't JSON — fall back to the generic message above
+        }
+        showToast(message);
         return;
       }
       const { listing } = await res.json();
