@@ -393,6 +393,10 @@ function backendOrderToFrontend(row) {
     paymentCardType: row.payment_card_type || null,
     paymentBank: row.payment_bank || null,
     paymentLast4: row.payment_last4 || null,
+    refundStatus: row.refund_status || null,
+    paystackRefundId: row.paystack_refund_id || null,
+    refundFailureReason: row.refund_failure_reason || "",
+    refundedAt: row.refunded_at ? new Date(row.refunded_at).getTime() : null,
     isDisputed: !!row.is_disputed,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     items: (row.items || []).map((i) => ({
@@ -411,6 +415,9 @@ function backendOrderToFrontend(row) {
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
       shippedAt: i.shipped_at ? new Date(i.shipped_at).getTime() : null,
       proofOfDeliveryUrl: i.proof_of_delivery_url || "",
+      // Secret delivery token is returned only on buyer-facing order responses.
+      deliveryToken: i.delivery_token || null,
+      deliveryTokenGeneratedAt: i.delivery_token_generated_at ? new Date(i.delivery_token_generated_at).getTime() : null,
       returnStatus: i.return_status || null,
       returnReason: i.return_reason || "",
       returnNote: i.return_note || "",
@@ -3588,7 +3595,12 @@ export default function Stallyard() {
   };
 
   const fileDispute = async (orderId) => {
-    await persistOrders(orders.map((o) => (o.id === orderId ? { ...o, isDisputed: true } : o)));
+    const ok = await patchOrderOnBackend(orderId, "dispute", { isDisputed: true });
+    if (!ok) return;
+
+    await persistOrders(
+      orders.map((o) => (o.id === orderId ? { ...o, isDisputed: true } : o))
+    );
     showToast("Issue reported — the marketplace admin will review it");
   };
 
@@ -3647,12 +3659,26 @@ export default function Stallyard() {
   };
 
   const refundOrder = async (orderId) => {
-    const ok = await patchOrderOnBackend(orderId, "refund");
-    if (!ok) return;
-    await persistOrders(
-      orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "refunded" } : o))
-    );
-    showToast("Order marked as refunded");
+    if (!window.confirm("Send a full refund through Paystack for this order? This action submits real money back to the buyer.")) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/refund`, { method: "PATCH" });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't start the refund — try again");
+        return;
+      }
+      const updated = backendOrderToFrontend({ ...data.order, items: orders.find((o) => o.id === orderId)?.items || [] });
+      await persistOrders(
+        orders.map((o) =>
+          o.id === orderId
+            ? { ...o, ...updated, items: o.items, paymentStatus: "refund_pending", refundStatus: data.order.refund_status || "pending" }
+            : o
+        )
+      );
+      showToast("Refund submitted to Paystack — waiting for processing confirmation");
+    } catch {
+      showToast("Couldn't reach the server — check the order before trying again");
+    }
   };
 
   const updateItemFulfillment = async (orderId, itemId, status) => {
@@ -3775,10 +3801,16 @@ export default function Stallyard() {
     }
   };
 
-  // Seller-side action: enters the code the buyer handed them in person.
-  // A match confirms receipt exactly like the buyer clicking the button
-  // themselves — same auto-release-payment behavior.
+  // Seller-side release action. The backend requires BOTH a valid buyer
+  // delivery code and an already-uploaded proof-of-delivery picture before
+  // it will confirm receipt or release held payment.
   const redeemDeliveryToken = async (orderId, itemId, token) => {
+    const order = orders.find((o) => o.id === orderId);
+    const item = order?.items.find((i) => i.id === itemId);
+    if (!item?.proofOfDeliveryUrl) {
+      showToast("Upload the delivery picture first");
+      return;
+    }
     setRedeemingTokenKey(itemId);
     try {
       const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/redeem-delivery-token`, {
@@ -8378,6 +8410,7 @@ export default function Stallyard() {
                               {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
                               {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
                               {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
                             </span>
                             <span
                               className="text-sm font-semibold"
@@ -8543,7 +8576,11 @@ export default function Stallyard() {
                                             onClick={() =>
                                               redeemDeliveryToken(o.id, i.id, (redeemTokenDrafts[i.id] || "").trim())
                                             }
-                                            disabled={redeemingTokenKey === i.id || !(redeemTokenDrafts[i.id] || "").trim()}
+                                            disabled={
+                                              redeemingTokenKey === i.id ||
+                                              !(redeemTokenDrafts[i.id] || "").trim() ||
+                                              !i.proofOfDeliveryUrl
+                                            }
                                             className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
                                             style={{ backgroundColor: MARIGOLD, color: INK }}
                                           >
@@ -8551,7 +8588,7 @@ export default function Stallyard() {
                                           </button>
                                         </div>
                                         <p className="text-xs mt-1" style={{ color: SLATE }}>
-                                          Ask the buyer for the 10-digit code they generated after delivery.
+                                          Upload the delivery picture first, then enter the 10-digit code the buyer gives you while receiving the item. Both are required to release payment.
                                         </p>
                                       </div>
                                     ))}
@@ -8600,7 +8637,7 @@ export default function Stallyard() {
                                     <div className="mt-2">
                                       <div className="flex items-center gap-2 flex-wrap mb-1">
                                         <Tag color={SAGE}>Return approved</Tag>
-                                        {o.paymentStatus === "held" && (
+                                        {["held", "released"].includes(o.paymentStatus) && (
                                           <button
                                             onClick={() => refundOrder(o.id)}
                                             className="text-xs font-medium underline"
@@ -9147,44 +9184,41 @@ export default function Stallyard() {
                                   </a>
                                 </div>
                               )}
-                              {(item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && (
+                              {!item.buyerConfirmedAt && !["cancelled", "returned"].includes(item.fulfillmentStatus) && (
                                 <div className="mt-2">
-                                  {item.buyerConfirmedAt ? (
-                                    <Tag color={SAGE}>You confirmed receipt</Tag>
-                                  ) : deliveryTokens[item.id] ? (
+                                  {(item.deliveryToken || deliveryTokens[item.id]) ? (
                                     <div className="p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                        Your delivery code
+                                      </div>
                                       <div className="text-xs mb-1" style={{ color: SLATE }}>
-                                        Give this code to the seller once the item's in hand:
+                                        This code was created automatically when your payment succeeded. Only give it to the seller when the item is physically in your hand.
                                       </div>
                                       <div
                                         className="text-center py-2 rounded-lg text-lg font-semibold tracking-widest"
                                         style={{ backgroundColor: "white", color: INK, fontFamily: "'IBM Plex Mono', monospace" }}
                                       >
-                                        {deliveryTokens[item.id]}
+                                        {item.deliveryToken || deliveryTokens[item.id]}
                                       </div>
-                                      <p className="text-xs mt-1" style={{ color: SLATE }}>
-                                        Valid for 7 days. The seller enters this in their dashboard to release payment.
+                                      <p className="text-xs mt-1" style={{ color: BERRY }}>
+                                        Do not send this code before delivery. The seller must also upload a delivery picture; then entering this code releases payment immediately.
                                       </p>
                                     </div>
                                   ) : (
-                                    <div className="flex items-center gap-3 flex-wrap">
-                                      <button
-                                        onClick={() => confirmReceipt(o.id, item.id)}
-                                        className="text-xs font-medium underline"
-                                        style={{ color: SAGE }}
-                                      >
-                                        Confirm receipt
-                                      </button>
-                                      <button
-                                        onClick={() => generateDeliveryToken(item.id)}
-                                        disabled={generatingTokenKey === item.id}
-                                        className="text-xs font-medium underline disabled:opacity-50"
-                                        style={{ color: SLATE }}
-                                      >
-                                        {generatingTokenKey === item.id ? "Generating…" : "Generate delivery code for seller"}
-                                      </button>
-                                    </div>
+                                    <button
+                                      onClick={() => generateDeliveryToken(item.id)}
+                                      disabled={generatingTokenKey === item.id}
+                                      className="text-xs font-medium underline disabled:opacity-50"
+                                      style={{ color: SLATE }}
+                                    >
+                                      {generatingTokenKey === item.id ? "Loading code…" : "Show delivery code"}
+                                    </button>
                                   )}
+                                </div>
+                              )}
+                              {item.buyerConfirmedAt && (
+                                <div className="mt-2">
+                                  <Tag color={SAGE}>Delivery confirmed — payment released</Tag>
                                 </div>
                               )}
                             </div>
@@ -9484,6 +9518,7 @@ export default function Stallyard() {
                     <div className="mt-3 pt-3 flex items-center justify-between border-t" style={{ borderColor: "#EFEBE0" }}>
                       <div className="flex items-center gap-2">
                         {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
                         {o.isDisputed && <Tag color={BERRY}>Issue reported — under review</Tag>}
                       </div>
                       {!o.isDisputed && (
@@ -12338,6 +12373,7 @@ export default function Stallyard() {
                           {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
                           {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
                           {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
                         </span>
                         <span
                           className="text-sm font-semibold"
@@ -12378,15 +12414,17 @@ export default function Stallyard() {
                           No payment tracking data (order placed before this feature).
                         </p>
                       )}
-                      {o.paymentStatus === "held" && hasAdminPermission(currentMember, "finance") && (
+                      {["held", "released"].includes(o.paymentStatus) && hasAdminPermission(currentMember, "finance") && (
                         <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => releasePayout(o.id)}
-                            className="text-xs font-medium underline"
-                            style={{ color: SAGE }}
-                          >
-                            Release payout
-                          </button>
+                          {o.paymentStatus === "held" && (
+                            <button
+                              onClick={() => releasePayout(o.id)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SAGE }}
+                            >
+                              Release payout
+                            </button>
+                          )}
                           <button
                             onClick={() => refundOrder(o.id)}
                             className="text-xs font-medium underline"
