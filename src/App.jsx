@@ -1278,6 +1278,14 @@ export default function Stallyard() {
   const [systemHealth, setSystemHealth] = useState(null);
   const [systemHealthLoading, setSystemHealthLoading] = useState(false);
   const [systemHealthError, setSystemHealthError] = useState("");
+  const [adminReportType, setAdminReportType] = useState("orders");
+  const [adminReportFrom, setAdminReportFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10);
+  });
+  const [adminReportTo, setAdminReportTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [adminReportData, setAdminReportData] = useState(null);
+  const [adminReportLoading, setAdminReportLoading] = useState(false);
+  const [adminReportError, setAdminReportError] = useState("");
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -3267,6 +3275,61 @@ export default function Stallyard() {
     } finally {
       setSystemHealthLoading(false);
     }
+  };
+
+  const fetchAdminReport = async (type = adminReportType) => {
+    setAdminReportLoading(true);
+    setAdminReportError("");
+    setAdminReportData(null);
+    try {
+      const params = new URLSearchParams();
+      if (adminReportFrom) params.set("from", adminReportFrom);
+      if (adminReportTo) params.set("to", adminReportTo);
+      const res = await authFetch(`${BACKEND_URL}/admin/reports/${encodeURIComponent(type)}?${params.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAdminReportError(data.error || "Couldn't generate report");
+        return;
+      }
+      setAdminReportData({
+        ...data,
+        columns: Array.isArray(data.columns) ? data.columns : [],
+        rows: Array.isArray(data.rows) ? data.rows : [],
+        summary: data.summary && typeof data.summary === "object" ? data.summary : {},
+      });
+    } catch {
+      setAdminReportError("Couldn't reach the server — try again");
+    } finally {
+      setAdminReportLoading(false);
+    }
+  };
+
+  const downloadAdminReportCsv = () => {
+    const data = adminReportData;
+    if (!data?.rows?.length || !data?.columns?.length) {
+      showToast("Generate a report with data first");
+      return;
+    }
+    const escapeCell = (value) => {
+      if (value === null || value === undefined) return "";
+      const raw = value instanceof Date ? value.toISOString() : String(value);
+      return /[",\n\r]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
+    };
+    const lines = [
+      data.columns.map(escapeCell).join(","),
+      ...data.rows.map((row) => data.columns.map((c) => escapeCell(row?.[c])).join(",")),
+    ];
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const range = `${data.from || "all"}_${data.to || "now"}`;
+    a.href = url;
+    a.download = `stallyard-${data.type || adminReportType}-${range}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast("CSV downloaded");
   };
 
   const revokeAdminStaffSessions = async (staff) => {
@@ -12106,6 +12169,7 @@ export default function Stallyard() {
                   label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
                   permission: "finance",
                 },
+                { id: "reportsExport", label: "Reports & exports", permission: "finance_or_seller" },
                 { id: "systemHealth", label: "System health", requireSuperAdmin: true },
                 { id: "auditLog", label: "Audit log", requireSuperAdmin: true },
               ]
@@ -12114,6 +12178,9 @@ export default function Stallyard() {
                   if (t.requireSuperAdmin) return isSuperAdmin;
                   if (t.permission === "finance_or_content") {
                     return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "content_management");
+                  }
+                  if (t.permission === "finance_or_seller") {
+                    return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "seller_verification");
                   }
                   if (t.permission) return hasAdminPermission(currentMember, t.permission);
                   return true; // no permission listed = every admin role can view (accounts/orders)
@@ -14726,6 +14793,143 @@ export default function Stallyard() {
                   ))}
               </div>
             )}
+
+            {adminTab === "reportsExport" && (() => {
+              const isSuperAdmin = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
+              const canFinance = isSuperAdmin || hasAdminPermission(currentMember, "finance");
+              const canSellers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification") || canFinance;
+              const reportOptions = [
+                ...(canFinance ? [
+                  ["orders", "Orders"], ["sales", "Sales"], ["commissions", "Commissions"],
+                  ["payouts", "Seller payouts"], ["refunds", "Refunds"], ["taxes", "Taxes"],
+                ] : []),
+                ...(canSellers ? [["sellers", "Sellers"]] : []),
+              ];
+              const effectiveReportType = reportOptions.some(([value]) => value === adminReportType) ? adminReportType : (reportOptions[0]?.[0] || "sellers");
+              const summary = adminReportData?.summary || {};
+              const currencies = summary.currencies && typeof summary.currencies === "object" ? Object.entries(summary.currencies) : [];
+              return (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Reports & exports</h3>
+                    <p className="text-sm mt-1" style={{ color: SLATE }}>
+                      Generate operational and financial reports from Stallyard's database, preview the results, and download them as CSV for accounting or recordkeeping.
+                    </p>
+                  </div>
+
+                  <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="grid md:grid-cols-4 gap-3 items-end">
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>Report</span>
+                        <select value={effectiveReportType} onChange={(e) => { setAdminReportType(e.target.value); setAdminReportData(null); setAdminReportError(""); }}
+                          className="w-full border rounded-lg px-3 py-2 bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          {reportOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>From</span>
+                        <input type="date" value={adminReportFrom} onChange={(e) => setAdminReportFrom(e.target.value)}
+                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
+                      </label>
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>To</span>
+                        <input type="date" value={adminReportTo} onChange={(e) => setAdminReportTo(e.target.value)}
+                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
+                      </label>
+                      <button onClick={() => fetchAdminReport(effectiveReportType)} disabled={adminReportLoading}
+                        className="px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+                        style={{ backgroundColor: INK, color: "white" }}>
+                        {adminReportLoading ? "Generating…" : "Generate report"}
+                      </button>
+                    </div>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      {[
+                        ["7 days", 7], ["30 days", 30], ["90 days", 90],
+                      ].map(([label, days]) => (
+                        <button key={label} onClick={() => {
+                          const to = new Date(); const from = new Date(); from.setDate(from.getDate() - days);
+                          setAdminReportFrom(from.toISOString().slice(0, 10)); setAdminReportTo(to.toISOString().slice(0, 10));
+                        }} className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>{label}</button>
+                      ))}
+                      <button onClick={() => { setAdminReportFrom(""); setAdminReportTo(""); }}
+                        className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>All time</button>
+                    </div>
+                  </div>
+
+                  {adminReportError && (
+                    <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
+                      {adminReportError}
+                    </div>
+                  )}
+
+                  {adminReportData && (
+                    <>
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                          <div className="font-semibold" style={{ color: INK }}>{(adminReportData.type || adminReportType).replace(/_/g, " ")} report</div>
+                          <div className="text-xs" style={{ color: SLATE }}>
+                            {adminReportData.rows.length.toLocaleString()} row{adminReportData.rows.length === 1 ? "" : "s"} · generated {adminReportData.generatedAt ? new Date(adminReportData.generatedAt).toLocaleString() : "now"}
+                          </div>
+                        </div>
+                        <button onClick={downloadAdminReportCsv} disabled={!adminReportData.rows.length}
+                          className="px-4 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                          style={{ borderColor: SAGE, color: SAGE }}>Download CSV</button>
+                      </div>
+
+                      {currencies.length > 0 && (
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          {currencies.map(([currency, c]) => (
+                            <div key={currency} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>{currency}</div>
+                              <div className="text-lg font-semibold mt-1" style={{ color: INK }}>{formatMoney(c.gross || 0, currency)} gross</div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>{c.orders || 0} orders · {formatMoney(c.commission || 0, currency)} commission · {formatMoney(c.tax || 0, currency)} tax</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {adminReportData.type === "payouts" && (
+                        <div className="grid sm:grid-cols-3 gap-3">
+                          {[['Paid', summary.paid, SAGE], ['Processing', summary.processing, MARIGOLD], ['Failed', summary.failed, BERRY]].map(([label, value, color]) => (
+                            <div key={label} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs" style={{ color: SLATE }}>{label}</div><div className="text-xl font-semibold mt-1" style={{ color }}>{formatMoney(value || 0, "NGN")}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+                        {adminReportData.rows.length === 0 ? (
+                          <div className="p-6 text-center text-sm" style={{ color: SLATE }}>No records matched this report and date range.</div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs min-w-[900px]">
+                              <thead style={{ backgroundColor: CANVAS }}><tr>{adminReportData.columns.map((c) => <th key={c} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: INK }}>{c.replace(/_/g, " ")}</th>)}</tr></thead>
+                              <tbody>
+                                {adminReportData.rows.slice(0, 100).map((row, idx) => (
+                                  <tr key={idx} className="border-t" style={{ borderColor: "#EEE9DE" }}>
+                                    {adminReportData.columns.map((c) => {
+                                      const value = row?.[c];
+                                      const display = typeof value === "boolean" ? (value ? "Yes" : "No") : (value === null || value === undefined || value === "" ? "—" : String(value));
+                                      return <td key={c} className="px-3 py-2 whitespace-nowrap max-w-[260px] overflow-hidden text-ellipsis" style={{ color: SLATE }}>{display}</td>;
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                        {adminReportData.rows.length > 100 && <div className="px-4 py-3 border-t text-xs" style={{ borderColor: "#EEE9DE", color: SLATE }}>Preview shows first 100 rows. The CSV download contains all {adminReportData.rows.length.toLocaleString()} rows.</div>}
+                      </div>
+
+                      <p className="text-xs" style={{ color: SLATE }}>
+                        CSV files open in Excel, Google Sheets, and most accounting tools. Report generation is recorded in the admin audit log.
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
 
             {adminTab === "systemHealth" && (!currentMember.adminRole || currentMember.adminRole === "super_admin") && (
               <div className="space-y-5">
