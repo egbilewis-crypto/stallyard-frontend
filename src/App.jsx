@@ -971,9 +971,11 @@ export default function Stallyard() {
   const [view, setView] = useState("browse");
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
-  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email"
+  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email" | "new-password"
   const [adminLoginCode, setAdminLoginCode] = useState("");
   const [adminLoginPendingUserId, setAdminLoginPendingUserId] = useState(null);
+  const [adminTempPasswordChangeToken, setAdminTempPasswordChangeToken] = useState("");
+  const [adminTempNewPasswordForm, setAdminTempNewPasswordForm] = useState({ password: "", confirm: "" });
   const [adminLoginError, setAdminLoginError] = useState("");
   const [adminLoginSubmitting, setAdminLoginSubmitting] = useState(false);
   const [authReturnView, setAuthReturnView] = useState("browse");
@@ -1276,6 +1278,8 @@ export default function Stallyard() {
   const [adminStaffFilter, setAdminStaffFilter] = useState("all");
   const [expandedStaffId, setExpandedStaffId] = useState(null);
   const [adminPasswordResettingId, setAdminPasswordResettingId] = useState(null);
+  const [adminTempPasswordGeneratingId, setAdminTempPasswordGeneratingId] = useState(null);
+  const [adminTempPasswordResult, setAdminTempPasswordResult] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
   const [systemHealthLoading, setSystemHealthLoading] = useState(false);
   const [systemHealthError, setSystemHealthError] = useState("");
@@ -3227,7 +3231,55 @@ export default function Stallyard() {
         showToast("Authenticator code confirmed — check your email for the next code");
         return;
       }
+      if (data.temporaryPasswordChangeRequired) {
+        setAdminTempPasswordChangeToken(data.passwordChangeToken || "");
+        setAdminTempNewPasswordForm({ password: "", confirm: "" });
+        setAdminLoginCode("");
+        setAdminLoginStep("new-password");
+        return;
+      }
       await finishAdminLogin(data, adminLoginForm.username.trim().toLowerCase());
+    } catch {
+      setAdminLoginError("Couldn't reach the server — try again");
+    } finally {
+      setAdminLoginSubmitting(false);
+    }
+  };
+
+  const completeAdminTemporaryPassword = async () => {
+    const password = adminTempNewPasswordForm.password;
+    if (password.length < 8) {
+      setAdminLoginError("New password must be at least 8 characters");
+      return;
+    }
+    if (password !== adminTempNewPasswordForm.confirm) {
+      setAdminLoginError("Passwords don't match");
+      return;
+    }
+    if (!adminTempPasswordChangeToken) {
+      setAdminLoginError("Temporary-password recovery expired — ask the Super Admin for a new temporary password");
+      return;
+    }
+    setAdminLoginSubmitting(true);
+    setAdminLoginError("");
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/temporary-password/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          passwordChangeToken: adminTempPasswordChangeToken,
+          newPassword: password,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAdminLoginError(data.error || "Couldn't set your new password");
+        return;
+      }
+      setAdminTempPasswordChangeToken("");
+      setAdminTempNewPasswordForm({ password: "", confirm: "" });
+      await finishAdminLogin(data, data.user?.username || adminLoginForm.username.trim().toLowerCase());
+      showToast("Permanent admin password set — you're signed in");
     } catch {
       setAdminLoginError("Couldn't reach the server — try again");
     } finally {
@@ -3359,6 +3411,36 @@ export default function Stallyard() {
       await fetchAdminStaff();
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const generateAdminTemporaryPassword = async (staff) => {
+    if (!staff?.id) return;
+    if (staff.username === currentUser) {
+      showToast("Use your own account security controls to change your password");
+      return;
+    }
+    if (!staff.is_admin) {
+      showToast("Temporary passwords are only for active admin accounts");
+      return;
+    }
+    if (!window.confirm(`Issue a one-time 10-minute temporary password for ${staff.display_name || staff.username}? Their existing sessions will be revoked.`)) return;
+    setAdminTempPasswordGeneratingId(staff.id);
+    setAdminTempPasswordResult(null);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/temporary-password`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't generate a temporary password");
+        return;
+      }
+      setAdminTempPasswordResult(data);
+      showToast("Temporary password generated — it expires in 10 minutes");
+      await fetchAdminStaff();
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setAdminTempPasswordGeneratingId(null);
     }
   };
 
@@ -6462,6 +6544,44 @@ export default function Stallyard() {
                   {adminLoginSubmitting ? "Checking..." : "Continue"}
                 </button>
               </>
+            ) : adminLoginStep === "new-password" ? (
+              <>
+                <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
+                  Set a new password
+                </h2>
+                <p className="text-sm mb-4" style={{ color: SLATE }}>
+                  Your 10-minute temporary password was accepted and all three security checks passed. Choose a new permanent admin password to finish signing in.
+                </p>
+                <input
+                  type="password"
+                  value={adminTempNewPasswordForm.password}
+                  onChange={(e) => setAdminTempNewPasswordForm((f) => ({ ...f, password: e.target.value }))}
+                  placeholder="New password"
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                  autoFocus
+                />
+                <input
+                  type="password"
+                  value={adminTempNewPasswordForm.confirm}
+                  onChange={(e) => setAdminTempNewPasswordForm((f) => ({ ...f, confirm: e.target.value }))}
+                  onKeyDown={(e) => e.key === "Enter" && completeAdminTemporaryPassword()}
+                  placeholder="Confirm new password"
+                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                />
+                {adminLoginError && (
+                  <p className="text-sm mb-2" style={{ color: BERRY }}>{adminLoginError}</p>
+                )}
+                <button
+                  onClick={completeAdminTemporaryPassword}
+                  disabled={adminLoginSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {adminLoginSubmitting ? "Saving..." : "Set password & sign in"}
+                </button>
+              </>
             ) : (
               <>
                 <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
@@ -6500,6 +6620,8 @@ export default function Stallyard() {
                     setAdminLoginStep("credentials");
                     setAdminLoginCode("");
                     setAdminLoginError("");
+                    setAdminTempPasswordChangeToken("");
+                    setAdminTempNewPasswordForm({ password: "", confirm: "" });
                   }}
                   className="text-xs font-medium underline mt-3"
                   style={{ color: SLATE }}
@@ -12998,7 +13120,7 @@ export default function Stallyard() {
                     <div>
                       <h3 className="text-lg font-semibold" style={{ color: INK }}>Admin / Staff Accounts</h3>
                       <p className="text-sm mt-1" style={{ color: SLATE }}>
-                        Manage privileged staff access, roles, multi-factor status and active sessions. Role changes invalidate existing sessions automatically.
+                        Manage privileged staff access, roles, multi-factor status and active sessions. Super Admin can issue a 10-minute recovery password; role changes invalidate existing sessions automatically.
                       </p>
                     </div>
                     <button onClick={fetchAdminStaff} className="px-3 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
@@ -13019,6 +13141,35 @@ export default function Stallyard() {
                       </div>
                     ))}
                   </div>
+
+                  {adminTempPasswordResult && (
+                    <div className="p-4 rounded-xl border mb-4" style={{ borderColor: MARIGOLD, backgroundColor: MARIGOLD + "10" }}>
+                      <div className="font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                        Give this password directly to <strong>@{adminTempPasswordResult.username}</strong>. It is shown here only for this page session and expires at {adminTempPasswordResult.expiresAt ? new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString() : "in 10 minutes"}. The sub-admin must still complete authenticator + email verification and then choose a new permanent password.
+                      </p>
+                      <div className="flex items-center gap-2 mt-3 flex-wrap">
+                        <code className="px-3 py-2 rounded-lg bg-white border text-base font-semibold" style={{ borderColor: "#DDD8CC", color: INK }}>
+                          {adminTempPasswordResult.temporaryPassword}
+                        </code>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
+                              showToast("Temporary password copied");
+                            } catch {
+                              showToast("Copy didn't work — select the password manually");
+                            }
+                          }}
+                          className="px-3 py-2 rounded-lg border text-xs font-medium"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        >
+                          Copy
+                        </button>
+                        <button onClick={() => setAdminTempPasswordResult(null)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: BERRY, color: BERRY }}>Hide now</button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex gap-2 flex-wrap mb-4">
                     <input
@@ -13100,12 +13251,12 @@ export default function Stallyard() {
                                 {active && (
                                   <>
                                     <button
-                                      onClick={() => sendAdminPasswordReset(staff)}
-                                      disabled={adminPasswordResettingId === staff.id}
+                                      onClick={() => generateAdminTemporaryPassword(staff)}
+                                      disabled={adminTempPasswordGeneratingId === staff.id}
                                       className="px-3 py-2 rounded-lg border text-xs font-medium disabled:opacity-50"
                                       style={{ borderColor: MARIGOLD, color: INK }}
                                     >
-                                      {adminPasswordResettingId === staff.id ? "Sending reset…" : "Reset password"}
+                                      {adminTempPasswordGeneratingId === staff.id ? "Generating…" : "10-min password"}
                                     </button>
                                     <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
                                       Revoke sessions
