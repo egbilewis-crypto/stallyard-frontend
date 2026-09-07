@@ -1199,6 +1199,11 @@ export default function Stallyard() {
   const [suspiciousActivityMessage, setSuspiciousActivityMessage] = useState("");
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
+  const [adminDisputes, setAdminDisputes] = useState([]);
+  const [myDisputes, setMyDisputes] = useState([]);
+  const [activeDisputeCaseId, setActiveDisputeCaseId] = useState(null);
+  const [disputeAdminDrafts, setDisputeAdminDrafts] = useState({});
+  const [savingDisputeCaseId, setSavingDisputeCaseId] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
   const [loadingAuditLog, setLoadingAuditLog] = useState(false);
   const [myWarnings, setMyWarnings] = useState([]);
@@ -1486,6 +1491,8 @@ export default function Stallyard() {
         setAdminTickets([]);
         setSavedCards([]);
         setSavedAddresses([]);
+        setAdminDisputes([]);
+        setMyDisputes([]);
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -1505,6 +1512,15 @@ export default function Stallyard() {
         }
       } catch {
         // couldn't reach backend for notifications — leave empty
+      }
+      try {
+        const myDisputesRes = await authFetch(`${BACKEND_URL}/disputes/mine`);
+        if (myDisputesRes.ok) {
+          const { disputes } = await myDisputesRes.json();
+          setMyDisputes(disputes || []);
+        }
+      } catch {
+        // dispute cases are supplementary to the order view
       }
       try {
         const [mineRes, sellingRes, adminRes] = await Promise.all([
@@ -1549,6 +1565,15 @@ export default function Stallyard() {
         // couldn't reach backend for withdrawals — leave empty
       }
       if (isAdmin) {
+        try {
+          const disputesRes = await authFetch(`${BACKEND_URL}/disputes`);
+          if (disputesRes.ok) {
+            const { disputes } = await disputesRes.json();
+            setAdminDisputes(disputes || []);
+          }
+        } catch {
+          // couldn't reach backend for dispute cases — leave empty
+        }
         try {
           const reportsRes = await authFetch(`${BACKEND_URL}/message-reports`);
           if (reportsRes.ok) {
@@ -3609,13 +3634,37 @@ export default function Stallyard() {
   };
 
   const fileDispute = async (orderId) => {
-    const ok = await patchOrderOnBackend(orderId, "dispute", { isDisputed: true });
-    if (!ok) return;
-
-    await persistOrders(
-      orders.map((o) => (o.id === orderId ? { ...o, isDisputed: true } : o))
+    const reason = window.prompt(
+      "What is the main problem with this order? For example: item not received, damaged, wrong item, counterfeit, or not as described."
     );
-    showToast("Issue reported — the marketplace admin will review it");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      showToast("Enter a reason before opening a dispute");
+      return;
+    }
+    const statement = window.prompt(
+      "Briefly explain what happened. This statement will be part of the dispute case for the admin to review."
+    );
+    if (statement === null) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/dispute`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDisputed: true, reason: reason.trim(), statement: statement.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't open the dispute — try again");
+        return;
+      }
+      await persistOrders(orders.map((o) => (o.id === orderId ? { ...o, isDisputed: true } : o)));
+      if (data.dispute) {
+        setMyDisputes((cases) => [data.dispute, ...cases.filter((d) => d.id !== data.dispute.id)]);
+      }
+      showToast("Dispute opened — payment is locked while the case is reviewed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const patchOrderOnBackend = async (orderId, action, body) => {
@@ -3627,7 +3676,8 @@ export default function Stallyard() {
         body: body ? JSON.stringify(body) : undefined,
       });
       if (!res.ok) {
-        showToast("Couldn't save that change — try again");
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Couldn't save that change — try again");
         return false;
       }
       return true;
@@ -3656,11 +3706,63 @@ export default function Stallyard() {
     }
   };
 
-  const resolveDispute = async (orderId) => {
-    const ok = await patchOrderOnBackend(orderId, "dispute", { isDisputed: false });
-    if (!ok) return;
-    await persistOrders(orders.map((o) => (o.id === orderId ? { ...o, isDisputed: false } : o)));
-    showToast("Dispute resolved");
+  const respondToDispute = async (disputeId) => {
+    const statement = window.prompt("Enter your statement for the dispute administrator. Be specific about what happened.");
+    if (statement === null) return;
+    if (!statement.trim()) {
+      showToast("Enter a statement first");
+      return;
+    }
+    try {
+      const res = await authFetch(`${BACKEND_URL}/disputes/${disputeId}/statement`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ statement: statement.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't save your statement");
+        return;
+      }
+      setMyDisputes((cases) => cases.map((d) => (d.id === disputeId ? { ...d, ...data.dispute } : d)));
+      showToast("Statement added to the dispute case");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const saveAdminDisputeCase = async (dispute) => {
+    const draft = disputeAdminDrafts[dispute.id] || {};
+    setSavingDisputeCaseId(dispute.id);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/disputes/${dispute.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: draft.status ?? dispute.status,
+          resolution: draft.resolution ?? dispute.resolution ?? "",
+          resolutionNote: draft.resolutionNote ?? dispute.resolution_note ?? "",
+          adminNotes: draft.adminNotes ?? dispute.admin_notes ?? "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't update the dispute case");
+        return;
+      }
+      setAdminDisputes((cases) => cases.map((d) => (d.id === dispute.id ? { ...d, ...data.dispute } : d)));
+      setOrders((os) => os.map((o) => (o.id === dispute.order_id ? { ...o, isDisputed: data.dispute.status !== "resolved" } : o)));
+      setDisputeAdminDrafts((all) => {
+        const next = { ...all };
+        delete next[dispute.id];
+        return next;
+      });
+      showToast(data.dispute.status === "resolved" ? "Dispute resolved and payment lock updated" : "Dispute case updated");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSavingDisputeCaseId(null);
+    }
   };
 
   const releasePayout = async (orderId) => {
@@ -5776,6 +5878,8 @@ export default function Stallyard() {
   };
 
   const disputedOrders = orders.filter((o) => o.isDisputed);
+  const openAdminDisputes = adminDisputes.filter((d) => d.status !== "resolved");
+  const getMyDisputeForOrder = (orderId) => myDisputes.find((d) => Number(d.order_id) === Number(orderId));
   const myThreads = threads
     .filter((t) => t.buyerUsername === currentUser || t.sellerUsername === currentUser)
     .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -8455,6 +8559,31 @@ export default function Stallyard() {
                               {o.shippingAddress.street}, {o.shippingAddress.city}
                               {o.shippingAddress.state ? `, ${o.shippingAddress.state}` : ""}{" "}
                               {o.shippingAddress.zip}, {o.shippingAddress.country}
+                            </div>
+                          )}
+                          {o.isDisputed && getMyDisputeForOrder(o.id) && (
+                            <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FFF7F5" }}>
+                              <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                <span className="text-xs font-semibold" style={{ color: BERRY }}>Active dispute — payment locked</span>
+                                <Tag color={MARIGOLD}>
+                                  {getMyDisputeForOrder(o.id).status === "in_review" ? "Under review" : "Open"}
+                                </Tag>
+                              </div>
+                              <p className="text-xs mb-1" style={{ color: INK }}>
+                                <span className="font-medium">Reason:</span> {getMyDisputeForOrder(o.id).reason || "Not specified"}
+                              </p>
+                              {getMyDisputeForOrder(o.id).buyer_statement && (
+                                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                                  <span className="font-medium" style={{ color: INK }}>Buyer statement:</span> {getMyDisputeForOrder(o.id).buyer_statement}
+                                </p>
+                              )}
+                              <button
+                                onClick={() => respondToDispute(getMyDisputeForOrder(o.id).id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: INK }}
+                              >
+                                {getMyDisputeForOrder(o.id).seller_statement ? "Update my response" : "Respond to dispute"}
+                              </button>
                             </div>
                           )}
                           <div className="space-y-2">
@@ -11639,7 +11768,7 @@ export default function Stallyard() {
                 { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
                 { id: "members", label: `Members (${members.length})` },
                 { id: "orders", label: `Orders (${orders.length})` },
-                { id: "disputes", label: `Disputes (${disputedOrders.length})`, permission: "dispute_resolution" },
+                { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
                   id: "reports",
                   label: `Message reports (${messageReports.filter((r) => r.status === "open").length})`,
@@ -11792,7 +11921,7 @@ export default function Stallyard() {
                       { label: "Pending orders", value: pendingOrders, tab: "orders" },
                       { label: "Awaiting delivery confirmation", value: awaitingConfirmation, tab: "orders" },
                       { label: "Seller apps awaiting verification", value: pendingSellerApps, tab: "members" },
-                      { label: "Open disputes", value: disputedOrders.length, tab: "disputes" },
+                      { label: "Open disputes", value: openAdminDisputes.length, tab: "disputes" },
                       { label: "Refund requests", value: refundRequests, tab: "orders" },
                       { label: "Suspended users", value: suspendedUsers, tab: "members" },
                       { label: "Suspicious activity reports", value: suspiciousActivity, tab: "accountReports" },
@@ -12952,47 +13081,186 @@ export default function Stallyard() {
             )}
 
             {adminTab === "disputes" && hasAdminPermission(currentMember, "dispute_resolution") && (
-              <div className="space-y-3">
-                {disputedOrders.length === 0 && (
-                  <p className="text-sm" style={{ color: SLATE }}>
-                    No open disputes right now.
-                  </p>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Dispute cases</h3>
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. Resolving a case removes the dispute payment lock; refunds and manual releases remain separate money actions.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <Tag color={BERRY}>{adminDisputes.filter((d) => d.status === "open").length} open</Tag>
+                    <Tag color={MARIGOLD}>{adminDisputes.filter((d) => d.status === "in_review").length} reviewing</Tag>
+                    <Tag color={SAGE}>{adminDisputes.filter((d) => d.status === "resolved").length} resolved</Tag>
+                  </div>
+                </div>
+                {adminDisputes.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>No dispute cases yet.</p>
                 )}
-                {disputedOrders
-                  .slice()
-                  .sort((a, b) => b.createdAt - a.createdAt)
-                  .map((o) => (
-                    <div
-                      key={o.id}
-                      className="p-4 rounded-lg border bg-white"
-                      style={{ borderColor: BERRY }}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium" style={{ color: INK }}>
-                          {o.buyerName}
-                        </span>
-                        <span
-                          className="text-sm font-semibold"
-                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
-                        >
-                          {formatMoney(o.total, o.currency)}
-                        </span>
-                      </div>
-                      <div className="text-xs mb-2" style={{ color: SLATE }}>
-                        {new Date(o.createdAt).toLocaleString()}
-                      </div>
-                      <div className="text-xs mb-3" style={{ color: SLATE }}>
-                        {o.items.map((i) => i.title).join(", ")}
-                      </div>
+                {adminDisputes.map((d) => {
+                  const o = orders.find((order) => Number(order.id) === Number(d.order_id));
+                  const expanded = activeDisputeCaseId === d.id;
+                  const draft = disputeAdminDrafts[d.id] || {};
+                  const statusValue = draft.status ?? d.status ?? "open";
+                  const resolutionValue = draft.resolution ?? d.resolution ?? "";
+                  const resolutionNoteValue = draft.resolutionNote ?? d.resolution_note ?? "";
+                  const adminNotesValue = draft.adminNotes ?? d.admin_notes ?? "";
+                  const evidence = [
+                    ...(Array.isArray(d.evidence_urls) ? d.evidence_urls : []),
+                    ...(o?.items || []).flatMap((i) => [i.proofOfDeliveryUrl, ...(i.returnEvidenceUrls || [])].filter(Boolean)),
+                  ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
+                  return (
+                    <div key={d.id} className="rounded-xl border bg-white overflow-hidden" style={{ borderColor: d.status === "resolved" ? "#DDD8CC" : BERRY }}>
                       <button
-                        onClick={() => resolveDispute(o.id)}
-                        className="text-xs font-medium underline"
-                        style={{ color: SAGE }}
+                        type="button"
+                        onClick={() => setActiveDisputeCaseId(expanded ? null : d.id)}
+                        className="w-full text-left p-4"
                       >
-                        Mark as resolved
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold" style={{ color: INK }}>Case #{d.id} · {orderNumber(String(d.order_id))}</span>
+                              <Tag color={d.status === "resolved" ? SAGE : d.status === "in_review" ? MARIGOLD : BERRY}>
+                                {d.status === "in_review" ? "In review" : d.status === "resolved" ? "Resolved" : "Open"}
+                              </Tag>
+                              {o?.paymentStatus && <Tag color={o.paymentStatus === "held" ? MARIGOLD : o.paymentStatus === "released" ? SAGE : BERRY}>{o.paymentStatus}</Tag>}
+                            </div>
+                            <p className="text-xs mt-1" style={{ color: SLATE }}>
+                              Buyer: {d.buyer_name || d.buyer_username || o?.buyerName || "Unknown"} · Seller: {d.seller_names || d.seller_usernames || (o?.items || []).map((i) => i.sellerName).filter(Boolean).join(", ") || "Unknown"}
+                            </p>
+                            <p className="text-xs mt-1" style={{ color: INK }}><span className="font-medium">Reason:</span> {d.reason || "Not specified"}</p>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                              {formatMoney(Number(d.total ?? o?.total ?? 0), d.currency || o?.currency || "NGN")}
+                            </div>
+                            <div className="text-xs" style={{ color: SLATE }}>
+                              Opened {new Date(d.opened_at || o?.createdAt || Date.now()).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
                       </button>
+                      {expanded && (
+                        <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
+                          <div className="grid md:grid-cols-2 gap-3 mt-4">
+                            <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                              <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Buyer statement</div>
+                              <p className="text-xs whitespace-pre-wrap" style={{ color: SLATE }}>{d.buyer_statement || "No buyer statement provided."}</p>
+                            </div>
+                            <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                              <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Seller statement</div>
+                              <p className="text-xs whitespace-pre-wrap" style={{ color: SLATE }}>{d.seller_statement || "Seller has not responded yet."}</p>
+                            </div>
+                          </div>
+
+                          {o && (
+                            <div className="mt-3 p-3 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Order & delivery timeline</div>
+                              <div className="text-xs mb-2" style={{ color: SLATE }}>
+                                Order placed {new Date(o.createdAt).toLocaleString()} · Payment: {o.paymentStatus}
+                              </div>
+                              {(o.items || []).map((i) => (
+                                <div key={i.id} className="text-xs py-1 border-t" style={{ borderColor: "#EFEBE0", color: SLATE }}>
+                                  <span className="font-medium" style={{ color: INK }}>{i.title}</span> · {FULFILLMENT_LABEL[i.fulfillmentStatus] || i.fulfillmentStatus}
+                                  {i.shippedAt ? ` · shipped ${new Date(i.shippedAt).toLocaleString()}` : ""}
+                                  {i.buyerConfirmedAt ? ` · delivery confirmed ${new Date(i.buyerConfirmedAt).toLocaleString()}` : ""}
+                                  {i.returnStatus ? ` · return ${i.returnStatus}` : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="mt-3">
+                            <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Evidence</div>
+                            {evidence.length === 0 ? (
+                              <p className="text-xs" style={{ color: SLATE }}>No delivery or return evidence images are attached to this case yet.</p>
+                            ) : (
+                              <div className="flex gap-2 flex-wrap">
+                                {evidence.map((url, idx) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer" className="block">
+                                    <img src={url} alt={`Dispute evidence ${idx + 1}`} className="w-20 h-20 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-3 mt-4">
+                            <label className="text-xs font-medium" style={{ color: INK }}>
+                              Case status
+                              <select
+                                value={statusValue}
+                                onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), status: e.target.value } }))}
+                                className="mt-1 w-full px-3 py-2 rounded-lg border bg-white outline-none"
+                                style={{ borderColor: "#DDD8CC" }}
+                              >
+                                <option value="open">Open</option>
+                                <option value="in_review">In review</option>
+                                <option value="resolved">Resolved</option>
+                              </select>
+                            </label>
+                            <label className="text-xs font-medium" style={{ color: INK }}>
+                              Decision
+                              <select
+                                value={resolutionValue}
+                                onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), resolution: e.target.value } }))}
+                                className="mt-1 w-full px-3 py-2 rounded-lg border bg-white outline-none"
+                                style={{ borderColor: "#DDD8CC" }}
+                              >
+                                <option value="">No decision yet</option>
+                                <option value="buyer_refund">Refund buyer</option>
+                                <option value="seller_release">Release to seller</option>
+                                <option value="partial_refund">Partial refund / negotiated outcome</option>
+                                <option value="no_action">No financial action</option>
+                                <option value="cancelled">Case cancelled</option>
+                              </select>
+                            </label>
+                          </div>
+                          <label className="block text-xs font-medium mt-3" style={{ color: INK }}>
+                            Decision explanation (visible in the case record)
+                            <textarea
+                              value={resolutionNoteValue}
+                              onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), resolutionNote: e.target.value } }))}
+                              rows={3}
+                              className="mt-1 w-full px-3 py-2 rounded-lg border outline-none resize-y"
+                              style={{ borderColor: "#DDD8CC" }}
+                              placeholder="Explain why the case was decided this way…"
+                            />
+                          </label>
+                          <label className="block text-xs font-medium mt-3" style={{ color: INK }}>
+                            Private admin notes (never shown to buyer or seller)
+                            <textarea
+                              value={adminNotesValue}
+                              onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), adminNotes: e.target.value } }))}
+                              rows={3}
+                              className="mt-1 w-full px-3 py-2 rounded-lg border outline-none resize-y"
+                              style={{ borderColor: "#DDD8CC" }}
+                              placeholder="Internal observations, calls, fraud concerns, follow-up items…"
+                            />
+                          </label>
+                          <div className="flex items-center gap-3 flex-wrap mt-3">
+                            <button
+                              onClick={() => saveAdminDisputeCase(d)}
+                              disabled={savingDisputeCaseId === d.id}
+                              className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+                              style={{ backgroundColor: INK, color: "white" }}
+                            >
+                              {savingDisputeCaseId === d.id ? "Saving…" : "Save case"}
+                            </button>
+                            {o && ["held", "released"].includes(o.paymentStatus) && resolutionValue === "buyer_refund" && (
+                              <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Send Paystack refund</button>
+                            )}
+                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue === "resolved" && (
+                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment</button>
+                            )}
+                            {d.resolved_at && <span className="text-xs" style={{ color: SLATE }}>Resolved {new Date(d.resolved_at).toLocaleString()}{d.resolved_by_name ? ` by ${d.resolved_by_name}` : ""}</span>}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             )}
 
