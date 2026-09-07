@@ -1181,6 +1181,13 @@ export default function Stallyard() {
   const [withdrawals, setWithdrawals] = useState([]);
   const [refundAdminFilter, setRefundAdminFilter] = useState("all");
   const [refundAdminSearch, setRefundAdminSearch] = useState("");
+  const [reconciliationData, setReconciliationData] = useState(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState("");
+  const [reconciliationSearch, setReconciliationSearch] = useState("");
+  const [reconciliationFilter, setReconciliationFilter] = useState("all");
+  const [paystackChecks, setPaystackChecks] = useState({});
+  const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [follows, setFollows] = useState([]);
   const [reviewDrafts, setReviewDrafts] = useState({});
@@ -3778,6 +3785,42 @@ export default function Stallyard() {
       orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "released" } : o))
     );
     showToast("Payout marked as released");
+  };
+
+  const fetchReconciliation = async () => {
+    setReconciliationLoading(true);
+    setReconciliationError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/reconciliation`);
+      const data = await res.json();
+      if (!res.ok) {
+        setReconciliationError(data.error || "Couldn't load reconciliation data");
+        return;
+      }
+      setReconciliationData(data);
+    } catch {
+      setReconciliationError("Couldn't reach the server — try again");
+    } finally {
+      setReconciliationLoading(false);
+    }
+  };
+
+  const verifyPaystackReconciliation = async (orderId) => {
+    setPaystackCheckingOrderId(orderId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/reconciliation/orders/${orderId}/verify-paystack`);
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't verify this payment with Paystack");
+        return;
+      }
+      setPaystackChecks((prev) => ({ ...prev, [orderId]: data }));
+      showToast(data.matches ? "Paystack payment matches Stallyard" : "Mismatch found — review this order");
+    } catch {
+      showToast("Couldn't reach Paystack verification — try again");
+    } finally {
+      setPaystackCheckingOrderId(null);
+    }
   };
 
   const refundOrder = async (orderId) => {
@@ -11811,6 +11854,7 @@ export default function Stallyard() {
                 },
                 { id: "settings", label: "Settings", permission: "finance_or_content" },
                 { id: "content", label: "Content", requireSuperAdmin: true },
+                { id: "reconciliation", label: "Reconciliation", permission: "finance" },
                 {
                   id: "refunds",
                   label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
@@ -11838,6 +11882,7 @@ export default function Stallyard() {
                   onClick={() => {
                     setAdminTab(t.id);
                     if (t.id === "auditLog") fetchAuditLog();
+                    if (t.id === "reconciliation") fetchReconciliation();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
@@ -13049,6 +13094,151 @@ export default function Stallyard() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {adminTab === "reconciliation" && hasAdminPermission(currentMember, "finance") && (
+              <div>
+                <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Payment reconciliation</h3>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      Compare buyer payments, held/released funds, commission, refunds, and seller withdrawals. Red flags mean the money trail needs review.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchReconciliation}
+                    disabled={reconciliationLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  >
+                    {reconciliationLoading ? "Refreshing…" : "Refresh totals"}
+                  </button>
+                </div>
+
+                {reconciliationError && (
+                  <div className="p-3 mb-4 rounded-lg text-sm" style={{ backgroundColor: BERRY + "10", color: BERRY }}>
+                    {reconciliationError}
+                  </div>
+                )}
+                {reconciliationLoading && !reconciliationData && (
+                  <p className="text-sm" style={{ color: SLATE }}>Loading finance records…</p>
+                )}
+                {reconciliationData && (() => {
+                  const records = reconciliationData.records || [];
+                  const q = reconciliationSearch.trim().toLowerCase();
+                  const filtered = records.filter((r) => {
+                    if (reconciliationFilter === "flagged" && !(r.flags || []).length) return false;
+                    if (reconciliationFilter === "held" && r.paymentStatus !== "held") return false;
+                    if (reconciliationFilter === "released" && r.paymentStatus !== "released") return false;
+                    if (reconciliationFilter === "refunds" && !["refund_pending", "refunded"].includes(r.paymentStatus)) return false;
+                    if (!q) return true;
+                    return [orderNumber(r.orderId), r.buyerUsername, r.paystackReference, r.paymentStatus]
+                      .filter(Boolean).join(" ").toLowerCase().includes(q);
+                  });
+                  return (
+                    <>
+                      <div className="space-y-4 mb-6">
+                        {(reconciliationData.byCurrency || []).map((c) => (
+                          <div key={c.currency} className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="font-semibold" style={{ color: INK }}>{c.currency} money position</h4>
+                              <Tag color={(reconciliationData.alerts?.high || 0) > 0 ? BERRY : SAGE}>
+                                {reconciliationData.alerts?.total || 0} reconciliation alert{(reconciliationData.alerts?.total || 0) === 1 ? "" : "s"}
+                              </Tag>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              {[
+                                ["Buyer payments", c.grossPayments],
+                                ["Held", c.held],
+                                ["Released", c.released],
+                                ["Seller payable (released)", c.releasedSellerPayable],
+                                ["Recorded commission", c.recordedCommission],
+                                ["Refund pending", c.refundPending],
+                                ["Refunded", c.refunded],
+                                ["Tax recorded", c.tax],
+                              ].map(([label, amount]) => (
+                                <div key={label} className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                  <div className="text-[11px] uppercase tracking-wide" style={{ color: SLATE }}>{label}</div>
+                                  <div className="font-semibold mt-1" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(amount, c.currency)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white mb-6" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Seller withdrawals</h4>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div><div className="text-xs" style={{ color: SLATE }}>Paid</div><div className="font-semibold" style={{ color: INK }}>{formatMoney(reconciliationData.withdrawals?.paid || 0, "NGN")}</div></div>
+                          <div><div className="text-xs" style={{ color: SLATE }}>Processing</div><div className="font-semibold" style={{ color: MARIGOLD }}>{formatMoney(reconciliationData.withdrawals?.processing || 0, "NGN")}</div></div>
+                          <div><div className="text-xs" style={{ color: SLATE }}>Failed</div><div className="font-semibold" style={{ color: BERRY }}>{formatMoney(reconciliationData.withdrawals?.failed || 0, "NGN")}</div></div>
+                        </div>
+                        <p className="text-[11px] mt-2" style={{ color: SLATE }}>Withdrawals are shown in NGN because Stallyard is currently Nigeria-only.</p>
+                      </div>
+
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {[
+                          ["all", "All"], ["flagged", "Flagged"], ["held", "Held"], ["released", "Released"], ["refunds", "Refunds"],
+                        ].map(([key, label]) => (
+                          <button key={key} onClick={() => setReconciliationFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                            style={{ borderColor: reconciliationFilter === key ? INK : "#DDD8CC", backgroundColor: reconciliationFilter === key ? INK : "white", color: reconciliationFilter === key ? "white" : SLATE }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <input value={reconciliationSearch} onChange={(e) => setReconciliationSearch(e.target.value)} placeholder="Search order, buyer, Paystack reference or status"
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-4" style={{ borderColor: "#DDD8CC", color: INK }} />
+
+                      <div className="space-y-3">
+                        {filtered.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No records match this view.</p>}
+                        {filtered.map((r) => {
+                          const check = paystackChecks[r.orderId];
+                          const hasFlags = (r.flags || []).length > 0;
+                          return (
+                            <div key={r.orderId} className="p-4 rounded-lg border bg-white" style={{ borderColor: hasFlags ? BERRY + "66" : "#DDD8CC" }}>
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{orderNumber(r.orderId)}</span>
+                                    <Tag color={r.paymentStatus === "released" ? SAGE : r.paymentStatus === "held" ? MARIGOLD : BERRY}>{r.paymentStatus}</Tag>
+                                    {hasFlags && <Tag color={BERRY}>{r.flags.length} alert{r.flags.length === 1 ? "" : "s"}</Tag>}
+                                  </div>
+                                  <p className="text-xs mt-1" style={{ color: SLATE }}>Buyer: {r.buyerUsername || "Unknown"}</p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(r.total, r.currency)}</div>
+                                  <div className="text-[11px]" style={{ color: SLATE }}>Seller payable: {formatMoney(r.sellerPayable, r.currency)}</div>
+                                </div>
+                              </div>
+                              <div className="grid sm:grid-cols-3 gap-2 text-xs mt-3 pt-3 border-t" style={{ color: SLATE, borderColor: "#EFEBE0" }}>
+                                <div><strong style={{ color: INK }}>Commission:</strong> {formatMoney(r.commissionAmount, r.currency)}</div>
+                                <div><strong style={{ color: INK }}>Tax:</strong> {formatMoney(r.taxAmount, r.currency)}</div>
+                                <div className="break-all"><strong style={{ color: INK }}>Paystack:</strong> {r.paystackReference || "Missing"}</div>
+                              </div>
+                              {hasFlags && (
+                                <div className="mt-3 space-y-1">
+                                  {r.flags.map((f) => <div key={f.code} className="text-xs" style={{ color: f.severity === "high" ? BERRY : MARIGOLD }}>• {f.message}</div>)}
+                                </div>
+                              )}
+                              {check && (
+                                <div className="mt-3 p-3 rounded-lg text-xs" style={{ backgroundColor: check.matches ? SAGE + "12" : BERRY + "10", color: check.matches ? SAGE : BERRY }}>
+                                  <strong>{check.matches ? "Paystack match confirmed" : "Paystack mismatch"}</strong>
+                                  {` — Paystack ${formatMoney(check.paystack?.amount || 0, check.paystack?.currency || r.currency)}, status ${check.paystack?.status || "unknown"}.`}
+                                </div>
+                              )}
+                              <button onClick={() => verifyPaystackReconciliation(r.orderId)} disabled={paystackCheckingOrderId === r.orderId || !r.paystackReference}
+                                className="mt-3 text-xs font-medium underline disabled:opacity-40" style={{ color: INK }}>
+                                {paystackCheckingOrderId === r.orderId ? "Checking Paystack…" : "Verify with Paystack"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             )}
 
