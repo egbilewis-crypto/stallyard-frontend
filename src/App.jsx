@@ -399,6 +399,8 @@ function backendOrderToFrontend(row) {
     paymentLast4: row.payment_last4 || null,
     refundStatus: row.refund_status || null,
     paystackRefundId: row.paystack_refund_id || null,
+    refundType: row.refund_type || null,
+    refundAmount: Number(row.refund_amount) || 0,
     refundReason: row.refund_reason || "",
     refundRequestedBy: row.refund_requested_by || null,
     refundRequestedAt: row.refund_requested_at ? new Date(row.refund_requested_at).getTime() : null,
@@ -4308,6 +4310,39 @@ export default function Stallyard() {
       showToast("Refund submitted to Paystack — waiting for processing confirmation");
     } catch {
       showToast("Couldn't reach the server — check the order before trying again");
+    }
+  };
+
+  const partialRefundOrder = async (dispute, order, amountRaw, reason) => {
+    const amount = Math.round(Number(amountRaw) * 100) / 100;
+    if (!(amount > 0)) {
+      showToast("Enter a valid partial refund amount");
+      return;
+    }
+    if (!reason?.trim()) {
+      showToast("Enter the negotiated outcome / reason first");
+      return;
+    }
+    if (!window.confirm(`Send a REAL partial refund of ${formatMoney(amount, order.currency)} through Paystack? The remaining seller proceeds will be released only after Paystack confirms the refund.`)) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/refund/partial`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ disputeId: dispute.id, amount, reason: reason.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't start the partial refund");
+        return;
+      }
+      const updated = backendOrderToFrontend({ ...data.order, items: order.items || [] });
+      setOrders((all) => all.map((o) => o.id === order.id ? { ...o, ...updated, items: o.items } : o));
+      setDisputeCases((all) => all.map((d) => d.id === dispute.id
+        ? { ...d, status: "in_review", resolution: "partial_refund", resolution_note: reason.trim() }
+        : d));
+      showToast(`Partial refund of ${formatMoney(amount, order.currency)} submitted — waiting for Paystack confirmation`);
+    } catch {
+      showToast("Couldn't reach the server — check Paystack before trying again");
     }
   };
 
@@ -13813,6 +13848,8 @@ export default function Stallyard() {
                         <h4 className="font-semibold mb-2" style={{ color: INK }}>Refund</h4>
                         <div className="text-sm space-y-1" style={{ color: SLATE }}>
                           <div><strong style={{ color: INK }}>Status:</strong> {activeOrder.refundStatus || (activeOrder.paymentStatus === "refunded" ? "processed" : "No refund")}</div>
+                          {activeOrder.refundType && <div><strong style={{ color: INK }}>Type:</strong> {activeOrder.refundType === "partial" ? "Partial refund" : "Full refund"}</div>}
+                          {activeOrder.refundAmount > 0 && <div><strong style={{ color: INK }}>Amount:</strong> {formatMoney(activeOrder.refundAmount, activeOrder.currency)}</div>}
                           {activeOrder.refundReason && <div><strong style={{ color: INK }}>Reason:</strong> {activeOrder.refundReason}</div>}
                           {activeOrder.paystackRefundId && <div><strong style={{ color: INK }}>Paystack refund ID:</strong> {activeOrder.paystackRefundId}</div>}
                           {activeOrder.refundRequestedAt && <div><strong style={{ color: INK }}>Requested:</strong> {new Date(activeOrder.refundRequestedAt).toLocaleString()}</div>}
@@ -14835,7 +14872,7 @@ export default function Stallyard() {
                                   disabled={
                                     (resolutionValue === "buyer_refund" && o?.paymentStatus !== "refunded") ||
                                     (resolutionValue === "seller_release" && o?.paymentStatus !== "released") ||
-                                    resolutionValue === "partial_refund"
+                                    (resolutionValue === "partial_refund" && !(o?.refundType === "partial" && o?.refundStatus === "processed" && o?.paymentStatus === "released"))
                                   }
                                 >Resolved</option>
                               </select>
@@ -14894,8 +14931,41 @@ export default function Stallyard() {
                             {o && o.paymentStatus === "refund_pending" && resolutionValue === "buyer_refund" && (
                               <span className="text-xs" style={{ color: MARIGOLD }}>Waiting for Paystack to confirm the refund. The dispute remains locked.</span>
                             )}
-                            {resolutionValue === "partial_refund" && (
-                              <span className="text-xs" style={{ color: BERRY }}>Partial refund cannot be finalized yet; the case must stay open/in review until the real partial-refund payment flow is added.</span>
+                            {resolutionValue === "partial_refund" && o && (
+                              <div className="w-full p-3 rounded-lg border" style={{ borderColor: "#E8D7B5", backgroundColor: "#FFF9EE" }}>
+                                <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Partial refund through Paystack</div>
+                                <div className="flex gap-2 flex-wrap items-end">
+                                  <label className="text-xs">
+                                    Refund amount ({CURRENCIES[o.currency]?.symbol || "₦"})
+                                    <input
+                                      type="number" min="0.01" step="0.01"
+                                      value={(disputeAdminDrafts[d.id] || {}).partialRefundAmount || ""}
+                                      onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), partialRefundAmount: e.target.value } }))}
+                                      className="mt-1 w-40 px-3 py-2 rounded-lg border bg-white outline-none"
+                                      style={{ borderColor: "#DDD8CC" }}
+                                      placeholder="0.00"
+                                    />
+                                  </label>
+                                  {hasAdminPermission(currentMember, "finance") ? (
+                                    <button
+                                      onClick={() => partialRefundOrder(d, o, (disputeAdminDrafts[d.id] || {}).partialRefundAmount, resolutionNoteValue)}
+                                      disabled={o.paymentStatus === "refund_pending"}
+                                      className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+                                      style={{ backgroundColor: BERRY, color: "white" }}
+                                    >
+                                      {o.paymentStatus === "refund_pending" ? "Refund pending…" : "Send partial refund"}
+                                    </button>
+                                  ) : (
+                                    <span className="text-xs" style={{ color: SLATE }}>A Finance Admin or Super Admin must send the money after the dispute decision is recorded.</span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] mt-2" style={{ color: SLATE }}>For safety, partial refunds are currently supported only on single-seller orders. The dispute stays locked until Paystack confirms the refund; then the remaining seller proceeds are released automatically.</p>
+                                {o.refundType === "partial" && o.refundAmount > 0 && (
+                                  <p className="text-xs mt-2" style={{ color: o.refundStatus === "processed" ? SAGE : MARIGOLD }}>
+                                    Partial refund: {formatMoney(o.refundAmount, o.currency)} · {o.refundStatus || "pending"}
+                                  </p>
+                                )}
+                              </div>
                             )}
                             {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue !== "resolved" && (
                               <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment & resolve case</button>
