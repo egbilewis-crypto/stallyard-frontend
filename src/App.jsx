@@ -2373,10 +2373,18 @@ export default function Stallyard() {
   useEffect(() => {
     if (!currentMember?.isAdmin) return;
     const isSuperAdmin = !currentMember.adminRole || currentMember.adminRole === "super_admin";
-    if (adminTab === "overview" && !isSuperAdmin) {
-      setAdminTab("members");
+    const canViewMembers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification");
+    if ((adminTab === "overview" && !isSuperAdmin) || (adminTab === "members" && !canViewMembers)) {
+      const fallbackByRole = {
+        seller_verification: "members",
+        listing_moderator: "listings",
+        order_dispute: "orders",
+        finance: "orders",
+        customer_support: "supportTickets",
+      };
+      setAdminTab(fallbackByRole[currentMember.adminRole] || "orders");
     }
-  }, [currentMember?.isAdmin, currentMember?.adminRole]);
+  }, [currentMember?.isAdmin, currentMember?.adminRole, adminTab]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !isAdminHost()) return;
@@ -12130,7 +12138,7 @@ export default function Stallyard() {
               {[
                 { id: "overview", label: "Overview", requireSuperAdmin: true },
                 { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
-                { id: "members", label: `Members (${members.length})` },
+                { id: "members", label: `Members (${members.length})`, permission: "seller_verification" },
                 { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
                 { id: "orders", label: `Orders (${orders.length})` },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
@@ -12183,7 +12191,7 @@ export default function Stallyard() {
                     return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "seller_verification");
                   }
                   if (t.permission) return hasAdminPermission(currentMember, t.permission);
-                  return true; // no permission listed = every admin role can view (accounts/orders)
+                  return true; // no permission listed = every admin role can view
                 })
                 .map((t) => (
                 <button
@@ -12681,7 +12689,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "members" && (
+            {adminTab === "members" && hasAdminPermission(currentMember, "seller_verification") && (
               <div>
                 {hasAdminPermission(currentMember, "user_management") && (
                   <button
