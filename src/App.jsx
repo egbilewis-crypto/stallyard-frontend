@@ -1275,6 +1275,7 @@ export default function Stallyard() {
   const [adminStaffSearch, setAdminStaffSearch] = useState("");
   const [adminStaffFilter, setAdminStaffFilter] = useState("all");
   const [expandedStaffId, setExpandedStaffId] = useState(null);
+  const [adminPasswordResettingId, setAdminPasswordResettingId] = useState(null);
   const [systemHealth, setSystemHealth] = useState(null);
   const [systemHealthLoading, setSystemHealthLoading] = useState(false);
   const [systemHealthError, setSystemHealthError] = useState("");
@@ -3358,6 +3359,34 @@ export default function Stallyard() {
       await fetchAdminStaff();
     } catch {
       showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const sendAdminPasswordReset = async (staff) => {
+    if (!staff?.id) return;
+    if (staff.username === currentUser) {
+      showToast("Use your own account security controls to change your password");
+      return;
+    }
+    if (!staff.is_admin) {
+      showToast("Password reset from Staff Management is only for active admin accounts");
+      return;
+    }
+    if (!window.confirm(`Send a secure password-reset code to ${staff.display_name || staff.username}'s admin email and sign them out of existing sessions?`)) return;
+    setAdminPasswordResettingId(staff.id);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/reset-password`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't start the password reset");
+        return;
+      }
+      showToast(`Password reset sent to ${data.maskedEmail || "the admin's email"} — existing sessions were revoked`);
+      await fetchAdminStaff();
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setAdminPasswordResettingId(null);
     }
   };
 
@@ -13069,9 +13098,19 @@ export default function Stallyard() {
                                   </select>
                                 </div>
                                 {active && (
-                                  <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
-                                    Revoke sessions
-                                  </button>
+                                  <>
+                                    <button
+                                      onClick={() => sendAdminPasswordReset(staff)}
+                                      disabled={adminPasswordResettingId === staff.id}
+                                      className="px-3 py-2 rounded-lg border text-xs font-medium disabled:opacity-50"
+                                      style={{ borderColor: MARIGOLD, color: INK }}
+                                    >
+                                      {adminPasswordResettingId === staff.id ? "Sending reset…" : "Reset password"}
+                                    </button>
+                                    <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                                      Revoke sessions
+                                    </button>
+                                  </>
                                 )}
                                 <button
                                   onClick={async () => { await adminToggleSuspend(staff.username); await fetchAdminStaff(); }}
