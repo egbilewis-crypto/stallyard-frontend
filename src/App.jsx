@@ -87,7 +87,12 @@ const TICKET_STATUS_LABEL = { open: "Open", in_progress: "In progress", resolved
 // password + mandatory 2FA + generic-error protections already in place.
 // Change this string any time — treat it like a password, don't share it
 // publicly, and rotate it if you think it's leaked.
-const ADMIN_SECRET_PATH = "/0936746admin";
+const ADMIN_HOSTNAME = "admin.stallyard.com";
+const ADMIN_URL = "https://admin.stallyard.com";
+
+function isAdminHost() {
+  return typeof window !== "undefined" && window.location.hostname.toLowerCase() === ADMIN_HOSTNAME;
+}
 
 const ADMIN_ROLE_LABELS = {
   super_admin: "Super Admin",
@@ -961,9 +966,7 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
 export default function Stallyard() {
   useFonts();
   const [view, setView] = useState("browse");
-  const [adminLoginMode, setAdminLoginMode] = useState(
-    () => typeof window !== "undefined" && window.location.pathname === ADMIN_SECRET_PATH
-  );
+  const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
   const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email"
   const [adminLoginCode, setAdminLoginCode] = useState("");
@@ -2246,8 +2249,14 @@ export default function Stallyard() {
     setActiveThreadOrderId(null);
     setSelected(null);
     setView("browse");
-    setAdminLoginMode(false);
-    if (window.location.pathname === ADMIN_SECRET_PATH) window.history.pushState({}, "", "/");
+    if (isAdminHost()) {
+      setAdminLoginMode(true);
+      setAdminLoginStep("credentials");
+      setAdminLoginCode("");
+      window.history.replaceState({}, "", "/");
+    } else {
+      setAdminLoginMode(false);
+    }
     showToast("Logged out");
   };
 
@@ -2272,40 +2281,37 @@ export default function Stallyard() {
     return () => clearInterval(interval);
   }, [view, adminUnlockedUntil]);
 
-  // Gives the admin panel its own address rather than living as just
-  // another tab — reflects the current view in the URL. Deliberately
-  // one-directional: it only ever pushes TOWARD the admin path when `view`
-  // becomes "admin". Leaving that URL is handled explicitly at each actual
-  // exit point (logout, session timeout, the home/logo buttons) instead of
-  // reactively here — a reactive "kick away" version of this effect used to
-  // sit right next to the detection effect below, and because React batches
-  // state updates from one effect into a *later* render rather than
-  // reflecting them immediately for a sibling effect in the same commit,
-  // it kept winning the race and pushing the URL back to "/" a beat before
-  // the detection effect below had a chance to show the re-auth modal —
-  // making an already-logged-in admin look signed out on every refresh.
+  // Admin is isolated on admin.stallyard.com. The old hidden-path approach
+  // has been retired: the public marketplace never renders the admin panel.
   useEffect(() => {
-    if (view === "admin" && window.location.pathname !== ADMIN_SECRET_PATH) {
-      window.history.pushState({}, "", ADMIN_SECRET_PATH);
-    }
-  }, [view]);
+    if (!sessionChecked) return;
 
-  useEffect(() => {
-    if (window.location.pathname !== ADMIN_SECRET_PATH) return;
-    if (!sessionChecked) return; // wait until we actually know who's logged in
-    if (!currentUser) {
-      setAdminLoginMode(true);
-      // already on ADMIN_SECRET_PATH, no session found — show the login form
-      return;
-    }
-    if (!currentMember?.isAdmin) {
-      window.history.replaceState({}, "", "/");
+    if (!isAdminHost()) {
+      // Retire the legacy hidden admin URL by sending it to the dedicated
+      // admin subdomain instead of rendering admin UI on the marketplace.
+      if (window.location.pathname === "/0936746admin") {
+        window.location.replace(ADMIN_URL);
+      }
+      if (view === "admin") setView("browse");
       setAdminLoginMode(false);
       return;
     }
-    // Already logged in as an admin (e.g. this is a refresh, not a fresh
-    // visit) — skip the raw username/password form entirely and go
-    // straight to the normal re-auth gate for opening the panel.
+
+    // On the dedicated admin host, never show the buyer/seller marketplace.
+    if (!currentUser) {
+      setView("browse");
+      setAdminLoginMode(true);
+      return;
+    }
+
+    if (!currentMember?.isAdmin) {
+      // A non-admin session is not allowed on the admin origin.
+      setView("browse");
+      setAdminLoginMode(true);
+      setAdminLoginError("Admin credentials required");
+      return;
+    }
+
     setAdminLoginMode(false);
     openAdminPanel();
   }, [sessionChecked, currentUser, currentMember?.isAdmin]);
@@ -2910,6 +2916,12 @@ export default function Stallyard() {
   };
 
   const openAdminPanel = () => {
+    if (!isAdminHost()) {
+      window.location.assign(ADMIN_URL);
+      return;
+    }
+    // Never show the buyer/seller marketplace underneath the admin gate.
+    setView("admin");
     if (adminUnlockedUntil && Date.now() < adminUnlockedUntil) {
       setView("admin");
       return;
@@ -2937,11 +2949,8 @@ export default function Stallyard() {
         setAdminReauthError(data.error || "Couldn't verify your password");
         return;
       }
-      if (data.success) {
-        // No 2FA on file (shouldn't normally happen) — unlock directly.
-        setAdminUnlockedUntil(Date.now() + ADMIN_SESSION_IDLE_MS);
-        setAdminReauthStep(null);
-        setView("admin");
+      if (!data.twoFactorRequired || data.method !== "totp") {
+        setAdminReauthError("Admin multi-factor authentication is required. Contact the super admin if your authenticator is not configured.");
         return;
       }
       setAdminReauthStep("code");
@@ -3008,7 +3017,7 @@ export default function Stallyard() {
     setAdminLoginForm({ username: "", password: "" });
     setAdminLoginStep("credentials");
     setAdminLoginCode("");
-    window.history.replaceState({}, "", ADMIN_SECRET_PATH);
+    window.history.replaceState({}, "", "/");
     setView("admin");
   };
 
@@ -3021,22 +3030,27 @@ export default function Stallyard() {
     setAdminLoginSubmitting(true);
     setAdminLoginError("");
     try {
-      const res = await fetch(`${BACKEND_URL}/login`, {
+      const res = await fetch(`${BACKEND_URL}/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: adminLoginForm.password }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setAdminLoginError("Username or password doesn't match");
+        if (data.code === "ADMIN_MFA_REQUIRED" || data.code === "ADMIN_EMAIL_REQUIRED") {
+          setAdminLoginError(data.error);
+        } else {
+          setAdminLoginError("Username or password doesn't match");
+        }
         return;
       }
-      if (data.twoFactorRequired) {
-        setAdminLoginPendingUserId(data.userId);
-        setAdminLoginStep("code");
+      if (!data.twoFactorRequired || data.method !== "totp") {
+        setAdminLoginError("Admin multi-factor authentication is required");
         return;
       }
-      await finishAdminLogin(data, username);
+      setAdminLoginPendingUserId(data.userId);
+      setAdminLoginStep("code");
+      return;
     } catch {
       setAdminLoginError("Couldn't reach the server — try again");
     } finally {
@@ -5910,7 +5924,7 @@ export default function Stallyard() {
                   Sign in
                 </h2>
                 <p className="text-sm mb-4" style={{ color: SLATE }}>
-                  This is a restricted entrance — admin credentials only.
+                  Step 1 of 3: enter your admin username and password.
                 </p>
                 <input
                   value={adminLoginForm.username}
@@ -5950,8 +5964,8 @@ export default function Stallyard() {
                 </h2>
                 <p className="text-sm mb-4" style={{ color: SLATE }}>
                   {adminLoginStep === "code-email"
-                    ? "Now enter the 6-digit code we just emailed you. (2 of 2)"
-                    : "Enter the 6-digit code from your authenticator app. (1 of 2 — an email code comes next.)"}
+                    ? "Step 3 of 3: enter the 6-digit code we just emailed you."
+                    : "Step 2 of 3: enter the 6-digit code from your authenticator app. An email code comes next."}
                 </p>
                 <input
                   value={adminLoginCode}
@@ -6594,7 +6608,7 @@ export default function Stallyard() {
             onClick={() => {
               setSelected(null);
               setView("browse");
-              if (window.location.pathname === ADMIN_SECRET_PATH) window.history.pushState({}, "", "/");
+              if (isAdminHost()) return;
             }}
             className="flex items-center gap-2"
             aria-label="Go to home"
@@ -14656,8 +14670,8 @@ export default function Stallyard() {
               <>
                 <p className="text-sm mb-3" style={{ color: SLATE }}>
                   {adminReauthStep === "code-email"
-                    ? "Now enter the 6-digit code we just emailed you. (2 of 2)"
-                    : "Enter the 6-digit code from your authenticator app. (1 of 2 — an email code comes next.)"}
+                    ? "Step 3 of 3: enter the 6-digit code we just emailed you."
+                    : "Step 2 of 3: enter the 6-digit code from your authenticator app. An email code comes next."}
                 </p>
                 <input
                   value={adminReauthCode}
