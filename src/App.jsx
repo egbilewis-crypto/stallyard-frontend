@@ -13143,30 +13143,63 @@ export default function Stallyard() {
                   </div>
 
                   {adminTempPasswordResult && (
-                    <div className="p-4 rounded-xl border mb-4" style={{ borderColor: MARIGOLD, backgroundColor: MARIGOLD + "10" }}>
-                      <div className="font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>
-                        Give this password directly to <strong>@{adminTempPasswordResult.username}</strong>. It is shown here only for this page session and expires at {adminTempPasswordResult.expiresAt ? new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString() : "in 10 minutes"}. The sub-admin must still complete authenticator + email verification and then choose a new permanent password.
-                      </p>
-                      <div className="flex items-center gap-2 mt-3 flex-wrap">
-                        <code className="px-3 py-2 rounded-lg bg-white border text-base font-semibold" style={{ borderColor: "#DDD8CC", color: INK }}>
-                          {adminTempPasswordResult.temporaryPassword}
-                        </code>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
-                              showToast("Temporary password copied");
-                            } catch {
-                              showToast("Copy didn't work — select the password manually");
-                            }
-                          }}
-                          className="px-3 py-2 rounded-lg border text-xs font-medium"
-                          style={{ borderColor: "#DDD8CC", color: INK }}
-                        >
-                          Copy
-                        </button>
-                        <button onClick={() => setAdminTempPasswordResult(null)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: BERRY, color: BERRY }}>Hide now</button>
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.58)" }}>
+                      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl border p-5" style={{ borderColor: MARIGOLD }}>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="text-lg font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
+                            <p className="text-sm mt-1" style={{ color: SLATE }}>
+                              For <strong>@{adminTempPasswordResult.username}</strong>. This password is shown only now and expires at {adminTempPasswordResult.expiresAt ? new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString() : "in 10 minutes"}.
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setAdminTempPasswordResult(null)}
+                            className="w-9 h-9 rounded-full border flex items-center justify-center shrink-0"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                            aria-label="Close temporary password"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+
+                        <div className="mt-5 p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                          <div className="text-xs font-medium mb-2" style={{ color: SLATE }}>TEMPORARY PASSWORD</div>
+                          <code className="block text-xl sm:text-2xl font-semibold break-all select-all" style={{ color: INK }}>
+                            {adminTempPasswordResult.temporaryPassword}
+                          </code>
+                        </div>
+
+                        <div className="mt-4 p-3 rounded-xl text-sm" style={{ backgroundColor: MARIGOLD + "18", color: INK }}>
+                          Give this password directly to the sub-admin. They must still complete the authenticator code and email code, then Stallyard will force them to create a new permanent password.
+                        </div>
+
+                        <div className="flex gap-2 mt-5 flex-wrap">
+                          <button
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
+                                showToast("Temporary password copied");
+                              } catch {
+                                showToast("Copy didn't work — press and hold the password to copy it");
+                              }
+                            }}
+                            className="px-4 py-2.5 rounded-lg text-sm font-medium"
+                            style={{ backgroundColor: INK, color: "white" }}
+                          >
+                            Copy password
+                          </button>
+                          <button
+                            onClick={() => setAdminTempPasswordResult(null)}
+                            className="px-4 py-2.5 rounded-lg border text-sm font-medium"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
+                          >
+                            I saved it — close
+                          </button>
+                        </div>
+
+                        <p className="text-xs mt-4" style={{ color: BERRY }}>
+                          Important: once you close this box, Stallyard will not show this temporary password again. Generate a new one if it is lost.
+                        </p>
                       </div>
                     </div>
                   )}
