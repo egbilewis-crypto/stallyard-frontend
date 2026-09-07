@@ -1275,6 +1275,9 @@ export default function Stallyard() {
   const [adminStaffSearch, setAdminStaffSearch] = useState("");
   const [adminStaffFilter, setAdminStaffFilter] = useState("all");
   const [expandedStaffId, setExpandedStaffId] = useState(null);
+  const [systemHealth, setSystemHealth] = useState(null);
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
+  const [systemHealthError, setSystemHealthError] = useState("");
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -3245,6 +3248,24 @@ export default function Stallyard() {
       setAdminStaffError("Couldn't reach the server — try again");
     } finally {
       setLoadingAdminStaff(false);
+    }
+  };
+
+  const fetchSystemHealth = async () => {
+    setSystemHealthLoading(true);
+    setSystemHealthError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/system-health`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSystemHealthError(data.error || "Couldn't load system health");
+        return;
+      }
+      setSystemHealth(data);
+    } catch {
+      setSystemHealthError("Couldn't reach the backend — try again");
+    } finally {
+      setSystemHealthLoading(false);
     }
   };
 
@@ -12085,6 +12106,7 @@ export default function Stallyard() {
                   label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
                   permission: "finance",
                 },
+                { id: "systemHealth", label: "System health", requireSuperAdmin: true },
                 { id: "auditLog", label: "Audit log", requireSuperAdmin: true },
               ]
                 .filter((t) => {
@@ -12106,6 +12128,7 @@ export default function Stallyard() {
                     if (t.id === "reconciliation") fetchReconciliation();
                     if (t.id === "sellerPerformance") fetchSellerPerformance();
                     if (t.id === "buyerRisk") fetchBuyerRisk();
+                    if (t.id === "systemHealth") fetchSystemHealth();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
@@ -14701,6 +14724,103 @@ export default function Stallyard() {
                       )}
                     </div>
                   ))}
+              </div>
+            )}
+
+            {adminTab === "systemHealth" && (!currentMember.adminRole || currentMember.adminRole === "super_admin") && (
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>System health</h3>
+                    <p className="text-sm mt-1" style={{ color: SLATE }}>
+                      Live checks for Stallyard's critical infrastructure. These checks do not send emails, charge cards, or consume moderation requests.
+                    </p>
+                  </div>
+                  <button onClick={fetchSystemHealth} disabled={systemHealthLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {systemHealthLoading ? "Checking…" : "Run health check"}
+                  </button>
+                </div>
+
+                {systemHealthError && (
+                  <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
+                    {systemHealthError}
+                  </div>
+                )}
+
+                {systemHealth && (() => {
+                  const services = Array.isArray(systemHealth.services) ? systemHealth.services : [];
+                  const statusStyle = (status) => status === "healthy"
+                    ? { bg: SAGE + "18", border: SAGE + "55", color: SAGE, label: "Healthy" }
+                    : status === "configured"
+                    ? { bg: MARIGOLD + "18", border: MARIGOLD + "55", color: "#8A6D3B", label: "Configured" }
+                    : status === "not_configured"
+                    ? { bg: "#66708512", border: "#66708544", color: SLATE, label: "Not configured" }
+                    : { bg: BERRY + "0D", border: BERRY + "55", color: BERRY, label: "Needs attention" };
+                  const healthyCount = services.filter((s) => s.status === "healthy").length;
+                  const problemCount = services.filter((s) => s.status === "unhealthy").length;
+                  return (
+                    <>
+                      <div className="grid sm:grid-cols-3 gap-3">
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Overall</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ color: problemCount ? BERRY : SAGE }}>
+                            {problemCount ? "Needs attention" : "Operational"}
+                          </div>
+                        </div>
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Live checks healthy</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ color: INK }}>{healthyCount}</div>
+                        </div>
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Last checked</div>
+                          <div className="text-sm font-medium mt-2" style={{ color: INK }}>
+                            {systemHealth.checkedAt ? new Date(systemHealth.checkedAt).toLocaleString() : "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {services.map((service) => {
+                          const s = statusStyle(service.status);
+                          return (
+                            <div key={service.key} className="rounded-xl border p-4" style={{ borderColor: s.border, backgroundColor: s.bg }}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold" style={{ color: INK }}>{service.name}</div>
+                                  <div className="text-xs mt-0.5" style={{ color: SLATE }}>{service.purpose}</div>
+                                </div>
+                                <span className="text-[11px] font-semibold px-2 py-1 rounded-full whitespace-nowrap"
+                                  style={{ backgroundColor: "white", color: s.color }}>{s.label}</span>
+                              </div>
+                              <p className="text-sm mt-3" style={{ color: service.status === "unhealthy" ? BERRY : INK }}>
+                                {service.message || "No details"}
+                              </p>
+                              <div className="flex justify-between gap-3 mt-3 text-xs" style={{ color: SLATE }}>
+                                <span>{service.liveCheck ? "Live check" : "Configuration check"}</span>
+                                {service.latencyMs != null && <span>{service.latencyMs} ms</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold" style={{ color: INK }}>How to read this page</h4>
+                        <p className="text-sm mt-2" style={{ color: SLATE }}>
+                          <strong>Healthy</strong> means Stallyard successfully contacted the service. <strong>Configured</strong> means credentials are present, but the check intentionally avoids making a billable or user-facing API request. <strong>Needs attention</strong> means a live check failed. No secret keys are returned to the browser.
+                        </p>
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {!systemHealth && !systemHealthLoading && !systemHealthError && (
+                  <div className="bg-white rounded-xl border p-6 text-center" style={{ borderColor: "#DDD8CC", color: SLATE }}>
+                    Run a health check to see the current status of Stallyard's services.
+                  </div>
+                )}
               </div>
             )}
 
