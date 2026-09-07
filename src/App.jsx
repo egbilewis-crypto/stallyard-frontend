@@ -1269,6 +1269,12 @@ export default function Stallyard() {
   const [auditSearch, setAuditSearch] = useState("");
   const [auditActionFilter, setAuditActionFilter] = useState("all");
   const [auditDateFilter, setAuditDateFilter] = useState("all");
+  const [adminStaff, setAdminStaff] = useState([]);
+  const [loadingAdminStaff, setLoadingAdminStaff] = useState(false);
+  const [adminStaffError, setAdminStaffError] = useState("");
+  const [adminStaffSearch, setAdminStaffSearch] = useState("");
+  const [adminStaffFilter, setAdminStaffFilter] = useState("all");
+  const [expandedStaffId, setExpandedStaffId] = useState(null);
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -3221,6 +3227,45 @@ export default function Stallyard() {
       showToast("Couldn't load the audit log — try again");
     } finally {
       setLoadingAuditLog(false);
+    }
+  };
+
+  const fetchAdminStaff = async () => {
+    setLoadingAdminStaff(true);
+    setAdminStaffError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/staff`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAdminStaffError(data.error || "Couldn't load admin staff");
+        return;
+      }
+      setAdminStaff(Array.isArray(data.staff) ? data.staff : []);
+    } catch {
+      setAdminStaffError("Couldn't reach the server — try again");
+    } finally {
+      setLoadingAdminStaff(false);
+    }
+  };
+
+  const revokeAdminStaffSessions = async (staff) => {
+    if (!staff?.id) return;
+    if (staff.username === currentUser) {
+      showToast("Use your own account security controls for your sessions");
+      return;
+    }
+    if (!window.confirm(`Sign ${staff.display_name || staff.username} out of all admin sessions?`)) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/revoke-sessions`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't revoke sessions");
+        return;
+      }
+      showToast("Admin sessions revoked");
+      await fetchAdminStaff();
+    } catch {
+      showToast("Couldn't reach the server — try again");
     }
   };
 
@@ -5722,28 +5767,30 @@ export default function Stallyard() {
     showToast("Member removed");
   };
 
-  const adminSetRole = async (username, role) => {
+  const adminSetRole = async (username, role, reason = "") => {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/admin-role`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ role }),
+          body: JSON.stringify({ role, reason }),
         });
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          showToast("Couldn't update that role — try again");
-          return;
+          showToast(data.error || "Couldn't update that role — try again");
+          return false;
         }
       } catch {
         showToast("Couldn't reach the server — try again");
-        return;
+        return false;
       }
     }
     await persistMembers(
       members.map((m) => (m.username === username ? { ...m, isAdmin: role !== null, adminRole: role } : m))
     );
     showToast(role ? `Role set to ${ADMIN_ROLE_LABELS[role] || role}` : "Admin access revoked");
+    return true;
   };
 
   const adminToggleSuspend = async (username) => {
@@ -12000,6 +12047,7 @@ export default function Stallyard() {
                 { id: "overview", label: "Overview", requireSuperAdmin: true },
                 { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
                 { id: "members", label: `Members (${members.length})` },
+                { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
                 { id: "orders", label: `Orders (${orders.length})` },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
@@ -12054,6 +12102,7 @@ export default function Stallyard() {
                   onClick={() => {
                     setAdminTab(t.id);
                     if (t.id === "auditLog") fetchAuditLog();
+                    if (t.id === "staff") fetchAdminStaff();
                     if (t.id === "reconciliation") fetchReconciliation();
                     if (t.id === "sellerPerformance") fetchSellerPerformance();
                     if (t.id === "buyerRisk") fetchBuyerRisk();
@@ -12800,6 +12849,169 @@ export default function Stallyard() {
                 </div>
               </div>
             )}
+
+            {adminTab === "staff" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
+              const q = adminStaffSearch.trim().toLowerCase();
+              const filtered = adminStaff.filter((s) => {
+                const active = !!s.is_admin;
+                const role = active ? (s.admin_role || "super_admin") : "revoked";
+                if (adminStaffFilter === "active" && !active) return false;
+                if (adminStaffFilter === "revoked" && active) return false;
+                if (adminStaffFilter === "no2fa" && !!s.two_factor_enabled) return false;
+                if (adminStaffFilter === "suspended" && !s.is_suspended) return false;
+                if (adminStaffFilter !== "all" && !["active", "revoked", "no2fa", "suspended"].includes(adminStaffFilter) && role !== adminStaffFilter) return false;
+                if (!q) return true;
+                return [s.display_name, s.username, s.email, role, ADMIN_ROLE_LABELS[role]].filter(Boolean).join(" ").toLowerCase().includes(q);
+              });
+              const activeCount = adminStaff.filter((s) => s.is_admin).length;
+              const mfaMissing = adminStaff.filter((s) => s.is_admin && !s.two_factor_enabled).length;
+              return (
+                <div>
+                  <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold" style={{ color: INK }}>Admin / Staff Accounts</h3>
+                      <p className="text-sm mt-1" style={{ color: SLATE }}>
+                        Manage privileged staff access, roles, multi-factor status and active sessions. Role changes invalidate existing sessions automatically.
+                      </p>
+                    </div>
+                    <button onClick={fetchAdminStaff} className="px-3 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      {loadingAdminStaff ? "Refreshing…" : "Refresh"}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                    {[
+                      ["Active staff", activeCount],
+                      ["Former/revoked", Math.max(0, adminStaff.length - activeCount)],
+                      ["2FA attention", mfaMissing],
+                      ["Super Admins", adminStaff.filter((s) => s.is_admin && (!s.admin_role || s.admin_role === "super_admin")).length],
+                    ].map(([label, value]) => (
+                      <div key={label} className="p-3 bg-white border rounded-xl" style={{ borderColor: "#DDD8CC" }}>
+                        <div className="text-xs" style={{ color: SLATE }}>{label}</div>
+                        <div className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 flex-wrap mb-4">
+                    <input
+                      value={adminStaffSearch}
+                      onChange={(e) => setAdminStaffSearch(e.target.value)}
+                      placeholder="Search staff name, username, email or role"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm flex-1 min-w-[220px]"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <select value={adminStaffFilter} onChange={(e) => setAdminStaffFilter(e.target.value)} className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
+                      <option value="all">All staff</option>
+                      <option value="active">Active</option>
+                      <option value="revoked">Revoked</option>
+                      <option value="no2fa">2FA attention</option>
+                      <option value="suspended">Suspended</option>
+                      {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
+                    </select>
+                  </div>
+
+                  {adminStaffError && (
+                    <div className="p-3 rounded-lg border mb-4 text-sm" style={{ borderColor: BERRY, color: BERRY, backgroundColor: BERRY + "08" }}>
+                      {adminStaffError}
+                    </div>
+                  )}
+
+                  {!loadingAdminStaff && !adminStaffError && adminStaff.length === 0 && (
+                    <div className="p-5 rounded-xl border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: SLATE }}>
+                      No staff records loaded yet. Click Refresh.
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {filtered.map((staff) => {
+                      const active = !!staff.is_admin;
+                      const role = active ? (staff.admin_role || "super_admin") : null;
+                      const isSelf = staff.username === currentUser;
+                      const expanded = expandedStaffId === staff.id;
+                      return (
+                        <div key={staff.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="min-w-0">
+                              <div className="font-semibold flex items-center gap-2 flex-wrap" style={{ color: INK }}>
+                                {staff.display_name || staff.username}
+                                {active ? <Tag color={SAGE}>Active staff</Tag> : <Tag color={SLATE}>Access revoked</Tag>}
+                                {staff.is_suspended && <Tag color={BERRY}>Suspended</Tag>}
+                                {active && staff.two_factor_enabled ? <Tag color={SAGE}>2FA on</Tag> : active ? <Tag color={BERRY}>2FA attention</Tag> : null}
+                                {isSelf && <Tag color={MARIGOLD}>You</Tag>}
+                              </div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>@{staff.username} · {staff.email || "no email"}</div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                Role: <strong>{active ? (ADMIN_ROLE_LABELS[role] || role) : "None"}</strong>
+                                {staff.last_login_at ? ` · Last login ${new Date(staff.last_login_at).toLocaleString()}` : " · No recorded login"}
+                              </div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                {staff.last_action_at ? `Last admin action ${new Date(staff.last_action_at).toLocaleString()}` : "No recorded admin actions"}
+                                {` · ${Number(staff.action_count || 0)} logged action${Number(staff.action_count || 0) === 1 ? "" : "s"}`}
+                              </div>
+                            </div>
+
+                            {!isSelf && (
+                              <div className="flex gap-2 flex-wrap items-end">
+                                <div>
+                                  <label className="block text-[11px] mb-1" style={{ color: SLATE }}>Role</label>
+                                  <select
+                                    value={role || ""}
+                                    onChange={async (e) => {
+                                      const nextRole = e.target.value || null;
+                                      const reason = window.prompt("Optional reason for this role/access change:", "") || "";
+                                      const ok = await adminSetRole(staff.username, nextRole, reason);
+                                      if (ok) await fetchAdminStaff();
+                                    }}
+                                    className="px-2 py-1.5 rounded-lg border bg-white text-xs"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  >
+                                    <option value="">No admin access</option>
+                                    {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
+                                  </select>
+                                </div>
+                                {active && (
+                                  <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                                    Revoke sessions
+                                  </button>
+                                )}
+                                <button
+                                  onClick={async () => { await adminToggleSuspend(staff.username); await fetchAdminStaff(); }}
+                                  className="px-3 py-2 rounded-lg border text-xs font-medium"
+                                  style={{ borderColor: staff.is_suspended ? SAGE : BERRY, color: staff.is_suspended ? SAGE : BERRY }}
+                                >
+                                  {staff.is_suspended ? "Unsuspend" : "Suspend"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <button onClick={() => setExpandedStaffId(expanded ? null : staff.id)} className="text-xs underline mt-3" style={{ color: SLATE }}>
+                            {expanded ? "Hide role history" : "View role history"}
+                          </button>
+                          {expanded && (
+                            <div className="mt-3 pt-3 space-y-2" style={{ borderTop: "1px solid #EEE9DE" }}>
+                              {(staff.role_history || []).length === 0 ? (
+                                <p className="text-xs" style={{ color: SLATE }}>No role changes recorded since Staff Management was enabled.</p>
+                              ) : (staff.role_history || []).map((h) => (
+                                <div key={h.id} className="text-xs p-2 rounded-lg" style={{ backgroundColor: CANVAS, color: SLATE }}>
+                                  <strong style={{ color: INK }}>{h.old_role ? (ADMIN_ROLE_LABELS[h.old_role] || h.old_role) : "No admin access"}</strong>
+                                  {" → "}
+                                  <strong style={{ color: INK }}>{h.new_role ? (ADMIN_ROLE_LABELS[h.new_role] || h.new_role) : "No admin access"}</strong>
+                                  {` · ${new Date(h.created_at).toLocaleString()}`}
+                                  {h.changed_by_username ? ` · by @${h.changed_by_username}` : ""}
+                                  {h.reason ? <div className="mt-1">Reason: {h.reason}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {adminTab === "sellerPerformance" && hasAdminPermission(currentMember, "seller_verification") && (
               <div>
