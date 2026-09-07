@@ -400,6 +400,10 @@ function backendOrderToFrontend(row) {
     paymentLast4: row.payment_last4 || null,
     refundStatus: row.refund_status || null,
     paystackRefundId: row.paystack_refund_id || null,
+    refundReason: row.refund_reason || "",
+    refundRequestedBy: row.refund_requested_by || null,
+    refundRequestedAt: row.refund_requested_at ? new Date(row.refund_requested_at).getTime() : null,
+    refundPreviousPaymentStatus: row.refund_previous_payment_status || null,
     refundFailureReason: row.refund_failure_reason || "",
     refundedAt: row.refunded_at ? new Date(row.refunded_at).getTime() : null,
     isDisputed: !!row.is_disputed,
@@ -1175,6 +1179,8 @@ export default function Stallyard() {
   const [editingPolicyCategory, setEditingPolicyCategory] = useState(null);
   const [policyDraft, setPolicyDraft] = useState("");
   const [withdrawals, setWithdrawals] = useState([]);
+  const [refundAdminFilter, setRefundAdminFilter] = useState("all");
+  const [refundAdminSearch, setRefundAdminSearch] = useState("");
   const [reviews, setReviews] = useState([]);
   const [follows, setFollows] = useState([]);
   const [reviewDrafts, setReviewDrafts] = useState({});
@@ -3775,9 +3781,23 @@ export default function Stallyard() {
   };
 
   const refundOrder = async (orderId) => {
+    const existingOrder = orders.find((o) => o.id === orderId);
+    const reason = window.prompt(
+      "Reason for this full refund (required). This is stored in the admin record and sent with the Paystack refund request.",
+      existingOrder?.refundReason || ""
+    );
+    if (reason === null) return;
+    if (!reason.trim()) {
+      showToast("Enter a refund reason before sending money back");
+      return;
+    }
     if (!window.confirm("Send a full refund through Paystack for this order? This action submits real money back to the buyer.")) return;
     try {
-      const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/refund`, { method: "PATCH" });
+      const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/refund`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
       const data = await res.json();
       if (!res.ok) {
         showToast(data.error || "Couldn't start the refund — try again");
@@ -11792,6 +11812,11 @@ export default function Stallyard() {
                 { id: "settings", label: "Settings", permission: "finance_or_content" },
                 { id: "content", label: "Content", requireSuperAdmin: true },
                 {
+                  id: "refunds",
+                  label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
+                  permission: "finance",
+                },
+                {
                   id: "withdrawals",
                   label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
                   permission: "finance",
@@ -13024,6 +13049,127 @@ export default function Stallyard() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {adminTab === "refunds" && hasAdminPermission(currentMember, "finance") && (
+              <div>
+                {(() => {
+                  const refundOrders = orders
+                    .filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending")
+                    .sort((a, b) => (b.refundRequestedAt || b.createdAt) - (a.refundRequestedAt || a.createdAt));
+                  const q = refundAdminSearch.trim().toLowerCase();
+                  const filtered = refundOrders.filter((o) => {
+                    const status = o.paymentStatus === "refunded" ? "processed" : (o.refundStatus || "pending");
+                    const bucket = status === "failed" ? "failed"
+                      : status === "request_unknown" || status === "needs-attention" ? "attention"
+                      : status === "processed" ? "processed"
+                      : "pending";
+                    if (refundAdminFilter !== "all" && bucket !== refundAdminFilter) return false;
+                    if (!q) return true;
+                    const haystack = [orderNumber(o.id), o.buyerName, o.buyerUsername, o.paystackReference, o.paystackRefundId, o.refundReason]
+                      .filter(Boolean).join(" ").toLowerCase();
+                    return haystack.includes(q);
+                  });
+                  const counts = {
+                    all: refundOrders.length,
+                    pending: refundOrders.filter((o) => o.paymentStatus === "refund_pending" && !["failed", "request_unknown", "needs-attention"].includes(o.refundStatus)).length,
+                    attention: refundOrders.filter((o) => ["request_unknown", "needs-attention"].includes(o.refundStatus)).length,
+                    failed: refundOrders.filter((o) => o.refundStatus === "failed").length,
+                    processed: refundOrders.filter((o) => o.paymentStatus === "refunded" || o.refundStatus === "processed").length,
+                  };
+                  const pendingAmount = refundOrders
+                    .filter((o) => o.paymentStatus === "refund_pending")
+                    .reduce((sum, o) => sum + Number(o.total || 0), 0);
+                  return (
+                    <>
+                      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold" style={{ color: INK }}>Refund management</h3>
+                          <p className="text-xs mt-1" style={{ color: SLATE }}>Track every Paystack refund from request through final processing. Only Paystack-confirmed processed refunds are shown as refunded.</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs" style={{ color: SLATE }}>Currently pending</div>
+                          <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(pendingAmount, "NGN")}</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {[
+                          ["all", "All", counts.all],
+                          ["pending", "Pending", counts.pending],
+                          ["attention", "Needs attention", counts.attention],
+                          ["failed", "Failed", counts.failed],
+                          ["processed", "Processed", counts.processed],
+                        ].map(([key, label, count]) => (
+                          <button key={key} onClick={() => setRefundAdminFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                            style={{ borderColor: refundAdminFilter === key ? INK : "#DDD8CC", backgroundColor: refundAdminFilter === key ? INK : "white", color: refundAdminFilter === key ? "white" : SLATE }}>
+                            {label} ({count})
+                          </button>
+                        ))}
+                      </div>
+                      <input value={refundAdminSearch} onChange={(e) => setRefundAdminSearch(e.target.value)} placeholder="Search order, buyer, Paystack reference, refund ID or reason"
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-4" style={{ borderColor: "#DDD8CC", color: INK }} />
+                      {filtered.length === 0 ? (
+                        <p className="text-sm p-4 rounded-lg border bg-white" style={{ color: SLATE, borderColor: "#DDD8CC" }}>No refunds match this view.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {filtered.map((o) => {
+                            const status = o.paymentStatus === "refunded" ? "processed" : (o.refundStatus || "pending");
+                            const needsAttention = ["request_unknown", "needs-attention"].includes(status);
+                            const statusLabel = status === "request_unknown" ? "Request unknown"
+                              : status === "needs-attention" ? "Needs attention"
+                              : status === "processed" ? "Processed"
+                              : status === "failed" ? "Failed"
+                              : status === "requesting" ? "Requesting"
+                              : status.charAt(0).toUpperCase() + status.slice(1);
+                            const statusColor = status === "processed" ? SAGE : status === "failed" ? BERRY : needsAttention ? BERRY : MARIGOLD;
+                            const requestedBy = members.find((m) => m.backendId === o.refundRequestedBy);
+                            return (
+                              <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: needsAttention || status === "failed" ? BERRY + "66" : "#DDD8CC" }}>
+                                <div className="flex items-start justify-between gap-3 flex-wrap">
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold text-sm" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{orderNumber(o.id)}</span>
+                                      <Tag color={statusColor}>{statusLabel}</Tag>
+                                      {o.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                                    </div>
+                                    <p className="text-xs mt-1" style={{ color: SLATE }}>Buyer: {o.buyerName || o.buyerUsername}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(o.total, o.currency)}</div>
+                                    <div className="text-[11px]" style={{ color: SLATE }}>Full refund</div>
+                                  </div>
+                                </div>
+                                <div className="grid sm:grid-cols-2 gap-x-5 gap-y-2 text-xs mt-3 pt-3 border-t" style={{ color: SLATE, borderColor: "#EFEBE0" }}>
+                                  <div><strong style={{ color: INK }}>Reason:</strong> {o.refundReason || "Not recorded"}</div>
+                                  <div><strong style={{ color: INK }}>Requested:</strong> {o.refundRequestedAt ? new Date(o.refundRequestedAt).toLocaleString() : "Unknown"}</div>
+                                  <div><strong style={{ color: INK }}>Requested by:</strong> {requestedBy?.displayName || requestedBy?.username || (o.refundRequestedBy ? `Admin #${o.refundRequestedBy}` : "Unknown")}</div>
+                                  <div><strong style={{ color: INK }}>Completed:</strong> {o.refundedAt ? new Date(o.refundedAt).toLocaleString() : "—"}</div>
+                                  <div className="break-all"><strong style={{ color: INK }}>Paystack transaction:</strong> {o.paystackReference || "—"}</div>
+                                  <div className="break-all"><strong style={{ color: INK }}>Paystack refund ID:</strong> {o.paystackRefundId || "—"}</div>
+                                </div>
+                                {o.refundFailureReason && (
+                                  <div className="mt-3 p-3 rounded-lg text-xs" style={{ backgroundColor: BERRY + "10", color: BERRY }}>
+                                    <strong>Paystack / processing note:</strong> {o.refundFailureReason}
+                                  </div>
+                                )}
+                                <div className="flex gap-3 mt-3 flex-wrap">
+                                  {status === "failed" && o.paymentStatus !== "refund_pending" && (
+                                    <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Retry refund</button>
+                                  )}
+                                  {needsAttention && (
+                                    <span className="text-xs font-medium" style={{ color: BERRY }}>Manual review required — verify this transaction in Paystack before taking another money action.</span>
+                                  )}
+                                  <button onClick={() => setAdminTab("orders")} className="text-xs font-medium underline" style={{ color: SLATE }}>Open orders</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 
