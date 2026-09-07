@@ -1204,6 +1204,15 @@ export default function Stallyard() {
   const [buyerRiskSearch, setBuyerRiskSearch] = useState("");
   const [buyerRiskFilter, setBuyerRiskFilter] = useState("all");
   const [expandedBuyerRiskId, setExpandedBuyerRiskId] = useState(null);
+  // Admin-wide search and filters for the high-volume operational tabs.
+  const [adminListingSearch, setAdminListingSearch] = useState("");
+  const [adminListingStatusFilter, setAdminListingStatusFilter] = useState("all");
+  const [adminMemberSearch, setAdminMemberSearch] = useState("");
+  const [adminMemberFilter, setAdminMemberFilter] = useState("all");
+  const [adminOrderSearch, setAdminOrderSearch] = useState("");
+  const [adminOrderStatusFilter, setAdminOrderStatusFilter] = useState("all");
+  const [adminDisputeSearch, setAdminDisputeSearch] = useState("");
+  const [adminDisputeStatusFilter, setAdminDisputeStatusFilter] = useState("all");
   const [paystackChecks, setPaystackChecks] = useState({});
   const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -12206,12 +12215,32 @@ export default function Stallyard() {
 
             {adminTab === "listings" && hasAdminPermission(currentMember, "listing_moderation") && (
               <div className="space-y-2">
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <input value={adminListingSearch} onChange={(e) => setAdminListingSearch(e.target.value)}
+                    placeholder="Search title, seller, category or listing ID"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminListingStatusFilter} onChange={(e) => setAdminListingStatusFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Active</option>
+                    <option value="draft">Draft</option><option value="paused">Paused</option><option value="sold">Sold</option>
+                    <option value="rejected">Rejected</option><option value="removed">Taken down</option>
+                  </select>
+                </div>
                 {listings.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
                     No listings on the marketplace yet.
                   </p>
                 )}
-                {listings.map((l) => (
+                {listings
+                  .filter((l) => {
+                    if (adminListingStatusFilter !== "all" && (l.status || "pending") !== adminListingStatusFilter) return false;
+                    const q = adminListingSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [l.id, l.title, l.sellerName, l.ownerUsername, l.category, l.brand, l.sku]
+                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                  })
+                  .map((l) => (
                   <div key={l.id}>
                   <div
                     className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white flex-wrap"
@@ -12432,8 +12461,32 @@ export default function Stallyard() {
                   Admin staff are listed separately from regular members, each sorted A–Z — documents for each
                   member are under "View documents" below their info.
                 </p>
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <input value={adminMemberSearch} onChange={(e) => setAdminMemberSearch(e.target.value)}
+                    placeholder="Search name, username, email, phone or country"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminMemberFilter} onChange={(e) => setAdminMemberFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All members</option><option value="admins">Admin staff</option><option value="pending">Seller applications</option>
+                    <option value="approved">Approved sellers</option><option value="buyers">Buyer only</option><option value="suspended">Suspended</option>
+                    <option value="verified">Identity verified</option>
+                  </select>
+                </div>
                 <div className="space-y-2">
                   {members
+                    .filter((m) => {
+                      if (adminMemberFilter === "admins" && !m.isAdmin) return false;
+                      if (adminMemberFilter === "pending" && m.verificationStatus !== "pending") return false;
+                      if (adminMemberFilter === "approved" && (!m.isApproved || m.isAdmin)) return false;
+                      if (adminMemberFilter === "buyers" && (m.isAdmin || m.isApproved || m.verificationStatus === "pending")) return false;
+                      if (adminMemberFilter === "suspended" && !m.isSuspended) return false;
+                      if (adminMemberFilter === "verified" && !m.isVerified) return false;
+                      const q = adminMemberSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return [m.displayName, m.username, m.email, m.phone, m.country, m.officeLocation]
+                        .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                    })
                     .slice()
                     .sort((a, b) => {
                       if (!!a.isAdmin !== !!b.isAdmin) return a.isAdmin ? -1 : 1;
@@ -12916,12 +12969,33 @@ export default function Stallyard() {
 
             {adminTab === "orders" && (
               <div className="space-y-3">
+                <div className="flex gap-2 flex-wrap">
+                  <input value={adminOrderSearch} onChange={(e) => setAdminOrderSearch(e.target.value)}
+                    placeholder="Search order #, buyer, seller, item or Paystack ref"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminOrderStatusFilter} onChange={(e) => setAdminOrderStatusFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All payments</option><option value="held">Held</option><option value="released">Released</option>
+                    <option value="refund_pending">Refund pending</option><option value="refunded">Refunded</option><option value="disputed">Disputed</option>
+                  </select>
+                </div>
                 {orders.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
                     No orders placed yet.
                   </p>
                 )}
                 {orders
+                  .filter((o) => {
+                    if (adminOrderStatusFilter === "disputed") { if (!o.isDisputed) return false; }
+                    else if (adminOrderStatusFilter !== "all" && o.paymentStatus !== adminOrderStatusFilter) return false;
+                    const q = adminOrderSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    const sellers = (o.items || []).map((i) => `${i.sellerName || ""} ${i.ownerUsername || ""}`).join(" ");
+                    const items = (o.items || []).map((i) => i.title || "").join(" ");
+                    return [o.id, orderNumber(String(o.id)), o.buyerName, o.buyerUsername, o.paystackReference, sellers, items]
+                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                  })
                   .slice()
                   .sort((a, b) => b.createdAt - a.createdAt)
                   .map((o) => (
@@ -13778,10 +13852,28 @@ export default function Stallyard() {
                     <Tag color={SAGE}>{adminDisputes.filter((d) => d.status === "resolved").length} resolved</Tag>
                   </div>
                 </div>
+                <div className="flex gap-2 flex-wrap">
+                  <input value={adminDisputeSearch} onChange={(e) => setAdminDisputeSearch(e.target.value)}
+                    placeholder="Search case, order, buyer, seller or reason"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminDisputeStatusFilter} onChange={(e) => setAdminDisputeStatusFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All cases</option><option value="open">Open</option><option value="in_review">In review</option><option value="resolved">Resolved</option>
+                  </select>
+                </div>
                 {adminDisputes.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>No dispute cases yet.</p>
                 )}
-                {adminDisputes.map((d) => {
+                {adminDisputes
+                  .filter((d) => {
+                    if (adminDisputeStatusFilter !== "all" && d.status !== adminDisputeStatusFilter) return false;
+                    const q = adminDisputeSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [d.id, d.order_id, d.buyer_name, d.buyer_username, d.reason, d.buyer_statement, ...(d.items || []).flatMap((i) => [i.seller_name, i.seller_username, i.title])]
+                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                  })
+                  .map((d) => {
                   const o = orders.find((order) => Number(order.id) === Number(d.order_id));
                   const expanded = activeDisputeCaseId === d.id;
                   const draft = disputeAdminDrafts[d.id] || {};
