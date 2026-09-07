@@ -1186,6 +1186,12 @@ export default function Stallyard() {
   const [reconciliationError, setReconciliationError] = useState("");
   const [reconciliationSearch, setReconciliationSearch] = useState("");
   const [reconciliationFilter, setReconciliationFilter] = useState("all");
+  const [sellerPerformanceData, setSellerPerformanceData] = useState(null);
+  const [sellerPerformanceLoading, setSellerPerformanceLoading] = useState(false);
+  const [sellerPerformanceError, setSellerPerformanceError] = useState("");
+  const [sellerPerformanceSearch, setSellerPerformanceSearch] = useState("");
+  const [sellerPerformanceFilter, setSellerPerformanceFilter] = useState("all");
+  const [expandedSellerPerformanceId, setExpandedSellerPerformanceId] = useState(null);
   const [paystackChecks, setPaystackChecks] = useState({});
   const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -3802,6 +3808,24 @@ export default function Stallyard() {
       setReconciliationError("Couldn't reach the server — try again");
     } finally {
       setReconciliationLoading(false);
+    }
+  };
+
+  const fetchSellerPerformance = async () => {
+    setSellerPerformanceLoading(true);
+    setSellerPerformanceError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/seller-performance`);
+      const data = await res.json();
+      if (!res.ok) {
+        setSellerPerformanceError(data.error || "Couldn't load seller performance");
+        return;
+      }
+      setSellerPerformanceData(data);
+    } catch {
+      setSellerPerformanceError("Couldn't reach the server — try again");
+    } finally {
+      setSellerPerformanceLoading(false);
     }
   };
 
@@ -11855,6 +11879,7 @@ export default function Stallyard() {
                 { id: "settings", label: "Settings", permission: "finance_or_content" },
                 { id: "content", label: "Content", requireSuperAdmin: true },
                 { id: "reconciliation", label: "Reconciliation", permission: "finance" },
+                { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
                 {
                   id: "refunds",
                   label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
@@ -11883,6 +11908,7 @@ export default function Stallyard() {
                     setAdminTab(t.id);
                     if (t.id === "auditLog") fetchAuditLog();
                     if (t.id === "reconciliation") fetchReconciliation();
+                    if (t.id === "sellerPerformance") fetchSellerPerformance();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
@@ -12564,6 +12590,156 @@ export default function Stallyard() {
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {adminTab === "sellerPerformance" && hasAdminPermission(currentMember, "seller_verification") && (
+              <div>
+                <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Seller performance & risk review</h3>
+                    <p className="text-xs mt-1 max-w-2xl" style={{ color: SLATE }}>
+                      Operational indicators based on real marketplace activity. Scores help prioritize manual review only — they never suspend, reject, or penalize a seller automatically.
+                    </p>
+                  </div>
+                  <button onClick={fetchSellerPerformance} disabled={sellerPerformanceLoading}
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium border disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK, backgroundColor: "white" }}>
+                    {sellerPerformanceLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+
+                {sellerPerformanceError && (
+                  <div className="p-3 rounded-lg border mb-4 text-sm" style={{ borderColor: BERRY, color: BERRY, backgroundColor: "white" }}>
+                    {sellerPerformanceError}
+                  </div>
+                )}
+
+                {sellerPerformanceData && (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                      {[
+                        { label: "Sellers", value: sellerPerformanceData.summary?.sellerCount || 0 },
+                        { label: "Needs review", value: sellerPerformanceData.summary?.needsReview || 0 },
+                        { label: "Open disputes", value: sellerPerformanceData.summary?.openDisputes || 0 },
+                        { label: "Active ship reminders", value: sellerPerformanceData.summary?.activeShipReminders || 0 },
+                      ].map((card) => (
+                        <div key={card.label} className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>{card.label}</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{card.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap mb-4">
+                      {["all", "review", "watch", "good"].map((key) => (
+                        <button key={key} onClick={() => setSellerPerformanceFilter(key)}
+                          className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                          style={{
+                            borderColor: sellerPerformanceFilter === key ? INK : "#DDD8CC",
+                            backgroundColor: sellerPerformanceFilter === key ? INK : "white",
+                            color: sellerPerformanceFilter === key ? "white" : SLATE,
+                          }}>
+                          {key === "all" ? "All" : key === "review" ? "Needs review" : key === "watch" ? "Watch" : "Good standing"}
+                        </button>
+                      ))}
+                      <input value={sellerPerformanceSearch} onChange={(e) => setSellerPerformanceSearch(e.target.value)}
+                        placeholder="Search seller, username, email or phone"
+                        className="min-w-[240px] flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none bg-white"
+                        style={{ borderColor: "#DDD8CC" }} />
+                    </div>
+
+                    <div className="space-y-3">
+                      {(sellerPerformanceData.sellers || [])
+                        .filter((seller) => {
+                          if (sellerPerformanceFilter !== "all" && seller.healthBand !== sellerPerformanceFilter) return false;
+                          const q = sellerPerformanceSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return [seller.displayName, seller.username, seller.email, seller.phone]
+                            .some((v) => String(v || "").toLowerCase().includes(q));
+                        })
+                        .map((seller) => {
+                          const expanded = expandedSellerPerformanceId === seller.userId;
+                          const bandColor = seller.healthBand === "review" ? BERRY : seller.healthBand === "watch" ? MARIGOLD : SAGE;
+                          return (
+                            <div key={seller.userId} className="rounded-lg border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="p-4 flex items-center justify-between gap-4 flex-wrap">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold" style={{ color: INK }}>{seller.displayName || seller.username}</span>
+                                    <Tag color={bandColor}>{seller.healthLabel}</Tag>
+                                    {seller.isSuspended && <Tag color={BERRY}>Suspended</Tag>}
+                                    {seller.verificationStatus === "pending" && <Tag color={MARIGOLD}>Verification pending</Tag>}
+                                  </div>
+                                  <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                    @{seller.username} · {seller.orderCount} order{seller.orderCount === 1 ? "" : "s"} · {seller.reviewCount} review{seller.reviewCount === 1 ? "" : "s"}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-5 flex-wrap">
+                                  <div className="text-right">
+                                    <div className="text-[10px] uppercase" style={{ color: SLATE }}>Health score</div>
+                                    <div className="text-xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: bandColor }}>{seller.healthScore}/100</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-[10px] uppercase" style={{ color: SLATE }}>Rating</div>
+                                    <div className="text-sm font-semibold" style={{ color: INK }}>{seller.reviewCount ? `${seller.averageRating.toFixed(1)} / 5` : "No reviews"}</div>
+                                  </div>
+                                  <button onClick={() => setExpandedSellerPerformanceId(expanded ? null : seller.userId)}
+                                    className="text-xs font-medium underline" style={{ color: INK }}>
+                                    {expanded ? "Hide details" : "View details"}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {expanded && (
+                                <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                                    {[
+                                      ["Completed deliveries", seller.completedDeliveries],
+                                      ["Returns", `${seller.returnedCount} (${seller.returnRate.toFixed(1)}%)`],
+                                      ["Cancellations", `${seller.cancelledCount} (${seller.cancelRate.toFixed(1)}%)`],
+                                      ["Open disputes", seller.openDisputes],
+                                      ["All disputes", seller.disputeCount],
+                                      ["Warnings", seller.warningCount],
+                                      ["Ship reminders", seller.shipReminderCount],
+                                      ["Avg. time to ship", seller.averageHoursToShip == null ? "—" : `${seller.averageHoursToShip.toFixed(1)}h`],
+                                    ].map(([label, value]) => (
+                                      <div key={label} className="p-2.5 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                        <div className="text-[10px] uppercase tracking-wide" style={{ color: SLATE }}>{label}</div>
+                                        <div className="text-sm font-semibold mt-0.5" style={{ color: INK }}>{value}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                      <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Why this score</div>
+                                      {seller.riskSignals.length ? (
+                                        <div className="space-y-1.5">
+                                          {seller.riskSignals.map((signal, idx) => (
+                                            <div key={idx} className="text-xs flex items-start gap-2" style={{ color: signal.severity === "high" ? BERRY : SLATE }}>
+                                              <span>•</span><span>{signal.message}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="text-xs" style={{ color: SAGE }}>No performance warning signals detected.</p>}
+                                    </div>
+                                    <div className="text-xs space-y-1.5" style={{ color: SLATE }}>
+                                      <div><strong style={{ color: INK }}>Gross merchandise:</strong> {formatMoney(seller.grossMerchandise, "NGN")}</div>
+                                      <div><strong style={{ color: INK }}>Available seller balance:</strong> {formatMoney(seller.availableBalance, "NGN")}</div>
+                                      <div><strong style={{ color: INK }}>Last login:</strong> {seller.lastLoginAt ? new Date(seller.lastLoginAt).toLocaleString() : "No login recorded"}</div>
+                                      <div><strong style={{ color: INK }}>Joined:</strong> {seller.joinedAt ? new Date(seller.joinedAt).toLocaleDateString() : "—"}</div>
+                                      <div><strong style={{ color: INK }}>Verification:</strong> {seller.verificationStatus || "none"}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
