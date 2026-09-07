@@ -1266,6 +1266,9 @@ export default function Stallyard() {
   const [savingDisputeCaseId, setSavingDisputeCaseId] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
   const [loadingAuditLog, setLoadingAuditLog] = useState(false);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditActionFilter, setAuditActionFilter] = useState("all");
+  const [auditDateFilter, setAuditDateFilter] = useState("all");
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -14489,35 +14492,78 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
+              const now = Date.now();
+              const cutoff = auditDateFilter === "24h" ? now - 24 * 60 * 60 * 1000
+                : auditDateFilter === "7d" ? now - 7 * 24 * 60 * 60 * 1000
+                : auditDateFilter === "30d" ? now - 30 * 24 * 60 * 60 * 1000
+                : 0;
+              const q = auditSearch.trim().toLowerCase();
+              const actions = [...new Set(auditLog.map((entry) => entry.action).filter(Boolean))].sort();
+              const filtered = auditLog.filter((entry) => {
+                if (auditActionFilter !== "all" && entry.action !== auditActionFilter) return false;
+                if (cutoff && new Date(entry.created_at).getTime() < cutoff) return false;
+                if (!q) return true;
+                return [entry.action, entry.details, entry.display_name, entry.username]
+                  .filter(Boolean)
+                  .some((value) => String(value).toLowerCase().includes(q));
+              });
+              return (
               <div>
-                <p className="text-xs mb-4" style={{ color: SLATE }}>
-                  Every admin role change, most recent first. Currently the only action tracked here — a good
-                  foundation to log more admin actions later without needing another migration.
-                </p>
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="font-semibold" style={{ color: INK }}>Admin audit log</h3>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      Sensitive admin actions are recorded here so you can see who changed what and when. Entries are append-only from the dashboard.
+                    </p>
+                  </div>
+                  <button onClick={fetchAuditLog} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>Refresh</button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+                  <input
+                    value={auditSearch}
+                    onChange={(e) => setAuditSearch(e.target.value)}
+                    placeholder="Search admin, action, or details"
+                    className="px-3 py-2 rounded-lg border text-sm bg-white"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  />
+                  <select value={auditActionFilter} onChange={(e) => setAuditActionFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All actions</option>
+                    {actions.map((action) => <option key={action} value={action}>{action.replaceAll("_", " ")}</option>)}
+                  </select>
+                  <select value={auditDateFilter} onChange={(e) => setAuditDateFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All dates</option>
+                    <option value="24h">Last 24 hours</option>
+                    <option value="7d">Last 7 days</option>
+                    <option value="30d">Last 30 days</option>
+                  </select>
+                </div>
                 {loadingAuditLog ? (
-                  <p className="text-sm" style={{ color: SLATE }}>
-                    Loading...
-                  </p>
+                  <p className="text-sm" style={{ color: SLATE }}>Loading...</p>
                 ) : auditLog.length === 0 ? (
-                  <p className="text-sm" style={{ color: SLATE }}>
-                    No audit log entries yet.
-                  </p>
+                  <p className="text-sm" style={{ color: SLATE }}>No audit log entries yet.</p>
+                ) : filtered.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>No audit entries match those filters.</p>
                 ) : (
                   <div className="space-y-2">
-                    {auditLog.map((entry) => (
+                    {filtered.map((entry) => (
                       <div key={entry.id} className="p-3 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
-                        <div style={{ color: INK }}>{entry.details}</div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div style={{ color: INK }}>{entry.details}</div>
+                          <span className="text-[10px] px-2 py-1 rounded-full whitespace-nowrap" style={{ backgroundColor: "#F1EEE6", color: SLATE }}>
+                            {(entry.action || "admin_action").replaceAll("_", " ")}
+                          </span>
+                        </div>
                         <div className="text-xs mt-1" style={{ color: SLATE }}>
-                          {entry.display_name || entry.username || "Unknown admin"} ·{" "}
-                          {new Date(entry.created_at).toLocaleString()}
+                          {entry.display_name || entry.username || "Unknown admin"} · {new Date(entry.created_at).toLocaleString()}
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
 
             {adminTab === "supportTickets" && hasAdminPermission(currentMember, "support_tickets") && (
               <div className="space-y-3">
