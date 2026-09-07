@@ -80,15 +80,12 @@ const POLICY_ORDER = ["seller_rules", "prohibited_items", "fees", "payment_rules
 
 const TICKET_STATUS_LABEL = { open: "Open", in_progress: "In progress", resolved: "Resolved" };
 
-// The admin panel's entrance is this obscure path instead of a guessable
-// /admin — a supplementary deterrent only, not real security on its own.
-// Anyone who sees the URL once (over your shoulder, in browser history,
-// in a screen share) knows it from then on, so this doesn't replace the
-// password + mandatory 2FA + generic-error protections already in place.
-// Change this string any time — treat it like a password, don't share it
-// publicly, and rotate it if you think it's leaked.
+// Dedicated admin origin. The public marketplace never renders the admin
+// dashboard; authentication and authorization are still enforced by the backend.
 const ADMIN_HOSTNAME = "admin.stallyard.com";
 const ADMIN_URL = "https://admin.stallyard.com";
+const ADMIN_SESSION_IDLE_MS = 30 * 60 * 1000;
+const ADMIN_SESSION_STORAGE_KEY = "stallyard-admin-unlocked-until";
 
 function isAdminHost() {
   return typeof window !== "undefined" && window.location.hostname.toLowerCase() === ADMIN_HOSTNAME;
@@ -979,13 +976,22 @@ export default function Stallyard() {
   const [adminLoginSubmitting, setAdminLoginSubmitting] = useState(false);
   const [authReturnView, setAuthReturnView] = useState("browse");
   const [adminTab, setAdminTab] = useState("overview");
-  const [adminUnlockedUntil, setAdminUnlockedUntil] = useState(null);
+  // Keep the admin unlock only for this browser tab/session. A normal page
+  // refresh restores the remaining unlock window, but closing the tab/browser
+  // clears sessionStorage and the admin must complete the 3-step login again.
+  const [adminUnlockedUntil, setAdminUnlockedUntil] = useState(() => {
+    if (typeof window === "undefined" || !isAdminHost()) return null;
+    const raw = window.sessionStorage.getItem(ADMIN_SESSION_STORAGE_KEY);
+    const expiresAt = Number(raw);
+    if (Number.isFinite(expiresAt) && expiresAt > Date.now()) return expiresAt;
+    window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+    return null;
+  });
   const [adminReauthStep, setAdminReauthStep] = useState(null); // null | "password" | "code" | "code-email"
   const [adminReauthPassword, setAdminReauthPassword] = useState("");
   const [adminReauthCode, setAdminReauthCode] = useState("");
   const [adminReauthSubmitting, setAdminReauthSubmitting] = useState(false);
   const [adminReauthError, setAdminReauthError] = useState("");
-  const ADMIN_SESSION_IDLE_MS = 30 * 60 * 1000;
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [expandedDocsUsername, setExpandedDocsUsername] = useState(null);
   const [adminEditContext, setAdminEditContext] = useState(false);
@@ -2287,6 +2293,10 @@ export default function Stallyard() {
   };
 
   const logout = async () => {
+    setAdminUnlockedUntil(null);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+    }
     await setSession(null);
     await saveAuthToken(null);
     setActiveThreadId(null);
@@ -2312,6 +2322,15 @@ export default function Stallyard() {
       setAdminTab("members");
     }
   }, [currentMember?.isAdmin, currentMember?.adminRole]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isAdminHost()) return;
+    if (adminUnlockedUntil && adminUnlockedUntil > Date.now()) {
+      window.sessionStorage.setItem(ADMIN_SESSION_STORAGE_KEY, String(adminUnlockedUntil));
+    } else {
+      window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
+    }
+  }, [adminUnlockedUntil]);
 
   useEffect(() => {
     if (view !== "admin") return;
@@ -2343,12 +2362,16 @@ export default function Stallyard() {
 
     // On the dedicated admin host, never show the buyer/seller marketplace.
     if (!currentUser) {
+      setAdminUnlockedUntil(null);
+      window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
       setView("browse");
       setAdminLoginMode(true);
       return;
     }
 
     if (!currentMember?.isAdmin) {
+      setAdminUnlockedUntil(null);
+      window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
       // A non-admin session is not allowed on the admin origin.
       setView("browse");
       setAdminLoginMode(true);
