@@ -13054,23 +13054,26 @@ export default function Stallyard() {
                         · {new Date(o.createdAt).toLocaleString()}
                       </div>
                       <div className="text-xs mb-2" style={{ color: SLATE }}>
-                        {o.items.map((i) => i.title).join(", ")}
+                        {(o.items || []).map((i) => i.title).filter(Boolean).join(", ") || "No item details available"}
                       </div>
-                      {o.commissionAmount !== undefined ? (
+                      {Number.isFinite(Number(o.commissionAmount)) ? (
                         <div
-                          className="flex items-center gap-4 text-xs mb-3 pt-2 border-t"
+                          className="flex items-center gap-4 text-xs mb-3 pt-2 border-t flex-wrap"
                           style={{ color: SLATE, borderColor: "#EFEBE0" }}
                         >
                           <span>
-                            Commission ({Math.round(o.commissionRate * 100)}%):{" "}
+                            Commission ({Math.round(Number(o.commissionRate || 0) * 100)}%):{" "}
                             <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                              ${o.commissionAmount.toFixed(2)}
+                              {formatMoney(Number(o.commissionAmount || 0), o.currency)}
                             </span>
                           </span>
                           <span>
                             Seller payout:{" "}
                             <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                              ${o.sellerPayout.toFixed(2)}
+                              {formatMoney(
+                                Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0),
+                                o.currency
+                              )}
                             </span>
                           </span>
                         </div>
