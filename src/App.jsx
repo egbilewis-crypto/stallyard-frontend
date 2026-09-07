@@ -1225,6 +1225,7 @@ export default function Stallyard() {
   const [adminMemberFilter, setAdminMemberFilter] = useState("all");
   const [adminOrderSearch, setAdminOrderSearch] = useState("");
   const [adminOrderStatusFilter, setAdminOrderStatusFilter] = useState("all");
+  const [activeAdminOrderId, setActiveAdminOrderId] = useState(null);
   const [adminDisputeSearch, setAdminDisputeSearch] = useState("");
   const [adminDisputeStatusFilter, setAdminDisputeStatusFilter] = useState("all");
   const [paystackChecks, setPaystackChecks] = useState({});
@@ -12998,114 +12999,286 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "orders" && (
-              <div className="space-y-3">
-                <div className="flex gap-2 flex-wrap">
-                  <input value={adminOrderSearch} onChange={(e) => setAdminOrderSearch(e.target.value)}
-                    placeholder="Search order #, buyer, seller, item or Paystack ref"
-                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
-                    style={{ borderColor: "#DDD8CC", color: INK }} />
-                  <select value={adminOrderStatusFilter} onChange={(e) => setAdminOrderStatusFilter(e.target.value)}
-                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    <option value="all">All payments</option><option value="held">Held</option><option value="released">Released</option>
-                    <option value="refund_pending">Refund pending</option><option value="refunded">Refunded</option><option value="disputed">Disputed</option>
-                  </select>
-                </div>
-                {orders.length === 0 && (
-                  <p className="text-sm" style={{ color: SLATE }}>
-                    No orders placed yet.
-                  </p>
-                )}
-                {orders
-                  .filter((o) => {
-                    if (adminOrderStatusFilter === "disputed") { if (!o.isDisputed) return false; }
-                    else if (adminOrderStatusFilter !== "all" && o.paymentStatus !== adminOrderStatusFilter) return false;
-                    const q = adminOrderSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    const sellers = (o.items || []).map((i) => `${i.sellerName || ""} ${i.ownerUsername || ""}`).join(" ");
-                    const items = (o.items || []).map((i) => i.title || "").join(" ");
-                    return [o.id, orderNumber(String(o.id)), o.buyerName, o.buyerUsername, o.paystackReference, sellers, items]
-                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
-                  })
-                  .slice()
-                  .sort((a, b) => b.createdAt - a.createdAt)
-                  .map((o) => (
-                    <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
-                          {o.buyerName}
-                          {o.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
-                          {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
-                          {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
-                          {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
-                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
-                        </span>
-                        <span
-                          className="text-sm font-semibold"
-                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
-                        >
-                          {formatMoney(o.total, o.currency)}
-                        </span>
+            {adminTab === "orders" && (() => {
+              const activeOrder = activeAdminOrderId != null
+                ? orders.find((o) => Number(o.id) === Number(activeAdminOrderId))
+                : null;
+
+              if (activeOrder) {
+                const orderDispute = adminDisputes.find((d) => Number(d.order_id) === Number(activeOrder.id));
+                const sellerUsernames = [...new Set((activeOrder.items || []).map((i) => i.ownerUsername).filter(Boolean))];
+                const sellerWithdrawals = withdrawals.filter((w) => sellerUsernames.includes(w.sellerUsername));
+                const sellerPayout = Number(activeOrder.subtotal || 0) + Number(activeOrder.shippingTotal || 0) - Number(activeOrder.commissionAmount || 0);
+                const paystackCheck = paystackChecks[activeOrder.id];
+                const lifecycle = [
+                  { label: "Order placed", at: activeOrder.createdAt, done: true },
+                  { label: "Payment held", at: activeOrder.createdAt, done: ["held", "released", "refund_pending", "refunded"].includes(activeOrder.paymentStatus) },
+                  { label: "Seller shipped", at: (activeOrder.items || []).map((i) => i.shippedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => i.shippedAt || ["shipped", "delivered", "returned"].includes(i.fulfillmentStatus)) },
+                  { label: "Delivery proof uploaded", at: null, done: (activeOrder.items || []).some((i) => !!i.proofOfDeliveryUrl) },
+                  { label: "Delivery token redeemed", at: (activeOrder.items || []).map((i) => i.buyerConfirmedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => !!i.buyerConfirmedAt) },
+                  { label: "Seller payment released", at: null, done: activeOrder.paymentStatus === "released" },
+                  { label: "Refund completed", at: activeOrder.refundedAt || null, done: activeOrder.paymentStatus === "refunded" || activeOrder.refundStatus === "processed" },
+                ];
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setActiveAdminOrderId(null)}
+                        className="text-sm font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        ← Back to orders
+                      </button>
+                      <div className="flex gap-2 flex-wrap">
+                        {activeOrder.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                        <Tag color={activeOrder.paymentStatus === "released" ? SAGE : activeOrder.paymentStatus === "held" ? MARIGOLD : BERRY}>
+                          {activeOrder.paymentStatus || "unknown"}
+                        </Tag>
+                        {activeOrder.refundStatus && <Tag color={activeOrder.refundStatus === "processed" ? SAGE : activeOrder.refundStatus === "failed" ? BERRY : MARIGOLD}>Refund {activeOrder.refundStatus}</Tag>}
                       </div>
-                      <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
-                        <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                          {orderNumber(o.id)}
-                        </span>
-                        · {new Date(o.createdAt).toLocaleString()}
-                      </div>
-                      <div className="text-xs mb-2" style={{ color: SLATE }}>
-                        {(o.items || []).map((i) => i.title).filter(Boolean).join(", ") || "No item details available"}
-                      </div>
-                      {Number.isFinite(Number(o.commissionAmount)) ? (
-                        <div
-                          className="flex items-center gap-4 text-xs mb-3 pt-2 border-t flex-wrap"
-                          style={{ color: SLATE, borderColor: "#EFEBE0" }}
-                        >
-                          <span>
-                            Commission ({Math.round(Number(o.commissionRate || 0) * 100)}%):{" "}
-                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                              {formatMoney(Number(o.commissionAmount || 0), o.currency)}
-                            </span>
-                          </span>
-                          <span>
-                            Seller payout:{" "}
-                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
-                              {formatMoney(
-                                Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0),
-                                o.currency
-                              )}
-                            </span>
-                          </span>
+                    </div>
+
+                    <div className="p-5 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Order detail</p>
+                          <h3 className="text-2xl mt-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>{orderNumber(activeOrder.id)}</h3>
+                          <p className="text-sm mt-1" style={{ color: SLATE }}>Placed {new Date(activeOrder.createdAt).toLocaleString()}</p>
                         </div>
-                      ) : (
-                        <p className="text-xs mb-3" style={{ color: SLATE }}>
-                          No payment tracking data (order placed before this feature).
-                        </p>
-                      )}
-                      {["held", "released"].includes(o.paymentStatus) && hasAdminPermission(currentMember, "finance") && (
-                        <div className="flex items-center gap-3">
-                          {o.paymentStatus === "held" && (
-                            <button
-                              onClick={() => releasePayout(o.id)}
-                              className="text-xs font-medium underline"
-                              style={{ color: SAGE }}
-                            >
-                              Release payout
-                            </button>
-                          )}
+                        <div className="text-right">
+                          <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(activeOrder.total, activeOrder.currency)}</div>
+                          <div className="text-xs mt-1" style={{ color: SLATE }}>{activeOrder.currency}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Buyer & delivery address</h4>
+                        <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                          <div><strong style={{ color: INK }}>Buyer:</strong> {activeOrder.buyerName || activeOrder.buyerUsername || "Unknown"}</div>
+                          {activeOrder.buyerUsername && <div><strong style={{ color: INK }}>Username:</strong> @{activeOrder.buyerUsername}</div>}
+                          <div className="pt-2">
+                            <strong style={{ color: INK }}>Ship to:</strong><br />
+                            {[activeOrder.shippingAddress?.fullName, activeOrder.shippingAddress?.street, activeOrder.shippingAddress?.city, activeOrder.shippingAddress?.state, activeOrder.shippingAddress?.zip, activeOrder.shippingAddress?.country].filter(Boolean).join(", ") || "No shipping address recorded"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Money breakdown</h4>
+                        <div className="text-sm space-y-2" style={{ color: SLATE }}>
+                          <div className="flex justify-between"><span>Items subtotal</span><strong style={{ color: INK }}>{formatMoney(activeOrder.subtotal, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Shipping</span><strong style={{ color: INK }}>{formatMoney(activeOrder.shippingTotal, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Tax</span><strong style={{ color: INK }}>{formatMoney(activeOrder.taxAmount, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Stallyard commission ({Math.round(Number(activeOrder.commissionRate || 0) * 100)}%)</span><strong style={{ color: INK }}>{formatMoney(activeOrder.commissionAmount, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between pt-2 border-t" style={{ borderColor: "#EFEBE0" }}><span>Seller payable</span><strong style={{ color: SAGE }}>{formatMoney(sellerPayout, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Buyer total</span><strong style={{ color: INK }}>{formatMoney(activeOrder.total, activeOrder.currency)}</strong></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Payment & Paystack</h4>
+                      <div className="grid md:grid-cols-2 gap-3 text-sm" style={{ color: SLATE }}>
+                        <div><strong style={{ color: INK }}>Payment status:</strong> {activeOrder.paymentStatus || "Unknown"}</div>
+                        <div><strong style={{ color: INK }}>Paystack reference:</strong> <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{activeOrder.paystackReference || "Not recorded"}</span></div>
+                        <div><strong style={{ color: INK }}>Channel:</strong> {activeOrder.paymentChannel || "—"}</div>
+                        <div><strong style={{ color: INK }}>Card / bank:</strong> {[activeOrder.paymentCardType, activeOrder.paymentBank, activeOrder.paymentLast4 ? `•••• ${activeOrder.paymentLast4}` : ""].filter(Boolean).join(" · ") || "—"}</div>
+                      </div>
+                      {hasAdminPermission(currentMember, "finance") && (
+                        <div className="mt-3 flex items-center gap-3 flex-wrap">
                           <button
-                            onClick={() => refundOrder(o.id)}
-                            className="text-xs font-medium underline"
-                            style={{ color: BERRY }}
+                            onClick={() => verifyPaystackReconciliation(activeOrder.id)}
+                            disabled={paystackCheckingOrderId === activeOrder.id || !activeOrder.paystackReference}
+                            className="px-3 py-2 rounded-lg text-xs font-medium border disabled:opacity-50"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
                           >
-                            Refund buyer
+                            {paystackCheckingOrderId === activeOrder.id ? "Checking Paystack…" : "Verify with Paystack"}
                           </button>
+                          {paystackCheck && (
+                            <span className="text-xs" style={{ color: paystackCheck.matches === false ? BERRY : SAGE }}>
+                              {paystackCheck.matches === false ? "Paystack mismatch — review required" : "Paystack verification matched"}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
-                  ))}
-              </div>
-            )}
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Items, shipment & delivery</h4>
+                      <div className="space-y-4">
+                        {(activeOrder.items || []).map((i) => {
+                          const tokenStatus = i.buyerConfirmedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Generated — secret hidden" : "Not recorded";
+                          return (
+                            <div key={i.id} className="p-3 rounded-lg border" style={{ borderColor: "#EFEBE0" }}>
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div>
+                                  <div className="font-medium" style={{ color: INK }}>{i.emoji} {i.title}</div>
+                                  <div className="text-xs mt-1" style={{ color: SLATE }}>Seller: {i.sellerName || i.ownerUsername || "Unknown"} · Qty {i.qty}</div>
+                                </div>
+                                <div className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(Number(i.price || 0) * Number(i.qty || 1), activeOrder.currency)}</div>
+                              </div>
+                              <div className="grid md:grid-cols-2 gap-2 text-xs mt-3" style={{ color: SLATE }}>
+                                <div><strong style={{ color: INK }}>Fulfillment:</strong> {FULFILLMENT_LABEL[i.fulfillmentStatus] || i.fulfillmentStatus}</div>
+                                <div><strong style={{ color: INK }}>Carrier:</strong> {i.carrier || "—"}</div>
+                                <div><strong style={{ color: INK }}>Tracking:</strong> {i.trackingNumber || "—"}</div>
+                                <div><strong style={{ color: INK }}>Shipped:</strong> {i.shippedAt ? new Date(i.shippedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Delivery token:</strong> {tokenStatus}</div>
+                                <div><strong style={{ color: INK }}>Confirmed/redeemed:</strong> {i.buyerConfirmedAt ? new Date(i.buyerConfirmedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Return:</strong> {i.returnStatus || "None"}</div>
+                                <div><strong style={{ color: INK }}>Return tracking:</strong> {i.returnTrackingNumber || "—"}</div>
+                              </div>
+                              {i.returnReason && <p className="text-xs mt-2" style={{ color: BERRY }}><strong>Return reason:</strong> {i.returnReason}{i.returnNote ? ` — ${i.returnNote}` : ""}</p>}
+                              <div className="mt-3 flex gap-2 flex-wrap">
+                                {i.proofOfDeliveryUrl && (
+                                  <a href={i.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
+                                    <img src={i.proofOfDeliveryUrl} alt="Proof of delivery" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                )}
+                                {(i.returnEvidenceUrls || []).map((url, idx) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer">
+                                    <img src={url} alt={`Return evidence ${idx + 1}`} className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: orderDispute ? BERRY : "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Dispute</h4>
+                        {orderDispute ? (
+                          <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                            <div><strong style={{ color: INK }}>Case:</strong> #{orderDispute.id}</div>
+                            <div><strong style={{ color: INK }}>Status:</strong> {orderDispute.status}</div>
+                            <div><strong style={{ color: INK }}>Reason:</strong> {orderDispute.reason || "—"}</div>
+                            {orderDispute.resolution && <div><strong style={{ color: INK }}>Decision:</strong> {orderDispute.resolution}</div>}
+                            <button type="button" onClick={() => { setActiveDisputeCaseId(orderDispute.id); setAdminTab("disputes"); }} className="text-xs font-medium underline mt-2" style={{ color: BERRY }}>Open dispute case</button>
+                          </div>
+                        ) : <p className="text-sm" style={{ color: SLATE }}>No dispute case for this order.</p>}
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Refund</h4>
+                        <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                          <div><strong style={{ color: INK }}>Status:</strong> {activeOrder.refundStatus || (activeOrder.paymentStatus === "refunded" ? "processed" : "No refund")}</div>
+                          {activeOrder.refundReason && <div><strong style={{ color: INK }}>Reason:</strong> {activeOrder.refundReason}</div>}
+                          {activeOrder.paystackRefundId && <div><strong style={{ color: INK }}>Paystack refund ID:</strong> {activeOrder.paystackRefundId}</div>}
+                          {activeOrder.refundRequestedAt && <div><strong style={{ color: INK }}>Requested:</strong> {new Date(activeOrder.refundRequestedAt).toLocaleString()}</div>}
+                          {activeOrder.refundedAt && <div><strong style={{ color: INK }}>Completed:</strong> {new Date(activeOrder.refundedAt).toLocaleString()}</div>}
+                          {activeOrder.refundFailureReason && <div style={{ color: BERRY }}><strong>Problem:</strong> {activeOrder.refundFailureReason}</div>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Lifecycle</h4>
+                      <div className="space-y-2">
+                        {lifecycle.map((step) => (
+                          <div key={step.label} className="flex items-center gap-3 text-sm">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: step.done ? SAGE : "#DDD8CC" }} />
+                            <span style={{ color: step.done ? INK : SLATE }}>{step.label}</span>
+                            <span className="text-xs" style={{ color: SLATE }}>{step.at ? new Date(step.at).toLocaleString() : step.done ? "Completed" : "Pending"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-2" style={{ color: INK }}>Seller withdrawal activity</h4>
+                      <p className="text-xs mb-3" style={{ color: SLATE }}>Withdrawals are seller-level records and are not directly tied to a single order, so these entries are shown only as context for sellers on this order.</p>
+                      {sellerWithdrawals.length === 0 ? <p className="text-sm" style={{ color: SLATE }}>No withdrawal activity recorded for this order's seller(s).</p> : (
+                        <div className="space-y-2">
+                          {sellerWithdrawals.slice(0, 8).map((w) => (
+                            <div key={w.id} className="flex justify-between gap-3 text-sm border-t pt-2" style={{ borderColor: "#EFEBE0", color: SLATE }}>
+                              <span>{w.sellerUsername} · {w.status} · {new Date(w.requestedAt).toLocaleString()}</span>
+                              <strong style={{ color: INK }}>{formatMoney(w.amount, activeOrder.currency)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {hasAdminPermission(currentMember, "finance") && (
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Admin money actions</h4>
+                        <p className="text-xs mb-3" style={{ color: SLATE }}>Use money actions only after reviewing the payment, delivery evidence, and any dispute or return above.</p>
+                        <div className="flex items-center gap-4 flex-wrap">
+                          {activeOrder.paymentStatus === "held" && !activeOrder.isDisputed && (
+                            <button onClick={() => releasePayout(activeOrder.id)} className="text-sm font-medium underline" style={{ color: SAGE }}>Release payout</button>
+                          )}
+                          {["held", "released"].includes(activeOrder.paymentStatus) && (
+                            <button onClick={() => refundOrder(activeOrder.id)} className="text-sm font-medium underline" style={{ color: BERRY }}>Refund buyer</button>
+                          )}
+                          {activeOrder.isDisputed && <span className="text-xs" style={{ color: BERRY }}>Payout release is blocked while the dispute is active.</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  <div className="flex gap-2 flex-wrap">
+                    <input value={adminOrderSearch} onChange={(e) => setAdminOrderSearch(e.target.value)}
+                      placeholder="Search order #, buyer, seller, item or Paystack ref"
+                      className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                      style={{ borderColor: "#DDD8CC", color: INK }} />
+                    <select value={adminOrderStatusFilter} onChange={(e) => setAdminOrderStatusFilter(e.target.value)}
+                      className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      <option value="all">All payments</option><option value="held">Held</option><option value="released">Released</option>
+                      <option value="refund_pending">Refund pending</option><option value="refunded">Refunded</option><option value="disputed">Disputed</option>
+                    </select>
+                  </div>
+                  {orders.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No orders placed yet.</p>}
+                  {orders
+                    .filter((o) => {
+                      if (adminOrderStatusFilter === "disputed") { if (!o.isDisputed) return false; }
+                      else if (adminOrderStatusFilter !== "all" && o.paymentStatus !== adminOrderStatusFilter) return false;
+                      const q = adminOrderSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      const sellers = (o.items || []).map((i) => `${i.sellerName || ""} ${i.ownerUsername || ""}`).join(" ");
+                      const items = (o.items || []).map((i) => i.title || "").join(" ");
+                      return [o.id, orderNumber(String(o.id)), o.buyerName, o.buyerUsername, o.paystackReference, sellers, items]
+                        .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                    })
+                    .slice().sort((a, b) => b.createdAt - a.createdAt)
+                    .map((o) => (
+                      <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                          <span className="text-sm font-medium flex items-center gap-2 flex-wrap" style={{ color: INK }}>
+                            {o.buyerName}
+                            {o.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                            {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
+                            {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
+                            {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                            {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
+                          </span>
+                          <span className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(o.total, o.currency)}</span>
+                        </div>
+                        <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
+                          <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{orderNumber(o.id)}</span>
+                          · {new Date(o.createdAt).toLocaleString()}
+                        </div>
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>{(o.items || []).map((i) => i.title).filter(Boolean).join(", ") || "No item details available"}</div>
+                        <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t" style={{ borderColor: "#EFEBE0" }}>
+                          <div className="text-xs" style={{ color: SLATE }}>
+                            Commission {formatMoney(Number(o.commissionAmount || 0), o.currency)} · Seller payable {formatMoney(Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0), o.currency)}
+                          </div>
+                          <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              );
+            })()}
 
             {adminTab === "settings" && (
               <div className="max-w-sm">
