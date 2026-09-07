@@ -3434,8 +3434,24 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't generate a temporary password");
         return;
       }
-      setAdminTempPasswordResult(data);
+      const result = {
+        ...data,
+        temporaryPassword: data.temporaryPassword || data.temporary_password || "",
+        username: data.username || staff.username,
+        expiresAt: data.expiresAt || data.expires_at || null,
+      };
+      setAdminTempPasswordResult(result);
       showToast("Temporary password generated — it expires in 10 minutes");
+      // Native fallback: this makes the password visible even if a CSS/layout
+      // issue prevents the styled modal from painting on a particular browser.
+      if (result.temporaryPassword) {
+        setTimeout(() => {
+          window.prompt(
+            `10-minute temporary password for @${result.username}. Copy it now — it will not be shown again after you close the password box.`,
+            result.temporaryPassword
+          );
+        }, 0);
+      }
       await fetchAdminStaff();
     } catch {
       showToast("Couldn't reach the server — try again");
@@ -7228,14 +7244,65 @@ export default function Stallyard() {
 
   return (
     <div className="min-h-screen w-full" style={{ backgroundColor: CANVAS, fontFamily: "'Work Sans', sans-serif" }}>
+      {adminTempPasswordResult && (
+        <div className="fixed inset-0 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.70)", zIndex: 99999 }}>
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border p-5" style={{ borderColor: MARIGOLD }}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xl font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  For <strong>@{adminTempPasswordResult.username}</strong>. Copy it now.
+                </p>
+              </div>
+              <button onClick={() => setAdminTempPasswordResult(null)} className="w-9 h-9 rounded-full border flex items-center justify-center shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }} aria-label="Close temporary password">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mt-5 p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+              <div className="text-xs font-medium mb-2" style={{ color: SLATE }}>TEMPORARY PASSWORD</div>
+              <code className="block text-xl sm:text-2xl font-semibold break-all select-all" style={{ color: INK }}>
+                {adminTempPasswordResult.temporaryPassword || "Password was not returned — generate a new one"}
+              </code>
+            </div>
+            {adminTempPasswordResult.expiresAt && (
+              <p className="text-sm mt-3" style={{ color: SLATE }}>
+                Expires at {new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString()}.
+              </p>
+            )}
+            <div className="flex gap-2 mt-5 flex-wrap">
+              <button onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
+                  showToast("Temporary password copied");
+                } catch {
+                  window.prompt("Copy the temporary password", adminTempPasswordResult.temporaryPassword || "");
+                }
+              }} className="px-4 py-2.5 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>
+                Copy password
+              </button>
+              <button onClick={() => setAdminTempPasswordResult(null)} className="px-4 py-2.5 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                I saved it — close
+              </button>
+            </div>
+            <p className="text-xs mt-4" style={{ color: BERRY }}>
+              This password is valid for 10 minutes and will only be shown during this recovery action.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
           <button
             onClick={() => {
+              if (isAdminHost()) {
+                setSelected(null);
+                openAdminPanel();
+                return;
+              }
               setSelected(null);
               setView("browse");
-              if (isAdminHost()) return;
             }}
             className="flex items-center gap-2"
             aria-label="Go to home"
@@ -7254,52 +7321,68 @@ export default function Stallyard() {
             </h1>
           </button>
           <nav className="flex items-center gap-1">
-            <NavButton id="browse" icon={LayoutGrid} label="Browse" />
-            <NavButton id="sell" icon={Plus} label="Sell" />
-            <NavButton id="dashboard" icon={Store} label="My Stall" />
-            {currentUser && <NavButton id="buyerHome" icon={PackageOpen} label="Dashboard" />}
-            {currentUser && <NavButton id="watchlist" icon={Heart} label="Watchlist" />}
-            {currentUser && <NavButton id="wallet" icon={Wallet} label="Wallet" />}
-            {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
-            <NavButton id="orders" icon={Receipt} label="Orders" />
-            <NavButton id="help" icon={HelpCircle} label="Help" />
-            {currentMember?.isAdmin && (
-              <NavButton id="admin" icon={Shield} label="Admin" onClick={openAdminPanel} />
-            )}
-            {currentUser && (
-              <button
-                onClick={() => setNotifPanelOpen((o) => !o)}
-                className="relative p-2 rounded-lg"
-                style={{ color: "#C9CCD3" }}
-                aria-label="Notifications"
-              >
-                <Bell size={18} />
-                {notifications.some((n) => !n.read) && (
+            {isAdminHost() ? (
+              <>
+                {currentMember?.isAdmin && (
                   <span
-                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
-                    style={{ backgroundColor: BERRY, color: "white" }}
+                    className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: "#2A3442", color: "#C9CCD3" }}
                   >
-                    {notifications.filter((n) => !n.read).length}
+                    <Shield size={16} />
+                    {ADMIN_ROLE_LABELS[currentMember.adminRole || "super_admin"] || "Admin"}
                   </span>
                 )}
-              </button>
-            )}
-            <button
-              onClick={() => setCartOpen(true)}
-              className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
-              style={{ color: "#C9CCD3" }}
-              aria-label="Open cart"
-            >
-              <ShoppingBag size={18} />
-              {cartCount > 0 && (
-                <span
-                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
-                  style={{ backgroundColor: BERRY, color: "white" }}
+              </>
+            ) : (
+              <>
+                <NavButton id="browse" icon={LayoutGrid} label="Browse" />
+                <NavButton id="sell" icon={Plus} label="Sell" />
+                <NavButton id="dashboard" icon={Store} label="My Stall" />
+                {currentUser && <NavButton id="buyerHome" icon={PackageOpen} label="Dashboard" />}
+                {currentUser && <NavButton id="watchlist" icon={Heart} label="Watchlist" />}
+                {currentUser && <NavButton id="wallet" icon={Wallet} label="Wallet" />}
+                {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
+                <NavButton id="orders" icon={Receipt} label="Orders" />
+                <NavButton id="help" icon={HelpCircle} label="Help" />
+                {currentMember?.isAdmin && (
+                  <NavButton id="admin" icon={Shield} label="Admin" onClick={openAdminPanel} />
+                )}
+                {currentUser && (
+                  <button
+                    onClick={() => setNotifPanelOpen((o) => !o)}
+                    className="relative p-2 rounded-lg"
+                    style={{ color: "#C9CCD3" }}
+                    aria-label="Notifications"
+                  >
+                    <Bell size={18} />
+                    {notifications.some((n) => !n.read) && (
+                      <span
+                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                        style={{ backgroundColor: BERRY, color: "white" }}
+                      >
+                        {notifications.filter((n) => !n.read).length}
+                      </span>
+                    )}
+                  </button>
+                )}
+                <button
+                  onClick={() => setCartOpen(true)}
+                  className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
+                  style={{ color: "#C9CCD3" }}
+                  aria-label="Open cart"
                 >
-                  {cartCount}
-                </span>
-              )}
-            </button>
+                  <ShoppingBag size={18} />
+                  {cartCount > 0 && (
+                    <span
+                      className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                      style={{ backgroundColor: BERRY, color: "white" }}
+                    >
+                      {cartCount}
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
             {currentUser ? (
               <div className="flex items-center gap-2 ml-1 pl-2" style={{ borderLeft: "1px solid #3A4351" }}>
                 <span className="text-sm hidden sm:inline" style={{ color: "#C9CCD3" }}>
@@ -13141,68 +13224,6 @@ export default function Stallyard() {
                       </div>
                     ))}
                   </div>
-
-                  {adminTempPasswordResult && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.58)" }}>
-                      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl border p-5" style={{ borderColor: MARIGOLD }}>
-                        <div className="flex items-start justify-between gap-4">
-                          <div>
-                            <div className="text-lg font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
-                            <p className="text-sm mt-1" style={{ color: SLATE }}>
-                              For <strong>@{adminTempPasswordResult.username}</strong>. This password is shown only now and expires at {adminTempPasswordResult.expiresAt ? new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString() : "in 10 minutes"}.
-                            </p>
-                          </div>
-                          <button
-                            onClick={() => setAdminTempPasswordResult(null)}
-                            className="w-9 h-9 rounded-full border flex items-center justify-center shrink-0"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                            aria-label="Close temporary password"
-                          >
-                            <X size={18} />
-                          </button>
-                        </div>
-
-                        <div className="mt-5 p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
-                          <div className="text-xs font-medium mb-2" style={{ color: SLATE }}>TEMPORARY PASSWORD</div>
-                          <code className="block text-xl sm:text-2xl font-semibold break-all select-all" style={{ color: INK }}>
-                            {adminTempPasswordResult.temporaryPassword}
-                          </code>
-                        </div>
-
-                        <div className="mt-4 p-3 rounded-xl text-sm" style={{ backgroundColor: MARIGOLD + "18", color: INK }}>
-                          Give this password directly to the sub-admin. They must still complete the authenticator code and email code, then Stallyard will force them to create a new permanent password.
-                        </div>
-
-                        <div className="flex gap-2 mt-5 flex-wrap">
-                          <button
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
-                                showToast("Temporary password copied");
-                              } catch {
-                                showToast("Copy didn't work — press and hold the password to copy it");
-                              }
-                            }}
-                            className="px-4 py-2.5 rounded-lg text-sm font-medium"
-                            style={{ backgroundColor: INK, color: "white" }}
-                          >
-                            Copy password
-                          </button>
-                          <button
-                            onClick={() => setAdminTempPasswordResult(null)}
-                            className="px-4 py-2.5 rounded-lg border text-sm font-medium"
-                            style={{ borderColor: "#DDD8CC", color: INK }}
-                          >
-                            I saved it — close
-                          </button>
-                        </div>
-
-                        <p className="text-xs mt-4" style={{ color: BERRY }}>
-                          Important: once you close this box, Stallyard will not show this temporary password again. Generate a new one if it is lost.
-                        </p>
-                      </div>
-                    </div>
-                  )}
 
                   <div className="flex gap-2 flex-wrap mb-4">
                     <input
