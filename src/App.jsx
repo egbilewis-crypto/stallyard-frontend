@@ -86,6 +86,7 @@ const ADMIN_HOSTNAME = "admin.stallyard.com";
 const ADMIN_URL = "https://admin.stallyard.com";
 const ADMIN_SESSION_IDLE_MS = 30 * 60 * 1000;
 const ADMIN_SESSION_STORAGE_KEY = "stallyard-admin-unlocked-until";
+const ADMIN_TAB_STORAGE_KEY = "stallyard-admin-selected-tab";
 
 function isAdminHost() {
   return typeof window !== "undefined" && window.location.hostname.toLowerCase() === ADMIN_HOSTNAME;
@@ -263,7 +264,8 @@ function isUnitedStates(country) {
 const ID_VERIFICATION_SALES_THRESHOLD = 10000;
 
 function orderNumber(id) {
-  return "STL-" + id.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase();
+  const safeId = String(id ?? "");
+  return "STL-" + safeId.replace(/[^a-z0-9]/gi, "").slice(-8).toUpperCase();
 }
 
 function formatTimeRemaining(endTime, now) {
@@ -975,7 +977,10 @@ export default function Stallyard() {
   const [adminLoginError, setAdminLoginError] = useState("");
   const [adminLoginSubmitting, setAdminLoginSubmitting] = useState(false);
   const [authReturnView, setAuthReturnView] = useState("browse");
-  const [adminTab, setAdminTab] = useState("overview");
+  const [adminTab, setAdminTab] = useState(() => {
+    if (typeof window === "undefined" || !isAdminHost()) return "overview";
+    return window.sessionStorage.getItem(ADMIN_TAB_STORAGE_KEY) || "overview";
+  });
   // Keep the admin unlock only for this browser tab/session. A normal page
   // refresh restores the remaining unlock window, but closing the tab/browser
   // clears sessionStorage and the admin must complete the 3-step login again.
@@ -987,6 +992,15 @@ export default function Stallyard() {
     window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
     return null;
   });
+  useEffect(() => {
+    if (typeof window === "undefined" || !isAdminHost()) return;
+    try {
+      window.sessionStorage.setItem(ADMIN_TAB_STORAGE_KEY, adminTab);
+    } catch {
+      // Non-critical: if sessionStorage is unavailable, the tab simply resets on refresh.
+    }
+  }, [adminTab]);
+
   const [adminReauthStep, setAdminReauthStep] = useState(null); // null | "password" | "code" | "code-email"
   const [adminReauthPassword, setAdminReauthPassword] = useState("");
   const [adminReauthCode, setAdminReauthCode] = useState("");
@@ -3841,7 +3855,16 @@ export default function Stallyard() {
         setReconciliationError(data.error || "Couldn't load reconciliation data");
         return;
       }
-      setReconciliationData(data);
+      setReconciliationData({
+        ...data,
+        byCurrency: Array.isArray(data?.byCurrency) ? data.byCurrency : [],
+        records: Array.isArray(data?.records) ? data.records.map((r) => ({
+          ...r,
+          flags: Array.isArray(r?.flags) ? r.flags : [],
+        })) : [],
+        withdrawals: data?.withdrawals && typeof data.withdrawals === "object" ? data.withdrawals : {},
+        alerts: data?.alerts && typeof data.alerts === "object" ? data.alerts : {},
+      });
     } catch {
       setReconciliationError("Couldn't reach the server — try again");
     } finally {
