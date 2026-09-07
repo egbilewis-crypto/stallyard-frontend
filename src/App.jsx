@@ -1198,6 +1198,12 @@ export default function Stallyard() {
   const [sellerPerformanceSearch, setSellerPerformanceSearch] = useState("");
   const [sellerPerformanceFilter, setSellerPerformanceFilter] = useState("all");
   const [expandedSellerPerformanceId, setExpandedSellerPerformanceId] = useState(null);
+  const [buyerRiskData, setBuyerRiskData] = useState(null);
+  const [buyerRiskLoading, setBuyerRiskLoading] = useState(false);
+  const [buyerRiskError, setBuyerRiskError] = useState("");
+  const [buyerRiskSearch, setBuyerRiskSearch] = useState("");
+  const [buyerRiskFilter, setBuyerRiskFilter] = useState("all");
+  const [expandedBuyerRiskId, setExpandedBuyerRiskId] = useState(null);
   const [paystackChecks, setPaystackChecks] = useState({});
   const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -3849,6 +3855,24 @@ export default function Stallyard() {
       setSellerPerformanceError("Couldn't reach the server — try again");
     } finally {
       setSellerPerformanceLoading(false);
+    }
+  };
+
+  const fetchBuyerRisk = async () => {
+    setBuyerRiskLoading(true);
+    setBuyerRiskError("");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/buyer-risk`);
+      const data = await res.json();
+      if (!res.ok) {
+        setBuyerRiskError(data.error || "Couldn't load buyer risk data");
+        return;
+      }
+      setBuyerRiskData(data);
+    } catch {
+      setBuyerRiskError("Couldn't reach the server — try again");
+    } finally {
+      setBuyerRiskLoading(false);
     }
   };
 
@@ -11903,6 +11927,7 @@ export default function Stallyard() {
                 { id: "content", label: "Content", requireSuperAdmin: true },
                 { id: "reconciliation", label: "Reconciliation", permission: "finance" },
                 { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
+                { id: "buyerRisk", label: "Buyer risk", requireSuperAdmin: true },
                 {
                   id: "refunds",
                   label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
@@ -11932,6 +11957,7 @@ export default function Stallyard() {
                     if (t.id === "auditLog") fetchAuditLog();
                     if (t.id === "reconciliation") fetchReconciliation();
                     if (t.id === "sellerPerformance") fetchSellerPerformance();
+                    if (t.id === "buyerRisk") fetchBuyerRisk();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
@@ -12753,6 +12779,128 @@ export default function Stallyard() {
                                       <div><strong style={{ color: INK }}>Last login:</strong> {seller.lastLoginAt ? new Date(seller.lastLoginAt).toLocaleString() : "No login recorded"}</div>
                                       <div><strong style={{ color: INK }}>Joined:</strong> {seller.joinedAt ? new Date(seller.joinedAt).toLocaleDateString() : "—"}</div>
                                       <div><strong style={{ color: INK }}>Verification:</strong> {seller.verificationStatus || "none"}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {adminTab === "buyerRisk" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Buyer risk & fraud review</h3>
+                    <p className="text-xs mt-1 max-w-2xl" style={{ color: SLATE }}>
+                      Operational risk signals for human review only. Stallyard does not automatically suspend or punish a buyer from this score.
+                    </p>
+                  </div>
+                  <button onClick={fetchBuyerRisk} disabled={buyerRiskLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {buyerRiskLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+
+                {buyerRiskError && <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: "#FDECEC", color: BERRY }}>{buyerRiskError}</div>}
+
+                {buyerRiskData && (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: "Buyers", value: buyerRiskData.summary?.buyerCount || 0 },
+                        { label: "High risk", value: buyerRiskData.summary?.highRisk || 0 },
+                        { label: "Watch", value: buyerRiskData.summary?.watch || 0 },
+                        { label: "Open reports", value: buyerRiskData.summary?.openReports || 0 },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs" style={{ color: SLATE }}>{label}</div>
+                          <div className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 flex-wrap items-center">
+                      {[['all','All'],['low','Low'],['watch','Watch'],['high','High']].map(([key,label]) => (
+                        <button key={key} onClick={() => setBuyerRiskFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                          style={{ borderColor: buyerRiskFilter === key ? INK : "#DDD8CC", backgroundColor: buyerRiskFilter === key ? INK : "white", color: buyerRiskFilter === key ? "white" : SLATE }}>
+                          {label}
+                        </button>
+                      ))}
+                      <input value={buyerRiskSearch} onChange={(e) => setBuyerRiskSearch(e.target.value)}
+                        placeholder="Search buyer, email, phone..." className="px-3 py-2 rounded-lg border text-sm flex-1 min-w-[220px] outline-none"
+                        style={{ borderColor: "#DDD8CC", color: INK }} />
+                    </div>
+
+                    <div className="space-y-3">
+                      {(buyerRiskData.buyers || [])
+                        .filter((buyer) => {
+                          if (buyerRiskFilter !== 'all' && buyer.riskBand !== buyerRiskFilter) return false;
+                          const q = buyerRiskSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return [buyer.username, buyer.displayName, buyer.email, buyer.phone].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                        })
+                        .map((buyer) => {
+                          const expanded = expandedBuyerRiskId === buyer.userId;
+                          const bandColor = buyer.riskBand === 'high' ? BERRY : buyer.riskBand === 'watch' ? MARIGOLD : SAGE;
+                          return (
+                            <div key={buyer.userId} className="rounded-xl border bg-white overflow-hidden" style={{ borderColor: bandColor + '70' }}>
+                              <button onClick={() => setExpandedBuyerRiskId(expanded ? null : buyer.userId)} className="w-full text-left p-4">
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                  <div>
+                                    <div className="font-semibold" style={{ color: INK }}>{buyer.displayName || buyer.username}</div>
+                                    <div className="text-xs mt-0.5" style={{ color: SLATE }}>@{buyer.username} · {buyer.email || 'No email'}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Tag color={bandColor}>{buyer.riskBand === 'high' ? 'High risk' : buyer.riskBand === 'watch' ? 'Watch' : 'Low risk'}</Tag>
+                                    <span className="text-sm font-semibold" style={{ color: INK }}>{buyer.riskScore}/100 risk</span>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3">
+                                  {[
+                                    ['Orders', buyer.orderCount],
+                                    ['Returns', `${buyer.returnRate.toFixed(1)}%`],
+                                    ['Disputes', `${buyer.disputeRate.toFixed(1)}%`],
+                                    ['Refunds', buyer.refundCount],
+                                    ['Failed pays', buyer.failedPaymentCount],
+                                  ].map(([label,value]) => (
+                                    <div key={label} className="p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                      <div className="text-[11px]" style={{ color: SLATE }}>{label}</div>
+                                      <div className="text-sm font-semibold" style={{ color: INK }}>{value}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </button>
+                              {expanded && (
+                                <div className="px-4 pb-4 border-t" style={{ borderColor: "#EEE9DE" }}>
+                                  <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                      <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Why this buyer is flagged</div>
+                                      {buyer.riskSignals.length ? (
+                                        <div className="space-y-1.5">
+                                          {buyer.riskSignals.map((signal, idx) => (
+                                            <div key={idx} className="text-xs flex items-start gap-2" style={{ color: signal.severity === 'high' ? BERRY : SLATE }}><span>•</span><span>{signal.message}</span></div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="text-xs" style={{ color: SAGE }}>No meaningful buyer-risk signals detected.</p>}
+                                    </div>
+                                    <div className="text-xs space-y-1.5" style={{ color: SLATE }}>
+                                      <div><strong style={{ color: INK }}>Completed purchases:</strong> {buyer.completedItems}</div>
+                                      <div><strong style={{ color: INK }}>Cancelled items:</strong> {buyer.cancelledItems}</div>
+                                      <div><strong style={{ color: INK }}>Return requests:</strong> {buyer.returnCount}</div>
+                                      <div><strong style={{ color: INK }}>Disputes:</strong> {buyer.disputeCount} ({buyer.openDisputes} open)</div>
+                                      <div><strong style={{ color: INK }}>Refunds:</strong> {buyer.refundCount}</div>
+                                      <div><strong style={{ color: INK }}>Suspicious activity reports:</strong> {buyer.reportCount} ({buyer.openReportCount} open)</div>
+                                      <div><strong style={{ color: INK }}>Failed payments:</strong> {buyer.failedPaymentCount}</div>
+                                      <div><strong style={{ color: INK }}>Last login:</strong> {buyer.lastLoginAt ? new Date(buyer.lastLoginAt).toLocaleString() : 'No login recorded'}</div>
+                                      <div><strong style={{ color: INK }}>Verification:</strong> email {buyer.isEmailVerified ? '✓' : '—'} · phone {buyer.isPhoneVerified ? '✓' : '—'}</div>
+                                      <div><strong style={{ color: INK }}>Account:</strong> {buyer.isSuspended ? 'Suspended' : 'Active'}</div>
                                     </div>
                                   </div>
                                 </div>
