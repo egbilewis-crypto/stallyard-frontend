@@ -1228,6 +1228,11 @@ export default function Stallyard() {
   const [activeAdminOrderId, setActiveAdminOrderId] = useState(null);
   const [adminDisputeSearch, setAdminDisputeSearch] = useState("");
   const [adminDisputeStatusFilter, setAdminDisputeStatusFilter] = useState("all");
+  const [adminNotesTarget, setAdminNotesTarget] = useState(null); // {entityType, entityId, label}
+  const [adminNotesList, setAdminNotesList] = useState([]);
+  const [adminNoteDraft, setAdminNoteDraft] = useState("");
+  const [adminNotesLoading, setAdminNotesLoading] = useState(false);
+  const [adminNoteSaving, setAdminNoteSaving] = useState(false);
   const [paystackChecks, setPaystackChecks] = useState({});
   const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -3680,6 +3685,56 @@ export default function Stallyard() {
       showToast("Couldn't reach the server — try again");
     } finally {
       setSendingTicketMessage(false);
+    }
+  };
+
+  const openAdminNotes = async (entityType, entityId, label) => {
+    if (!entityId) {
+      showToast("This record is missing its server ID");
+      return;
+    }
+    setAdminNotesTarget({ entityType, entityId, label });
+    setAdminNoteDraft("");
+    setAdminNotesList([]);
+    setAdminNotesLoading(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin-notes/${entityType}/${entityId}`);
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't load internal notes");
+        setAdminNotesTarget(null);
+        return;
+      }
+      setAdminNotesList(data.notes || []);
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      setAdminNotesTarget(null);
+    } finally {
+      setAdminNotesLoading(false);
+    }
+  };
+
+  const addAdminNote = async () => {
+    if (!adminNotesTarget || !adminNoteDraft.trim()) return;
+    setAdminNoteSaving(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin-notes/${adminNotesTarget.entityType}/${adminNotesTarget.entityId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: adminNoteDraft.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error || "Couldn't save internal note");
+        return;
+      }
+      setAdminNotesList((notes) => [data.note, ...notes]);
+      setAdminNoteDraft("");
+      showToast("Internal note saved");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setAdminNoteSaving(false);
     }
   };
 
@@ -12354,6 +12409,13 @@ export default function Stallyard() {
                         {l.isFeatured ? "Unfeature" : "Feature"}
                       </button>
                       <button
+                        onClick={() => openAdminNotes("listing", l.id, `Listing: ${l.title}`)}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Internal notes
+                      </button>
+                      <button
                         onClick={() => startEdit(l, true)}
                         className="text-xs font-medium underline"
                         style={{ color: SLATE }}
@@ -12574,6 +12636,15 @@ export default function Stallyard() {
                             style={{ color: INK }}
                           >
                             {docsOpen ? "Hide documents" : `View documents${m.licensePhotos?.length ? ` (${m.licensePhotos.length} photo${m.licensePhotos.length > 1 ? "s" : ""})` : ""}`}
+                          </button>
+                        )}
+                        {(hasAdminPermission(currentMember, "user_management") || hasAdminPermission(currentMember, "seller_verification")) && (
+                          <button
+                            onClick={() => openAdminNotes("member", m.backendId, `Member: ${m.displayName} (@${m.username})`)}
+                            className="text-xs font-medium underline mt-1 ml-3"
+                            style={{ color: SLATE }}
+                          >
+                            Internal notes
                           </button>
                         )}
                       </div>
@@ -13272,7 +13343,10 @@ export default function Stallyard() {
                           <div className="text-xs" style={{ color: SLATE }}>
                             Commission {formatMoney(Number(o.commissionAmount || 0), o.currency)} · Seller payable {formatMoney(Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0), o.currency)}
                           </div>
-                          <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button type="button" onClick={() => openAdminNotes("order", o.id, `Order ${orderNumber(o.id)}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
+                            <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -14125,6 +14199,9 @@ export default function Stallyard() {
                       </button>
                       {expanded && (
                         <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
+                          <div className="flex justify-end mt-3">
+                            <button type="button" onClick={() => openAdminNotes("dispute", d.id, `Dispute case #${d.id}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
+                          </div>
                           <div className="grid md:grid-cols-2 gap-3 mt-4">
                             <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
                               <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Buyer statement</div>
@@ -14453,33 +14530,79 @@ export default function Stallyard() {
                   .slice()
                   .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
                   .map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => {
-                        openTicketThread(t.id);
-                        setView("help");
-                      }}
-                      className="w-full text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
-                      style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate" style={{ color: INK }}>
-                          {t.subject}
+                    <div key={t.id} className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          openTicketThread(t.id);
+                          setView("help");
+                        }}
+                        className="flex-1 text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
+                        style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium truncate" style={{ color: INK }}>{t.subject}</div>
+                          <div className="text-xs" style={{ color: SLATE }}>{t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}</div>
                         </div>
-                        <div className="text-xs" style={{ color: SLATE }}>
-                          {t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}
-                        </div>
-                      </div>
-                      <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>
-                        {TICKET_STATUS_LABEL[t.status] || t.status}
-                      </Tag>
-                    </button>
+                        <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>{TICKET_STATUS_LABEL[t.status] || t.status}</Tag>
+                      </button>
+                      <button type="button" onClick={() => openAdminNotes("support_ticket", t.id, `Support ticket #${t.id}: ${t.subject}`)} className="px-3 py-2 rounded-lg text-xs font-medium border bg-white shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }}>Notes</button>
+                    </div>
                   ))}
               </div>
             )}
           </div>
         )}
       </main>
+
+      {adminNotesTarget && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.58)" }}>
+          <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl overflow-hidden">
+            <div className="p-5 border-b flex items-start justify-between gap-3" style={{ borderColor: "#EFEBE0" }}>
+              <div>
+                <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Private admin notes</h3>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>{adminNotesTarget.label}</p>
+                <p className="text-xs mt-1" style={{ color: BERRY }}>Visible only to authorized Stallyard admins. Users never see these notes.</p>
+              </div>
+              <button type="button" onClick={() => setAdminNotesTarget(null)} aria-label="Close internal notes"><X size={20} style={{ color: SLATE }} /></button>
+            </div>
+            <div className="p-5 max-h-[55vh] overflow-y-auto">
+              {adminNotesLoading ? (
+                <p className="text-sm" style={{ color: SLATE }}>Loading notes…</p>
+              ) : adminNotesList.length === 0 ? (
+                <p className="text-sm" style={{ color: SLATE }}>No internal notes yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {adminNotesList.map((note) => (
+                    <div key={note.id} className="p-3 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                      <p className="text-sm whitespace-pre-wrap" style={{ color: INK }}>{note.body}</p>
+                      <p className="text-xs mt-2" style={{ color: SLATE }}>
+                        {note.admin_display_name || note.admin_username || "Admin"} · {new Date(note.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t" style={{ borderColor: "#EFEBE0" }}>
+              <textarea
+                value={adminNoteDraft}
+                onChange={(e) => setAdminNoteDraft(e.target.value)}
+                maxLength={4000}
+                rows={3}
+                placeholder="Add a private note for other admins…"
+                className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                style={{ borderColor: "#DDD8CC", color: INK }}
+              />
+              <div className="flex items-center justify-between gap-3 mt-2">
+                <span className="text-xs" style={{ color: SLATE }}>{adminNoteDraft.length}/4000 · Notes are append-only for accountability.</span>
+                <button type="button" onClick={addAdminNote} disabled={adminNoteSaving || !adminNoteDraft.trim()} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                  {adminNoteSaving ? "Saving…" : "Add note"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <footer style={{ backgroundColor: INK }} className="mt-16">
         <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 sm:grid-cols-4 gap-8">
