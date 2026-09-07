@@ -2364,6 +2364,11 @@ export default function Stallyard() {
   useEffect(() => {
     if (view !== "admin") return;
     const interval = setInterval(() => {
+      // A not-yet-unlocked admin session is expected while the mandatory
+      // password -> authenticator -> email re-auth flow is in progress.
+      // Never restart that flow from the timeout watcher, otherwise Step 2
+      // or Step 3 gets reset back to the password screen every 15 seconds.
+      if (adminReauthStep) return;
       if (!adminUnlockedUntil || Date.now() > adminUnlockedUntil) {
         setAdminUnlockedUntil(null);
         showToast("Your admin session locked — re-enter your password to continue");
@@ -2371,7 +2376,7 @@ export default function Stallyard() {
       }
     }, 15000);
     return () => clearInterval(interval);
-  }, [view, adminUnlockedUntil]);
+  }, [view, adminUnlockedUntil, adminReauthStep]);
 
   // Admin is isolated on admin.stallyard.com. The old hidden-path approach
   // has been retired: the public marketplace never renders the admin panel.
@@ -3019,9 +3024,12 @@ export default function Stallyard() {
     // Never show the buyer/seller marketplace underneath the admin gate.
     setView("admin");
     if (adminUnlockedUntil && Date.now() < adminUnlockedUntil) {
-      setView("admin");
       return;
     }
+    // If password/authenticator/email verification is already underway,
+    // do not restart it. This protects Step 2 and Step 3 from background
+    // effects or repeated clicks resetting the modal to the password step.
+    if (adminReauthStep) return;
     setAdminReauthStep("password");
     setAdminReauthPassword("");
     setAdminReauthCode("");
