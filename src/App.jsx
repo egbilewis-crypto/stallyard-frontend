@@ -4070,19 +4070,19 @@ export default function Stallyard() {
   };
 
   const patchOrderOnBackend = async (orderId, action, body) => {
-    if (typeof orderId !== "number") return true; // legacy local-only order, nothing to sync
+    if (typeof orderId !== "number") return { legacy: true }; // legacy local-only order, nothing to sync
     try {
       const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/${action}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
         showToast(data.error || "Couldn't save that change — try again");
         return false;
       }
-      return true;
+      return data;
     } catch {
       showToast("Couldn't reach the server — try again");
       return false;
@@ -4168,12 +4168,29 @@ export default function Stallyard() {
   };
 
   const releasePayout = async (orderId) => {
-    const ok = await patchOrderOnBackend(orderId, "release");
-    if (!ok) return;
+    const data = await patchOrderOnBackend(orderId, "release");
+    if (!data) return;
     await persistOrders(
-      orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "released" } : o))
+      orders.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              paymentStatus: "released",
+              isDisputed: data.order ? !!data.order.is_disputed : false,
+            }
+          : o
+      )
     );
-    showToast("Payout marked as released");
+    if (data.resolvedDispute?.id) {
+      setAdminDisputes((cases) =>
+        cases.map((d) =>
+          d.id === data.resolvedDispute.id ? { ...d, ...data.resolvedDispute } : d
+        )
+      );
+      showToast("Seller payment released and dispute resolved together");
+    } else {
+      showToast("Payout marked as released");
+    }
   };
 
   const fetchReconciliation = async () => {
@@ -14681,7 +14698,7 @@ export default function Stallyard() {
                   <div>
                     <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Dispute cases</h3>
                     <p className="text-xs" style={{ color: SLATE }}>
-                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. Resolving a case removes the dispute payment lock; refunds and manual releases remain separate money actions.
+                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. The dispute payment lock now stays on until the chosen financial outcome is actually completed. Paystack refunds resolve only after Paystack confirms processing; seller-release cases resolve in the same transaction as the release.
                     </p>
                   </div>
                   <div className="flex gap-2 text-xs">
@@ -14813,7 +14830,14 @@ export default function Stallyard() {
                               >
                                 <option value="open">Open</option>
                                 <option value="in_review">In review</option>
-                                <option value="resolved">Resolved</option>
+                                <option
+                                  value="resolved"
+                                  disabled={
+                                    (resolutionValue === "buyer_refund" && o?.paymentStatus !== "refunded") ||
+                                    (resolutionValue === "seller_release" && o?.paymentStatus !== "released") ||
+                                    resolutionValue === "partial_refund"
+                                  }
+                                >Resolved</option>
                               </select>
                             </label>
                             <label className="text-xs font-medium" style={{ color: INK }}>
@@ -14867,8 +14891,14 @@ export default function Stallyard() {
                             {o && ["held", "released"].includes(o.paymentStatus) && resolutionValue === "buyer_refund" && (
                               <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Send Paystack refund</button>
                             )}
-                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue === "resolved" && (
-                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment</button>
+                            {o && o.paymentStatus === "refund_pending" && resolutionValue === "buyer_refund" && (
+                              <span className="text-xs" style={{ color: MARIGOLD }}>Waiting for Paystack to confirm the refund. The dispute remains locked.</span>
+                            )}
+                            {resolutionValue === "partial_refund" && (
+                              <span className="text-xs" style={{ color: BERRY }}>Partial refund cannot be finalized yet; the case must stay open/in review until the real partial-refund payment flow is added.</span>
+                            )}
+                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue !== "resolved" && (
+                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment & resolve case</button>
                             )}
                             {d.resolved_at && <span className="text-xs" style={{ color: SLATE }}>Resolved {new Date(d.resolved_at).toLocaleString()}{d.resolved_by_name ? ` by ${d.resolved_by_name}` : ""}</span>}
                           </div>
