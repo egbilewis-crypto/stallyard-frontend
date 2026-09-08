@@ -1311,6 +1311,13 @@ export default function Stallyard() {
   const [orders, setOrders] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
+  const [homepageAds, setHomepageAds] = useState([
+    { slot: 1, imageUrl: "", linkUrl: "" },
+    { slot: 2, imageUrl: "", linkUrl: "" },
+    { slot: 3, imageUrl: "", linkUrl: "" },
+  ]);
+  const [homepageAdUploading, setHomepageAdUploading] = useState(null);
+  const [homepageAdSaving, setHomepageAdSaving] = useState(null);
   const [policies, setPolicies] = useState({
     seller_rules: "", prohibited_items: "", fees: "",
     payment_rules: "", shipping_rules: "", returns_disputes: "",
@@ -1621,6 +1628,19 @@ export default function Stallyard() {
         }
       } catch {
         // keep default settings
+      }
+      try {
+        const adsRes = await backendFetch(`${BACKEND_URL}/homepage-ads`);
+        if (adsRes.ok) {
+          const raw = await adsRes.json();
+          const returned = new Map((raw.ads || []).map((ad) => [Number(ad.slot), ad]));
+          setHomepageAds([1, 2, 3].map((slot) => {
+            const ad = returned.get(slot) || {};
+            return { slot, imageUrl: ad.image_url || "", linkUrl: ad.link_url || "" };
+          }));
+        }
+      } catch {
+        // Keep the three empty promotional slots if the API is temporarily unavailable.
       }
       try {
         const contentRes = await backendFetch(`${BACKEND_URL}/content`);
@@ -5884,6 +5904,55 @@ export default function Stallyard() {
     }
   };
 
+
+  const handleHomepageAdImageSelect = async (e, slot) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file) return;
+    setHomepageAdUploading(slot);
+    try {
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
+      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url } : ad));
+      showToast(`Ad ${slot} image uploaded — click Save ad to publish it`);
+    } catch (err) {
+      showToast(err.message || "Couldn't upload that ad image");
+    } finally {
+      setHomepageAdUploading(null);
+    }
+  };
+
+  const saveHomepageAd = async (slot) => {
+    const ad = homepageAds.find((item) => item.slot === slot);
+    if (!ad) return;
+    setHomepageAdSaving(slot);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/homepage-ads/${slot}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: ad.imageUrl || "", linkUrl: ad.linkUrl || "" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Couldn't save ad");
+      setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
+        slot,
+        imageUrl: data.ad?.image_url || "",
+        linkUrl: data.ad?.link_url || "",
+      } : item));
+      showToast(`Homepage ad ${slot} saved`);
+    } catch (err) {
+      showToast(err.message || "Couldn't save homepage ad");
+    } finally {
+      setHomepageAdSaving(null);
+    }
+  };
+
   const handleAuthImageSelect = async (e) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
@@ -7924,30 +7993,46 @@ export default function Stallyard() {
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="text-center py-10 mb-8 rounded-2xl" style={{ backgroundColor: "#EFE7D6" }}>
-                <h2
-                  className="text-3xl sm:text-4xl mb-2 px-4"
-                  style={{ fontFamily: "'DM Serif Display', serif", color: INK }}
-                >
-                  Find something good today
-                </h2>
-                <p className="text-sm mb-6" style={{ color: SLATE }}>
-                  Handmade, vintage, and everyday finds from real sellers.
-                </p>
-                <div className="relative max-w-xl mx-auto px-4">
-                  <Search
-                    size={20}
-                    className="absolute left-8 top-1/2 -translate-y-1/2"
-                    style={{ color: SLATE }}
-                  />
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search the stalls..."
-                    className="w-full pl-12 pr-4 py-3.5 rounded-full border outline-none text-base shadow-sm"
-                    style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}
-                  />
-                </div>
+              <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] lg:grid-rows-2 gap-4">
+                {homepageAds.map((ad) => {
+                  const isPrimary = ad.slot === 1;
+                  const card = (
+                    <div
+                      className={`relative overflow-hidden rounded-2xl border bg-white ${isPrimary ? "lg:row-span-2" : ""}`}
+                      style={{
+                        borderColor: "#DDD8CC",
+                        minHeight: isPrimary ? "360px" : "172px",
+                      }}
+                    >
+                      {ad.imageUrl ? (
+                        <img
+                          src={ad.imageUrl}
+                          alt={`Stallyard featured promotion ${ad.slot}`}
+                          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
+                        />
+                      ) : (
+                        <div
+                          className="absolute inset-0 flex items-center justify-center"
+                          style={{ background: ad.slot === 1 ? "#EFE7D6" : ad.slot === 2 ? "#E7EFE8" : "#F4E5E2" }}
+                        >
+                          <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                  return ad.linkUrl ? (
+                    <a
+                      key={ad.slot}
+                      href={ad.linkUrl}
+                      className={isPrimary ? "lg:row-span-2 block" : "block"}
+                      aria-label={`Open featured promotion ${ad.slot}`}
+                    >
+                      {card}
+                    </a>
+                  ) : (
+                    <div key={ad.slot} className={isPrimary ? "lg:row-span-2" : ""}>{card}</div>
+                  );
+                })}
               </div>
             )}
 
@@ -12757,6 +12842,7 @@ export default function Stallyard() {
                 },
                 { id: "settings", label: "Settings", permission: "finance_or_content" },
                 { id: "content", label: "Content", requireSuperAdmin: true },
+                { id: "homepageAds", label: "Homepage ads", requireSuperAdmin: true },
                 { id: "reconciliation", label: "Reconciliation", permission: "finance" },
                 { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
                 { id: "buyerRisk", label: "Buyer risk", requireSuperAdmin: true },
@@ -12809,6 +12895,88 @@ export default function Stallyard() {
                 </button>
               ))}
             </div>
+
+
+            {adminTab === "homepageAds" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <div className="mb-5">
+                  <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                    Homepage ads
+                  </h3>
+                  <p className="text-sm mt-1" style={{ color: SLATE }}>
+                    Control the three clickable promotional images shown at the top of the Stallyard homepage. Ad 1 is the large feature; Ads 2 and 3 are the two smaller cards.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  {homepageAds.map((ad) => (
+                    <div key={ad.slot} className="rounded-xl border bg-white p-4" style={{ borderColor: "#DDD8CC" }}>
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div>
+                          <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
+                          <p className="text-xs" style={{ color: SLATE }}>{ad.slot === 1 ? "Large feature" : "Small feature"}</p>
+                        </div>
+                        {ad.imageUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
+                            className="text-xs underline"
+                            style={{ color: BERRY }}
+                          >
+                            Remove image
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "4 / 3" : "16 / 9" }}>
+                        {ad.imageUrl ? (
+                          <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
+                            <ImageIcon size={32} />
+                          </div>
+                        )}
+                      </div>
+
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
+                      <label
+                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                        style={{ borderColor: "#DDD8CC", color: SLATE }}
+                      >
+                        <ImageIcon size={16} />
+                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={homepageAdUploading === ad.slot}
+                          onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
+                        />
+                      </label>
+
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
+                      <input
+                        value={ad.linkUrl}
+                        onChange={(e) => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, linkUrl: e.target.value } : item))}
+                        placeholder="https://example.com or /category/..."
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => saveHomepageAd(ad.slot)}
+                        disabled={homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
+                        className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        {homepageAdSaving === ad.slot ? "Saving…" : "Save ad"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {adminTab === "overview" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div>
