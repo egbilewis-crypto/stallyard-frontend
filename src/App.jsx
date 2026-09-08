@@ -61,11 +61,31 @@ if (typeof window !== "undefined" && !window.storage) {
 }
 
 const CATEGORIES = [
-  "Handmade", "Home", "Vintage", "Electronics", "Clothing", "Books", "Art",
-  "Jewelry", "Collectibles", "Bags & Purses", "Craft Supplies & Tools", "Paper & Party Supplies",
-  "Weddings", "Accessories", "Movies & Music", "Kids & Baby", "Toys & Games",
-  "Bath & Beauty", "Shoes", "Pet Supplies", "Gifts",
-  "Outdoors", "Auto Parts", "Groceries", "Other",
+  "Accessories",
+  "Art",
+  "Auto Parts",
+  "Bags & Purses",
+  "Bath & Beauty",
+  "Books",
+  "Clothing",
+  "Collectibles",
+  "Craft Supplies & Tools",
+  "Electronics",
+  "Gifts",
+  "Groceries",
+  "Handmade",
+  "Home",
+  "Jewelry",
+  "Kids & Baby",
+  "Movies & Music",
+  "Outdoors",
+  "Paper & Party Supplies",
+  "Pet Supplies",
+  "Shoes",
+  "Toys & Games",
+  "Vintage",
+  "Weddings",
+  "Other",
 ];
 
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
@@ -1136,11 +1156,30 @@ export default function Stallyard() {
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [categoriesMenuOpen, setCategoriesMenuOpen] = useState(false);
+  const categoriesMenuRef = useRef(null);
   const [conditionFilter, setConditionFilter] = useState("All");
   const [sortBy, setSortBy] = useState("featured");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  useEffect(() => {
+    if (!categoriesMenuOpen) return;
+    const handleOutsideClick = (event) => {
+      if (categoriesMenuRef.current && !categoriesMenuRef.current.contains(event.target)) {
+        setCategoriesMenuOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setCategoriesMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [categoriesMenuOpen]);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
@@ -7671,6 +7710,82 @@ export default function Stallyard() {
             )}
           </nav>
         </div>
+        {!isAdminHost() && (
+          <div className="max-w-6xl mx-auto px-4 pb-3 flex items-center gap-3">
+            <div className="relative shrink-0" ref={categoriesMenuRef}>
+              <button
+                type="button"
+                onClick={() => setCategoriesMenuOpen((open) => !open)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
+                style={{ backgroundColor: categoriesMenuOpen ? "#2A3442" : "transparent", color: "#F4F1EA" }}
+                aria-haspopup="menu"
+                aria-expanded={categoriesMenuOpen}
+              >
+                <span aria-hidden="true" style={{ fontSize: "17px", lineHeight: 1 }}>☰</span>
+                Categories
+              </button>
+              {categoriesMenuOpen && (
+                <div
+                  className="absolute left-0 top-full mt-2 w-[330px] max-w-[88vw] bg-white rounded-xl shadow-2xl border overflow-hidden"
+                  style={{ borderColor: "#DDD8CC", zIndex: 80 }}
+                  role="menu"
+                  aria-label="Marketplace categories"
+                >
+                  <div className="max-h-[560px] overflow-y-auto py-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCategoryFilter("All");
+                        setView("browse");
+                        setCategoriesMenuOpen(false);
+                      }}
+                      className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
+                      style={{ color: INK, backgroundColor: categoryFilter === "All" ? "#F6F3EC" : "white" }}
+                      role="menuitem"
+                    >
+                      <span className="font-medium">All Categories</span>
+                      {categoryFilter === "All" && <span style={{ color: MARIGOLD }}>●</span>}
+                    </button>
+                    {CATEGORIES.map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => {
+                          setCategoryFilter(category);
+                          setView("browse");
+                          setSelected(null);
+                          setCategoriesMenuOpen(false);
+                        }}
+                        className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
+                        style={{ color: INK, backgroundColor: categoryFilter === category ? "#F6F3EC" : "white" }}
+                        role="menuitem"
+                      >
+                        <span>{category}</span>
+                        {categoryFilter === category && <span style={{ color: MARIGOLD }}>●</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="relative flex-1 min-w-0">
+              <Search
+                size={18}
+                className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
+                style={{ color: SLATE }}
+              />
+              <input
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); if (view !== "browse") setView("browse"); }}
+                onFocus={() => setCategoriesMenuOpen(false)}
+                placeholder="Search for anything"
+                className="w-full pl-11 pr-4 py-2.5 rounded-full border-2 outline-none text-sm bg-white"
+                style={{ borderColor: "#DDD8CC", color: INK }}
+                aria-label="Search marketplace"
+              />
+            </div>
+          </div>
+        )}
       </header>
 
       {notifPanelOpen && currentUser && (
@@ -7836,35 +7951,25 @@ export default function Stallyard() {
               </div>
             )}
 
-            <div className="mb-10 -mx-1 overflow-x-auto">
-              <div className="flex gap-4 px-1 pb-2" style={{ minWidth: "max-content" }}>
-                {CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setCategoryFilter(categoryFilter === c ? "All" : c)}
-                    className="flex flex-col items-center gap-2 shrink-0"
-                    style={{ width: "84px" }}
-                  >
-                    <div
-                      className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-transform"
-                      style={{
-                        backgroundColor: categoryFilter === c ? CATEGORY_COLOR[c] : "white",
-                        border: `2px solid ${categoryFilter === c ? CATEGORY_COLOR[c] : "#DDD8CC"}`,
-                        transform: categoryFilter === c ? "scale(1.05)" : "scale(1)",
-                      }}
-                    >
-                      {CATEGORY_ICON[c]}
-                    </div>
-                    <span
-                      className="text-xs text-center leading-tight"
-                      style={{ color: categoryFilter === c ? INK : SLATE, fontWeight: categoryFilter === c ? 600 : 500 }}
-                    >
-                      {c}
-                    </span>
-                  </button>
-                ))}
+            {categoryFilter !== "All" && (
+              <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3" style={{ borderColor: "#DDD8CC" }}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-2xl" aria-hidden="true">{CATEGORY_ICON[categoryFilter] || "📦"}</span>
+                  <div className="min-w-0">
+                    <p className="text-xs" style={{ color: SLATE }}>Browsing category</p>
+                    <p className="font-semibold truncate" style={{ color: INK }}>{categoryFilter}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilter("All")}
+                  className="text-sm font-medium underline shrink-0"
+                  style={{ color: SLATE }}
+                >
+                  View all
+                </button>
               </div>
-            </div>
+            )}
 
             {isHomeState && featuredPicks.length > 0 && (
               <div className="mb-10">
