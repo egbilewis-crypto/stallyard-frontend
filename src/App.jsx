@@ -1089,7 +1089,7 @@ export default function Stallyard() {
     firstName: "",
     lastName: "",
     officeLocation: "",
-    country: "",
+    country: "Nigeria",
     licenseNumber: "",
     idType: "Passport",
     idCountry: "",
@@ -1172,7 +1172,7 @@ export default function Stallyard() {
     city: "",
     state: "",
     zip: "",
-    country: "",
+    country: "Nigeria",
   });
   const [saveShippingAddress, setSaveShippingAddress] = useState(true);
   const [shippingError, setShippingError] = useState("");
@@ -1801,7 +1801,7 @@ export default function Stallyard() {
     const saved = members.find((m) => m.username === currentUser)?.shippingAddress;
     const isBlank = !shippingForm.street && !shippingForm.city && !shippingForm.zip;
     if (saved && isBlank) {
-      setShippingForm(saved);
+      setShippingForm({ ...saved, country: "Nigeria" });
     } else if (!shippingForm.fullName && currentMember) {
       setShippingForm((f) => ({ ...f, fullName: currentMember.displayName }));
     }
@@ -2061,7 +2061,7 @@ export default function Stallyard() {
       firstName: "",
       lastName: "",
       officeLocation: "",
-      country: "",
+      country: "Nigeria",
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
@@ -2711,7 +2711,7 @@ export default function Stallyard() {
     const amt = Math.round(Number(amount) * 100) / 100;
     const minNext = Math.round((Number(listing.price) + 1) * 100) / 100;
     if (!amt || amt < minNext) {
-      showToast(`Bid must be at least $${minNext.toFixed(2)}`);
+      showToast(`Bid must be at least ${formatMoney(minNext, "NGN")}`);
       return;
     }
     if (listing.auctionEndTime && listing.auctionEndTime <= Date.now()) {
@@ -2734,7 +2734,7 @@ export default function Stallyard() {
       )
     );
     setBidAmount("");
-    showToast(`Bid placed — $${amt.toFixed(2)}`);
+    showToast(`Bid placed — ${formatMoney(amt, "NGN")}`);
   };
 
   const updateCartQty = (id, qty) => {
@@ -3715,7 +3715,7 @@ export default function Stallyard() {
         t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
       )
     );
-    showToast(`Offer of $${amt.toFixed(2)} sent`);
+    showToast(`Offer of ${formatMoney(amt, "NGN")} sent`);
   };
 
   const respondToOffer = async (threadId, messageId, status) => {
@@ -5264,7 +5264,7 @@ export default function Stallyard() {
       return;
     }
     if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, ZIP, and country to ship this order.");
+      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
       return;
     }
     setShippingError("");
@@ -5335,7 +5335,7 @@ export default function Stallyard() {
   const payWithSavedCard = async (cardId) => {
     if (cartItems.length === 0) return;
     if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, ZIP, and country to ship this order.");
+      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
       return;
     }
     setShippingError("");
@@ -5407,7 +5407,7 @@ export default function Stallyard() {
   const [addressError, setAddressError] = useState("");
 
   const startNewAddress = () => {
-    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "" });
+    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "Nigeria" });
     setAddressError("");
   };
 
@@ -5419,14 +5419,14 @@ export default function Stallyard() {
       city: a.city || "",
       state: a.state || "",
       zip: a.zip || "",
-      country: a.country || "",
+      country: "Nigeria",
     });
     setAddressError("");
   };
 
   const saveAddressDraft = async () => {
     if (!addressDraft.street.trim() || !addressDraft.city.trim() || !addressDraft.country.trim()) {
-      setAddressError("Street, city, and country are required.");
+      setAddressError("Street and city are required for a Nigerian delivery address.");
       return;
     }
     setAddressSaving(true);
@@ -6486,7 +6486,7 @@ export default function Stallyard() {
     ...mySales.map((o) => {
       const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
       const total = myItems.reduce((s, i) => s + Number(i.price) * (i.qty || 1), 0);
-      return { id: `sale-${o.id}`, message: `New sale from ${o.buyerName} — $${total.toFixed(2)}`, at: o.createdAt };
+      return { id: `sale-${o.id}`, message: `New sale from ${o.buyerName} — ${formatMoney(total, "NGN")}`, at: o.createdAt };
     }),
     ...mySales
       .filter((o) => o.isDisputed)
@@ -6496,7 +6496,7 @@ export default function Stallyard() {
       .map((i) => ({ id: `return-${i.id}`, message: `Return requested — ${i.title}`, at: i.returnRequestedAt || Date.now() })),
     ...myWithdrawals
       .filter((w) => w.status === "paid")
-      .map((w) => ({ id: `payout-${w.id}`, message: `Payout of $${Number(w.amount).toFixed(2)} completed`, at: w.requestedAt })),
+      .map((w) => ({ id: `payout-${w.id}`, message: `Payout of ${formatMoney(Number(w.amount), "NGN")} completed`, at: w.requestedAt })),
   ]
     .sort((a, b) => b.at - a.at)
     .slice(0, 5);
@@ -9809,7 +9809,7 @@ export default function Stallyard() {
                               {otherName}
                             </div>
                             <div className="text-xs truncate" style={{ color: SLATE }}>
-                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: $${lastMsg.amount.toFixed(2)}` : lastMsg.text) : ""}
+                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text) : ""}
                             </div>
                           </div>
                         </button>
@@ -11345,19 +11345,17 @@ export default function Stallyard() {
                         <input
                           value={addressDraft.zip}
                           onChange={(e) => setAddressDraft({ ...addressDraft, zip: e.target.value })}
-                          placeholder="ZIP"
+                          placeholder="Postal code"
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <select
-                          value={addressDraft.country}
-                          onChange={(e) => setAddressDraft({ ...addressDraft, country: e.target.value })}
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
-                          style={{ borderColor: "#DDD8CC", color: addressDraft.country ? INK : SLATE }}
-                        >
-                          <option value="">Country</option>
-                          <option value="Nigeria">Nigeria</option>
-                        </select>
+                        <input
+                          value="Nigeria"
+                          readOnly
+                          aria-label="Country"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-gray-50"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        />
                       </div>
                       {addressError && (
                         <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
@@ -11856,7 +11854,7 @@ export default function Stallyard() {
                             <div className="text-xs truncate" style={{ color: SLATE }}>
                               {t.listingTitle}
                               {lastMsg
-                                ? ` — ${lastMsg.type === "offer" ? `Offer: $${lastMsg.amount.toFixed(2)}` : lastMsg.text}`
+                                ? ` — ${lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text}`
                                 : ""}
                             </div>
                           </div>
@@ -16338,7 +16336,7 @@ export default function Stallyard() {
                                 city: a.city,
                                 state: a.state,
                                 zip: a.zip,
-                                country: a.country,
+                                country: "Nigeria",
                               })
                             }
                             className="text-xs px-2 py-1 rounded-full border"
@@ -16375,7 +16373,7 @@ export default function Stallyard() {
                         <input
                           value={shippingForm.state}
                           onChange={(e) => setShippingForm({ ...shippingForm, state: e.target.value })}
-                          placeholder="State/Province"
+                          placeholder="State"
                           className="w-28 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
@@ -16384,19 +16382,17 @@ export default function Stallyard() {
                         <input
                           value={shippingForm.zip}
                           onChange={(e) => setShippingForm({ ...shippingForm, zip: e.target.value })}
-                          placeholder="ZIP / postal code"
+                          placeholder="Postal code"
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <select
-                          value={shippingForm.country}
-                          onChange={(e) => setShippingForm({ ...shippingForm, country: e.target.value })}
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
-                          style={{ borderColor: "#DDD8CC", color: shippingForm.country ? INK : SLATE }}
-                        >
-                          <option value="">Country</option>
-                          <option value="Nigeria">Nigeria</option>
-                        </select>
+                        <input
+                          value="Nigeria"
+                          readOnly
+                          aria-label="Country"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-gray-50"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        />
                       </div>
                       <label className="flex items-center gap-2 text-xs pt-1" style={{ color: SLATE }}>
                         <input
