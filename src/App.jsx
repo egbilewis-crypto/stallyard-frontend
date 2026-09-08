@@ -8,7 +8,19 @@ const BERRY = "#C1443C";
 const SAGE = "#6B8F71";
 const SLATE = "#667085";
 
-const BACKEND_URL = "https://stallyard-backend-production.up.railway.app";
+const BACKEND_URL =
+  typeof window !== "undefined" && /(^|\.)stallyard\.com$/i.test(window.location.hostname)
+    ? "https://api.stallyard.com"
+    : "https://stallyard-backend-production.up.railway.app";
+
+// All Stallyard API requests include credentials so the backend can use a
+// Secure, HttpOnly session cookie. Authentication tokens are never stored in
+// localStorage or exposed to frontend JavaScript.
+const backendFetch = (url, options = {}) =>
+  fetch(url, {
+    ...options,
+    credentials: "include",
+  });
 
 // `window.storage` may not exist in every browser environment. On the real
 // deployed site it doesn't exist, so we back it with the browser's own
@@ -1396,7 +1408,7 @@ export default function Stallyard() {
         const localListings = res ? JSON.parse(res.value) : [];
         setListings(localListings);
         try {
-          const listingsRes = await fetch(`${BACKEND_URL}/listings`);
+          const listingsRes = await backendFetch(`${BACKEND_URL}/listings`);
           if (listingsRes.ok) {
             const { listings: rows } = await listingsRes.json();
             const merged = rows.map((row) =>
@@ -1411,13 +1423,26 @@ export default function Stallyard() {
       } catch {
         setListings([]);
       }
-      let bootstrapToken = null;
+      let bootstrapAuthenticated = false;
       try {
-        const tokenRes = await window.storage.get("stallyard-auth-token", false);
-        if (tokenRes) setAuthToken(tokenRes.value);
-        bootstrapToken = tokenRes?.value || null;
+        const sessionRes = await backendFetch(`${BACKEND_URL}/session/me`);
+        if (sessionRes.ok) {
+          const sessionData = await sessionRes.json();
+          bootstrapAuthenticated = true;
+          setAuthToken("cookie-session");
+          if (sessionData.user?.username) {
+            setCurrentUser(sessionData.user.username);
+            await window.storage.set("stallyard-session", sessionData.user.username, false);
+          }
+        } else {
+          setAuthToken(null);
+          await window.storage.delete("stallyard-session", false);
+          // Remove any token left behind by pre-cookie versions of Stallyard.
+          await window.storage.delete("stallyard-auth-token", false);
+        }
       } catch {
-        // no saved token — user will need to log in again for anything protected
+        // If the backend cannot be reached, do not trust an old browser token.
+        setAuthToken(null);
       }
       let resolvedMembers = [];
       try {
@@ -1426,9 +1451,7 @@ export default function Stallyard() {
         resolvedMembers = localMembers;
         setMembers(localMembers);
         try {
-          const usersRes = await fetch(`${BACKEND_URL}/users`, {
-            headers: bootstrapToken ? { Authorization: `Bearer ${bootstrapToken}` } : {},
-          });
+          const usersRes = await backendFetch(`${BACKEND_URL}/users`);
           if (usersRes.ok) {
             const { users } = await usersRes.json();
             const merged = users.map((u) =>
@@ -1445,12 +1468,10 @@ export default function Stallyard() {
         setMembers([]);
       }
       setMembersLoaded(true);
-      try {
-        const sessionRes = await window.storage.get("stallyard-session", false);
-        if (sessionRes) setCurrentUser(sessionRes.value);
-      } catch {
-        // not logged in yet
-      }
+      // Authentication is server-authoritative. The HttpOnly cookie/session
+      // check above decides whether the browser is signed in; a stale local
+      // username can never restore access by itself.
+      if (!bootstrapAuthenticated) setCurrentUser(null);
       setSessionChecked(true);
       try {
         const cartRes = await window.storage.get("stallyard-cart", false);
@@ -1478,7 +1499,7 @@ export default function Stallyard() {
       }
       setOrders([]);
       try {
-        const settingsRes = await fetch(`${BACKEND_URL}/settings`);
+        const settingsRes = await backendFetch(`${BACKEND_URL}/settings`);
         if (settingsRes.ok) {
           const raw = await settingsRes.json();
           setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "" });
@@ -1487,7 +1508,7 @@ export default function Stallyard() {
         // keep default settings
       }
       try {
-        const contentRes = await fetch(`${BACKEND_URL}/content`);
+        const contentRes = await backendFetch(`${BACKEND_URL}/content`);
         if (contentRes.ok) {
           const raw = await contentRes.json();
           setContent({
@@ -1513,7 +1534,7 @@ export default function Stallyard() {
         // keep default empty content
       }
       try {
-        const policiesRes = await fetch(`${BACKEND_URL}/policies`);
+        const policiesRes = await backendFetch(`${BACKEND_URL}/policies`);
         if (policiesRes.ok) {
           const { policies: rows } = await policiesRes.json();
           const next = {};
@@ -1528,7 +1549,7 @@ export default function Stallyard() {
       setWithdrawals([]);
       setThreads([]); // loaded fresh once we know who's logged in, see the effect below
       try {
-        const reviewsRes = await fetch(`${BACKEND_URL}/reviews`);
+        const reviewsRes = await backendFetch(`${BACKEND_URL}/reviews`);
         if (reviewsRes.ok) {
           const { reviews: rows } = await reviewsRes.json();
           setReviews(rows.map((r) => backendReviewToFrontend(r, resolvedMembers)));
@@ -1537,7 +1558,7 @@ export default function Stallyard() {
         // couldn't reach backend for reviews — leave empty
       }
       try {
-        const followsRes = await fetch(`${BACKEND_URL}/follows`);
+        const followsRes = await backendFetch(`${BACKEND_URL}/follows`);
         if (followsRes.ok) {
           const { follows: rows } = await followsRes.json();
           setFollows(
@@ -1916,27 +1937,21 @@ export default function Stallyard() {
     }
   };
 
-  const saveAuthToken = async (token) => {
-    setAuthToken(token);
+  const saveAuthToken = async (authenticated) => {
+    // This is only an in-memory signed-in marker used by existing UI guards.
+    // The real JWT lives exclusively in the backend's HttpOnly cookie.
+    setAuthToken(authenticated ? "cookie-session" : null);
     try {
-      if (token) await window.storage.set("stallyard-auth-token", token, false);
-      else await window.storage.delete("stallyard-auth-token", false);
+      // Delete legacy JWT storage from versions released before Fix #14.
+      await window.storage.delete("stallyard-auth-token", false);
     } catch {
-      // token save failed silently; user stays logged in for this visit only
+      // best-effort cleanup only
     }
   };
 
-  // fetch wrapper that attaches the signed-in user's token — use this for any
-  // request that requires being logged in (creating/editing listings, admin
-  // actions, follows). Plain fetch is still fine for public GET endpoints.
-  const authFetch = (url, options = {}) =>
-    fetch(url, {
-      ...options,
-      headers: {
-        ...(options.headers || {}),
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-    });
+  // Protected requests rely on the Secure HttpOnly cookie. No bearer token is
+  // readable by or attached from frontend JavaScript.
+  const authFetch = (url, options = {}) => backendFetch(url, options);
 
   const register = async () => {
     setAuthError("");
@@ -1960,7 +1975,7 @@ export default function Stallyard() {
     };
     let sendRes;
     try {
-      sendRes = await fetch(`${BACKEND_URL}/email-verify/send`, {
+      sendRes = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: signupDraft.email }),
@@ -1983,7 +1998,7 @@ export default function Stallyard() {
     if (!pendingEmailVerification) return;
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/email-verify/send`, {
+      res = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: pendingEmailVerification.signupDraft.email }),
@@ -2006,7 +2021,7 @@ export default function Stallyard() {
     const draft = pendingEmailVerification.signupDraft;
     let checkRes;
     try {
-      checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
+      checkRes = await backendFetch(`${BACKEND_URL}/email-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: draft.email, code: emailCodeInput.trim() }),
@@ -2026,7 +2041,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/signup`, {
+      res = await backendFetch(`${BACKEND_URL}/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2047,7 +2062,7 @@ export default function Stallyard() {
     }
     const newMember = backendUserToMember(data.user);
     await persistMembers([...members, newMember]);
-    await saveAuthToken(data.token);
+    await saveAuthToken(true);
     await setSession(newMember.username);
     setPendingEmailVerification(null);
     setEmailCodeInput("");
@@ -2151,7 +2166,7 @@ export default function Stallyard() {
     const username = authForm.username.trim().toLowerCase();
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/login`, {
+      res = await backendFetch(`${BACKEND_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: authForm.password }),
@@ -2182,7 +2197,7 @@ export default function Stallyard() {
     const endpoint = pendingTwoFactor.method === "totp-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}${endpoint}`, {
+      res = await backendFetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: pendingTwoFactor.userId, code: twoFactorCodeInput.trim() }),
@@ -2216,7 +2231,7 @@ export default function Stallyard() {
       ? members.map((m) => (m.username === username ? member : m))
       : [...members, member];
     await persistMembers(nextMembers);
-    await saveAuthToken(data.token);
+    await saveAuthToken(true);
     await setSession(username);
     setAuthForm({
       username: "",
@@ -2254,7 +2269,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
+      res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username }),
@@ -2276,7 +2291,7 @@ export default function Stallyard() {
     if (!pendingPasswordReset) return;
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
+      res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: pendingPasswordReset.username }),
@@ -2298,7 +2313,7 @@ export default function Stallyard() {
     if (!pendingPasswordReset) return;
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/password-reset/verify-code`, {
+      res = await backendFetch(`${BACKEND_URL}/password-reset/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: pendingPasswordReset.username, code: resetCodeInput.trim() }),
@@ -2327,7 +2342,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await fetch(`${BACKEND_URL}/password-reset/confirm`, {
+      res = await backendFetch(`${BACKEND_URL}/password-reset/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2354,6 +2369,11 @@ export default function Stallyard() {
   };
 
   const logout = async () => {
+    try {
+      await backendFetch(`${BACKEND_URL}/logout`, { method: "POST" });
+    } catch {
+      // Clear local UI state even if the network is temporarily unavailable.
+    }
     setAdminUnlockedUntil(null);
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
@@ -3242,7 +3262,7 @@ export default function Stallyard() {
     setAdminLoginSubmitting(true);
     setAdminLoginError("");
     try {
-      const res = await fetch(`${BACKEND_URL}/admin/login`, {
+      const res = await backendFetch(`${BACKEND_URL}/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: adminLoginForm.password }),
@@ -3284,7 +3304,7 @@ export default function Stallyard() {
     setAdminLoginError("");
     const endpoint = adminLoginStep === "code-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     try {
-      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+      const res = await backendFetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: adminLoginPendingUserId, code: adminLoginCode.trim() }),
@@ -3332,7 +3352,7 @@ export default function Stallyard() {
     setAdminLoginSubmitting(true);
     setAdminLoginError("");
     try {
-      const res = await fetch(`${BACKEND_URL}/admin/temporary-password/complete`, {
+      const res = await backendFetch(`${BACKEND_URL}/admin/temporary-password/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3619,7 +3639,7 @@ export default function Stallyard() {
   const fetchSellerSalesCount = async (username) => {
     if (sellerSalesCounts[username] !== undefined) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/sellers/${username}/completed-sales-count`);
+      const res = await backendFetch(`${BACKEND_URL}/sellers/${username}/completed-sales-count`);
       if (!res.ok) return;
       const { count } = await res.json();
       setSellerSalesCounts((c) => ({ ...c, [username]: count }));
@@ -4943,7 +4963,7 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't do that — try again");
         return;
       }
-      if (data.token) await saveAuthToken(data.token);
+      if (data.token) await saveAuthToken(true);
       showToast("Signed out of all other devices");
     } catch {
       showToast("Couldn't reach the server — try again");
@@ -5006,7 +5026,7 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't change your password — try again");
         return;
       }
-      if (data.token) await saveAuthToken(data.token);
+      if (data.token) await saveAuthToken(true);
       setChangePasswordForm({ current: "", next: "", confirm: "" });
       showToast("Password changed — you've been signed out of other devices");
     } catch {
@@ -5092,7 +5112,7 @@ export default function Stallyard() {
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/email-verify/send`, {
+      const res = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: currentMember.email }),
@@ -5117,7 +5137,7 @@ export default function Stallyard() {
     }
     setVerifyingAccountEmail(true);
     try {
-      const checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
+      const checkRes = await backendFetch(`${BACKEND_URL}/email-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: currentMember.email, code: accountEmailCodeInput.trim() }),
@@ -5151,7 +5171,7 @@ export default function Stallyard() {
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/phone-verify/send`, {
+      const res = await backendFetch(`${BACKEND_URL}/phone-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: accountPhoneInput.trim() }),
@@ -5176,7 +5196,7 @@ export default function Stallyard() {
     }
     setVerifyingAccountPhone(true);
     try {
-      const checkRes = await fetch(`${BACKEND_URL}/phone-verify/check`, {
+      const checkRes = await backendFetch(`${BACKEND_URL}/phone-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }),
