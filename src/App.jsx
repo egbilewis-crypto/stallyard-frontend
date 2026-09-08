@@ -60,7 +60,13 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 
-const CATEGORIES = ["Handmade", "Home", "Vintage", "Electronics", "Clothing", "Books", "Art", "Outdoors", "Auto Parts", "Groceries", "Other"];
+const CATEGORIES = [
+  "Handmade", "Home", "Vintage", "Electronics", "Clothing", "Books", "Art",
+  "Jewelry", "Collectibles", "Bags & Purses", "Craft Supplies & Tools", "Paper & Party Supplies",
+  "Weddings", "Accessories", "Movies & Music", "Kids & Baby", "Toys & Games",
+  "Bath & Beauty", "Shoes", "Pet Supplies", "Gifts",
+  "Outdoors", "Auto Parts", "Groceries", "Other",
+];
 
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
 
@@ -179,6 +185,20 @@ const CATEGORY_COLOR = {
   Clothing: "#A6567A",
   Books: "#4B5D67",
   Art: "#B8862E",
+  Jewelry: "#9A6A85",
+  Collectibles: "#806B55",
+  "Bags & Purses": "#8B6757",
+  "Craft Supplies & Tools": "#7C6A9A",
+  "Paper & Party Supplies": "#A66F5C",
+  Weddings: "#9A7B87",
+  Accessories: "#657A8A",
+  "Movies & Music": "#625D8A",
+  "Kids & Baby": "#7E8F72",
+  "Toys & Games": "#8A7650",
+  "Bath & Beauty": "#8A6D83",
+  Shoes: "#6E625A",
+  "Pet Supplies": "#5F7D70",
+  Gifts: "#9A624D",
   Outdoors: "#3E7A4E",
   "Auto Parts": "#4A4E58",
   Groceries: "#7A9E5C",
@@ -193,6 +213,20 @@ const CATEGORY_ICON = {
   Clothing: "👕",
   Books: "📚",
   Art: "🎨",
+  Jewelry: "💍",
+  Collectibles: "🏺",
+  "Bags & Purses": "👜",
+  "Craft Supplies & Tools": "✂️",
+  "Paper & Party Supplies": "🎉",
+  Weddings: "💒",
+  Accessories: "⌚",
+  "Movies & Music": "🎵",
+  "Kids & Baby": "👶",
+  "Toys & Games": "🧸",
+  "Bath & Beauty": "🧴",
+  Shoes: "👟",
+  "Pet Supplies": "🐾",
+  Gifts: "🎁",
   Outdoors: "🥾",
   "Auto Parts": "🚗",
   Groceries: "🛒",
