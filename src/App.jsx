@@ -2407,6 +2407,55 @@ export default function Stallyard() {
     }
   }, [currentMember?.isAdmin, currentMember?.adminRole, adminTab]);
 
+  // The public /listings endpoint intentionally hides drafts/rejected/removed
+  // records. Once a normal marketplace session is restored, refetch with the
+  // token so the signed-in seller still receives their own non-public listings.
+  useEffect(() => {
+    if (!authToken || !currentMember || currentMember.isAdmin || isAdminHost()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/listings`);
+        if (!res.ok) return;
+        const { listings: rows } = await res.json();
+        if (cancelled || !Array.isArray(rows)) return;
+        const merged = rows.map((row) =>
+          backendListingToFrontend(row, listings.find((l) => l.id === row.id))
+        );
+        setListings(merged);
+        await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
+      } catch {
+        // Keep the public/local listing copy if the authenticated refresh fails.
+      }
+    })();
+    return () => { cancelled = true; };
+    // Only rerun when the signed-in identity/token changes, not whenever listings changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken, currentMember?.backendId, currentMember?.isAdmin]);
+
+  // Listing moderators need every status plus moderation metadata, so the admin
+  // dashboard uses a dedicated protected endpoint rather than the public feed.
+  useEffect(() => {
+    if (!authToken || !currentMember?.isAdmin || adminTab !== "listings") return;
+    if (!hasAdminPermission(currentMember, "listing_moderation")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/admin/listings`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (!cancelled) showToast(data.error || "Couldn't load moderation listings");
+          return;
+        }
+        if (cancelled || !Array.isArray(data.listings)) return;
+        setListings(data.listings.map((row) => backendListingToFrontend(row)));
+      } catch {
+        if (!cancelled) showToast("Couldn't load moderation listings");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authToken, currentMember?.isAdmin, currentMember?.adminRole, adminTab, showToast]);
+
   useEffect(() => {
     if (typeof window === "undefined" || !isAdminHost()) return;
     if (adminUnlockedUntil && adminUnlockedUntil > Date.now()) {
