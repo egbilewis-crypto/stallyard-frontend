@@ -305,7 +305,7 @@ function backendListingToFrontend(row, existing) {
     flaggedImages: row.flagged_images || [],
     listingType: row.listing_type || "fixed",
     currency: row.currency || "NGN",
-    status: row.status || "pending",
+    status: row.status === "approved" ? "active" : (row.status || "pending"),
     isFeatured: !!row.is_featured,
     auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).getTime() : null,
     bidHistory: row.bid_history || [],
@@ -5811,7 +5811,7 @@ export default function Stallyard() {
         // Once a seller is approved, everything they list — including
         // auctions — goes live immediately without a separate review queue.
         const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
-        statusPatch = { status: autoApproved ? "approved" : "pending" };
+        statusPatch = { status: autoApproved ? "active" : "pending" };
       }
       const patch = {
         ...form,
@@ -5847,7 +5847,7 @@ export default function Stallyard() {
       // Once a seller is approved, everything they list — including
       // auctions — goes live immediately without a separate review queue.
       const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
-      const status = isDraft ? "draft" : autoApproved ? "approved" : "pending";
+      const status = isDraft ? "draft" : autoApproved ? "active" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
         : null;
@@ -5969,8 +5969,8 @@ export default function Stallyard() {
   };
 
   const resumeListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
     showToast("Listing is live again");
   };
 
@@ -5981,8 +5981,8 @@ export default function Stallyard() {
   };
 
   const markListingInStock = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
     showToast("Marked back in stock");
   };
 
@@ -6048,8 +6048,8 @@ export default function Stallyard() {
   };
 
   const adminApproveListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
     showToast("Listing approved");
   };
 
@@ -6109,8 +6109,8 @@ export default function Stallyard() {
   };
 
   const adminRestoreListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
     showToast("Listing restored");
   };
 
@@ -6612,7 +6612,7 @@ export default function Stallyard() {
       const q = search.trim().toLowerCase();
       const matchesSearch =
         !q || l.title.toLowerCase().includes(q) || l.description.toLowerCase().includes(q);
-      const isVisible = l.status === "approved";
+      const isVisible = l.status === "active";
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
@@ -6631,7 +6631,7 @@ export default function Stallyard() {
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
     });
 
-  const visibleListings = listings.filter((l) => l.status === "approved");
+  const visibleListings = listings.filter((l) => l.status === "active");
   const featuredPicks = visibleListings.filter((l) => l.isFeatured).slice(0, 10);
   const newArrivals = visibleListings
     .slice()
@@ -9131,7 +9131,7 @@ export default function Stallyard() {
                             >
                               {quickEditId === l.id ? "Close" : "Quick edit"}
                             </button>
-                            {l.status === "approved" && (
+                            {l.status === "active" && (
                               <button
                                 onClick={() => pauseListing(l.id)}
                                 className="text-xs font-medium underline"
@@ -9149,7 +9149,7 @@ export default function Stallyard() {
                                 Resume
                               </button>
                             )}
-                            {l.status === "approved" && (
+                            {l.status === "active" && (
                               <button
                                 onClick={() => markListingSoldOut(l.id)}
                                 className="text-xs font-medium underline"
@@ -10498,7 +10498,7 @@ export default function Stallyard() {
                 );
               }
               const sellerListings = listings.filter(
-                (l) => l.ownerUsername === viewingSeller && l.status === "approved"
+                (l) => l.ownerUsername === viewingSeller && l.status === "active"
               );
               const sellerRating = getSellerRating(viewingSeller);
               const reputation = getSellerReputation(viewingSeller);
@@ -12634,7 +12634,7 @@ export default function Stallyard() {
                       { label: "Total users", value: members.length, color: INK, tab: "members" },
                       {
                         label: "Approved listings",
-                        value: listings.filter((l) => l.status === "approved").length,
+                        value: listings.filter((l) => l.status === "active").length,
                         color: INK,
                         tab: "listings",
                       },
@@ -12838,7 +12838,7 @@ export default function Stallyard() {
                     style={{ borderColor: "#DDD8CC", color: INK }} />
                   <select value={adminListingStatusFilter} onChange={(e) => setAdminListingStatusFilter(e.target.value)}
                     className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Active</option>
+                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="active">Active</option>
                     <option value="draft">Draft</option><option value="paused">Paused</option><option value="sold">Sold</option>
                     <option value="rejected">Rejected</option><option value="removed">Taken down</option>
                   </select>
