@@ -133,12 +133,11 @@ const LISTING_MANAGE_TABS = [
 ];
 
 const CURRENCIES = {
-  USD: { symbol: "$", label: "US Dollar (USD)" },
   NGN: { symbol: "₦", label: "Nigerian Naira (NGN)" },
 };
 
 function formatMoney(amount, currency) {
-  const symbol = CURRENCIES[currency]?.symbol || "$";
+  const symbol = CURRENCIES.NGN.symbol;
   const num = Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${symbol}${num}`;
 }
@@ -254,14 +253,14 @@ function isValidPhone(phone) {
   return trimmed.startsWith("+") && digits.length >= 8 && digits.length <= 15;
 }
 
-const US_COUNTRY_ALIASES = ["united states", "united states of america", "usa", "us", "u.s.", "u.s.a."];
-function isUnitedStates(country) {
-  return US_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
+const NIGERIA_COUNTRY_ALIASES = ["nigeria", "ng"];
+function isNigeria(country) {
+  return NIGERIA_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
 }
 
-// US-based members skip ID verification at signup, but once a seller's
-// cumulative USD sales cross this, they must add ID to keep listing.
-const ID_VERIFICATION_SALES_THRESHOLD = 10000;
+// Stallyard is Nigeria-only. Seller verification is handled through the
+// normal seller-approval flow rather than a country/currency sales threshold.
+const needsLegacySalesThresholdVerification = false;
 
 function orderNumber(id) {
   const safeId = String(id ?? "");
@@ -305,7 +304,7 @@ function backendListingToFrontend(row, existing) {
     hiddenImageUrls: row.hidden_image_urls || [],
     flaggedImages: row.flagged_images || [],
     listingType: row.listing_type || "fixed",
-    currency: row.currency || "USD",
+    currency: row.currency || "NGN",
     status: row.status || "pending",
     isFeatured: !!row.is_featured,
     auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).getTime() : null,
@@ -318,7 +317,6 @@ function backendListingToFrontend(row, existing) {
     shippingMethods: row.shipping_methods || [],
     returnPolicy: row.return_policy || "",
     vin: row.vin || "",
-    shipsToUsa: !!row.ships_to_usa,
     sellerName: row.seller_name,
     ownerUsername: row.owner_username,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
@@ -384,7 +382,7 @@ function backendOrderToFrontend(row) {
     buyerUsername: row.buyer_username,
     buyerName: row.buyer_name || row.buyer_username,
     shippingAddress: row.shipping_address || {},
-    currency: row.currency || "USD",
+    currency: row.currency || "NGN",
     subtotal: Number(row.subtotal) || 0,
     shippingTotal: Number(row.shipping_total) || 0,
     total: Number(row.total) || 0,
@@ -469,7 +467,7 @@ function backendUserToMember(user, existing) {
     idCountry: user.id_country || existing?.idCountry || "",
     licensePhotos: user.license_photos || existing?.licensePhotos || [],
     idVerificationExempt:
-      user.id_verification_exempt ?? existing?.idVerificationExempt ?? isUnitedStates(user.country),
+      user.id_verification_exempt ?? existing?.idVerificationExempt ?? false,
     hasAppliedToSell: user.has_applied_to_sell || existing?.hasAppliedToSell || false,
     verificationStatus:
       user.verification_status ||
@@ -1343,7 +1341,6 @@ export default function Stallyard() {
     shippingMethods: [],
     returnPolicy: "",
     vin: "",
-    shipsToUsa: false,
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
@@ -2080,7 +2077,7 @@ export default function Stallyard() {
   };
 
   // Stage two: fill in name, phone, country, account type, and (if selling
-  // outside the US) ID documents. Can be submitted partially — nothing here
+  // in Nigeria) ID documents. Can be submitted partially — nothing here
   // is required to keep using the account — and re-opened any time from
   // wherever we surface the "finish your profile" prompt.
   const completeProfile = async () => {
@@ -2093,8 +2090,8 @@ export default function Stallyard() {
       setProfileStageError("Enter your country of residence");
       return;
     }
-    if (isUnitedStates(authForm.country)) {
-      setProfileStageError("US sign-ups are coming soon — Stallyard is Nigeria-only for now");
+    if (!isNigeria(authForm.country)) {
+      setProfileStageError("Stallyard is available in Nigeria only. Enter Nigeria as your country of residence.");
       return;
     }
     if (authForm.phone.trim() && !isValidPhone(authForm.phone)) {
@@ -2106,7 +2103,7 @@ export default function Stallyard() {
       setProfileStageError("Enter your office location");
       return;
     }
-    const skipId = isUnitedStates(authForm.country);
+    const skipId = false;
     let res;
     try {
       res = await authFetch(`${BACKEND_URL}/profile/complete`, {
@@ -2123,7 +2120,7 @@ export default function Stallyard() {
           idCountry: skipId ? "" : authForm.country.trim(),
           licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
           licensePhotos: skipId ? [] : authForm.licensePhotos,
-          idVerificationExempt: skipId,
+          idVerificationExempt: false,
         }),
       });
     } catch {
@@ -2627,11 +2624,11 @@ export default function Stallyard() {
   const addToCart = (listing) => {
     if (cart.length > 0) {
       const firstItem = listings.find((l) => l.id === cart[0].id);
-      const cartCurrency = firstItem?.currency || "USD";
-      const itemCurrency = listing.currency || "USD";
+      const cartCurrency = firstItem?.currency || "NGN";
+      const itemCurrency = listing.currency || "NGN";
       if (cartCurrency !== itemCurrency) {
         showToast(
-          `Your cart has ${CURRENCIES[cartCurrency]?.symbol || "$"} items — check out or clear your cart before adding ${CURRENCIES[itemCurrency]?.symbol || "$"} items`
+          `Your cart has ${CURRENCIES.NGN.symbol} items — check out or clear your cart before adding ${CURRENCIES.NGN.symbol} items`
         );
         return;
       }
@@ -2655,11 +2652,11 @@ export default function Stallyard() {
   const addToCartAtPrice = (listing, price) => {
     if (cart.length > 0 && !cart.find((c) => c.id === listing.id)) {
       const firstItem = listings.find((l) => l.id === cart[0].id);
-      const cartCurrency = firstItem?.currency || "USD";
-      const itemCurrency = listing.currency || "USD";
+      const cartCurrency = firstItem?.currency || "NGN";
+      const itemCurrency = listing.currency || "NGN";
       if (cartCurrency !== itemCurrency) {
         showToast(
-          `Your cart has ${CURRENCIES[cartCurrency]?.symbol || "$"} items — check out or clear your cart before adding ${CURRENCIES[itemCurrency]?.symbol || "$"} items`
+          `Your cart has ${CURRENCIES.NGN.symbol} items — check out or clear your cart before adding ${CURRENCIES.NGN.symbol} items`
         );
         return;
       }
@@ -2757,7 +2754,7 @@ export default function Stallyard() {
   const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0), 0);
   const cartTax = Math.round(cartSubtotal * (settings.taxRate || 0) * 100) / 100;
   const cartTotal = cartSubtotal + cartShipping + cartTax;
-  const cartCurrency = cartItems[0]?.currency || "USD";
+  const cartCurrency = "NGN";
 
   const persistOrders = async (next) => {
     setOrders(next);
@@ -5503,7 +5500,6 @@ export default function Stallyard() {
       shippingMethods: [],
       returnPolicy: "",
       vin: "",
-      shipsToUsa: false,
     });
     setEditingId(null);
     setPreviewOpen(false);
@@ -5778,7 +5774,7 @@ export default function Stallyard() {
       return;
     }
     if (needsIdVerification) {
-      showToast(`You've crossed $${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales — add ID verification to keep selling`);
+      showToast("Complete seller verification before publishing");
       setIdVerifyOpen(true);
       return;
     }
@@ -5795,8 +5791,8 @@ export default function Stallyard() {
       showToast(`Add at least ${MIN_LISTING_PHOTOS} photos before publishing`);
       return;
     }
-    if (form.listingType === "auction" && isUnitedStates(currentMember?.country)) {
-      showToast("Auctions aren't available for US sellers yet");
+    if (form.listingType === "auction" && false) {
+      showToast("Auctions are not available for this listing");
       return;
     }
     if (editingId) {
@@ -5884,7 +5880,6 @@ export default function Stallyard() {
             shippingMethods: form.shippingMethods,
             returnPolicy: form.returnPolicy,
             vin: form.vin,
-            shipsToUsa: form.shipsToUsa,
           }),
         });
       } catch {
@@ -5929,7 +5924,7 @@ export default function Stallyard() {
       images: listing.images || [],
       listingType: listing.listingType || "fixed",
       auctionDurationDays: "3",
-      currency: listing.currency || "USD",
+      currency: listing.currency || "NGN",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
       quantity: listing.quantity != null ? String(listing.quantity) : "",
       sku: listing.sku || "",
@@ -5938,7 +5933,6 @@ export default function Stallyard() {
       shippingMethods: listing.shippingMethods || [],
       returnPolicy: listing.returnPolicy || "",
       vin: listing.vin || "",
-      shipsToUsa: !!listing.shipsToUsa,
     });
     setEditingId(listing.id);
     setAdminEditContext(fromAdmin);
@@ -6592,20 +6586,7 @@ export default function Stallyard() {
     return { avg, count: rs.length };
   };
 
-  // Only counts USD-denominated sales — this threshold is a USD figure, and
-  // there's no live exchange rate here to convert other currencies into it.
-  const getSellerTotalSalesUSD = (username) =>
-    orders.reduce((sum, o) => {
-      if ((o.currency || "USD") !== "USD") return sum;
-      const mine = o.items.filter((i) => i.ownerUsername === username);
-      return sum + mine.reduce((s, i) => s + i.price * i.qty, 0);
-    }, 0);
-
-  const needsIdVerification =
-    !!currentMember &&
-    currentMember.idVerificationExempt &&
-    !currentMember.idCountry &&
-    getSellerTotalSalesUSD(currentUser) >= ID_VERIFICATION_SALES_THRESHOLD;
+  const needsIdVerification = needsLegacySalesThresholdVerification;
 
   // eBay-style reputation: 4-5 stars count as positive, 3 as neutral, 1-2 as negative.
   const getSellerReputation = (username) => {
@@ -7085,7 +7066,7 @@ export default function Stallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                       />
                     )}
-                    {!isUnitedStates(authForm.country) && (
+                    {true && (
                       <select
                         value={authForm.idType}
                         onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
@@ -7099,12 +7080,12 @@ export default function Stallyard() {
                         <option>Permanent Voter's Card</option>
                       </select>
                     )}
-                    {isUnitedStates(authForm.country) && (
+                    {false && (
                       <p className="text-xs" style={{ color: SLATE }}>
                         ID verification isn't required for US-based members.
                       </p>
                     )}
-                    {!isUnitedStates(authForm.country) && showBusinessFields && (
+                    {true && showBusinessFields && (
                       <input
                         value={authForm.licenseNumber}
                         onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
@@ -7113,7 +7094,7 @@ export default function Stallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                       />
                     )}
-                    {!isUnitedStates(authForm.country) && (
+                    {true && (
                       <div>
                         <p className="text-xs mb-2" style={{ color: SLATE }}>
                           License photos (optional, up to 5)
@@ -8033,7 +8014,7 @@ export default function Stallyard() {
               !currentMember?.hasAppliedToSell && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm mb-2" style={{ color: INK }}>
-                  Selling outside the US requires admin approval. Apply for a seller account to get started.
+                  Selling on Stallyard requires seller verification and admin approval. Apply for a seller account to get started.
                 </p>
                 <div className="mb-3">
                   <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
@@ -8109,7 +8090,7 @@ export default function Stallyard() {
             {currentUser && needsIdVerification && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm mb-2" style={{ color: INK }}>
-                  You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales. Add ID verification to keep publishing and editing listings.
+                  Complete seller verification before publishing or editing listings.
                 </p>
                 <button
                   onClick={() => setIdVerifyOpen(true)}
@@ -8155,7 +8136,7 @@ export default function Stallyard() {
                 <div className="flex gap-2">
                   {[
                     { id: "fixed", label: "Fixed price" },
-                    ...(isUnitedStates(currentMember?.country) ? [] : [{ id: "auction", label: "Auction" }]),
+                    ...(false ? [] : [{ id: "auction", label: "Auction" }]),
                   ].map((opt) => (
                     <button
                       key={opt.id}
@@ -8278,7 +8259,7 @@ export default function Stallyard() {
                   Shipping fee
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ color: SLATE }}>{CURRENCIES[form.currency]?.symbol || "$"}</span>
+                  <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
                   <input
                     type="number"
                     min="0"
@@ -8641,7 +8622,7 @@ export default function Stallyard() {
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
               >
                 <p className="text-sm" style={{ color: INK }}>
-                  Selling outside the US requires admin approval.
+                  Selling on Stallyard requires seller verification and admin approval.
                 </p>
                 <button
                   onClick={applyToSell}
@@ -8687,7 +8668,7 @@ export default function Stallyard() {
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
               >
                 <p className="text-sm" style={{ color: INK }}>
-                  You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales — add ID verification to keep listing.
+                  Complete seller verification before listing items.
                 </p>
                 <button
                   onClick={() => setIdVerifyOpen(true)}
@@ -8710,7 +8691,7 @@ export default function Stallyard() {
                   </p>
                 ) : currentMember?.idVerificationExempt ? (
                   <p className="text-xs mt-1" style={{ color: SLATE }}>
-                    ID verification not required (US resident)
+                    ID verification exemption on file
                   </p>
                 ) : null}
                 <h3 className="text-sm font-semibold mb-3 mt-4" style={{ color: INK }}>
@@ -8728,19 +8709,16 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
                       {(() => {
-                        // A seller can list in more than one currency, so
-                        // this sums per-currency rather than mixing an NGN
-                        // listing's price into a USD listing's price under
-                        // one $ sign.
+                        // Stallyard is Nigeria-only, so marketplace values are NGN.
                         const byCurrency = {};
                         myListings.forEach((l) => {
-                          const cur = l.currency || "USD";
+                          const cur = l.currency || "NGN";
                           byCurrency[cur] = (byCurrency[cur] || 0) + Number(l.price || 0);
                         });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "USD");
+                          : formatMoney(0, "NGN");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -8750,20 +8728,18 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
                       {(() => {
-                        // Same reasoning as inventory value above — sum
-                        // per-currency rather than blending sales made in
-                        // different currencies into one number.
+                        // Stallyard is Nigeria-only, so marketplace values are NGN.
                         const byCurrency = {};
                         mySoldItems
                           .filter((i) => i.fulfillmentStatus !== "cancelled")
                           .forEach((i) => {
-                            const cur = i.currency || "USD";
+                            const cur = i.currency || "NGN";
                             byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
                           });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "USD");
+                          : formatMoney(0, "NGN");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -9937,19 +9913,18 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
                       {(() => {
-                        // Sum per-currency rather than blending a USD
-                        // purchase and an NGN purchase into one number.
+                        // Stallyard is Nigeria-only, so purchase totals are NGN.
                         const byCurrency = {};
                         myPurchasedItems
                           .filter((i) => i.fulfillmentStatus !== "cancelled")
                           .forEach((i) => {
-                            const cur = i.currency || "USD";
+                            const cur = i.currency || "NGN";
                             byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
                           });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "USD");
+                          : formatMoney(0, "NGN");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -12632,21 +12607,17 @@ export default function Stallyard() {
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                   {(() => {
-                    // Orders can be placed in more than one currency (USD,
-                    // NGN, etc), so these get summed per-currency rather
-                    // than mixed into one number under a single symbol —
-                    // adding a $1,000 order to a ₦1,000 order isn't $2,000
-                    // or ₦2,000, it's two separate totals.
+                    // Stallyard is Nigeria-only, so marketplace values are NGN.
                     const salesByCurrency = {};
                     const commissionByCurrency = {};
                     orders.forEach((o) => {
-                      const cur = o.currency || "USD";
+                      const cur = o.currency || "NGN";
                       salesByCurrency[cur] = (salesByCurrency[cur] || 0) + (o.total || 0);
                       commissionByCurrency[cur] = (commissionByCurrency[cur] || 0) + (o.commissionAmount || 0);
                     });
                     const formatByCurrency = (byCurrency) => {
                       const entries = Object.entries(byCurrency);
-                      if (entries.length === 0) return formatMoney(0, "USD");
+                      if (entries.length === 0) return formatMoney(0, "NGN");
                       return entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ");
                     };
                     return [
@@ -16077,7 +16048,7 @@ export default function Stallyard() {
                   )
                 ) : (
                   <div className="flex items-center gap-2 mb-3">
-                    <span style={{ color: SLATE }}>{CURRENCIES[liveSelected.currency]?.symbol || "$"}</span>
+                    <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
                     <input
                       type="number"
                       min={Number(liveSelected.price) + 1}
@@ -16675,7 +16646,7 @@ export default function Stallyard() {
               Add ID verification
             </h3>
             <p className="text-sm mb-4" style={{ color: SLATE }}>
-              You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales, so Stallyard now needs ID on file to keep you selling.
+              Stallyard requires approved seller verification to keep selling.
             </p>
             <div className="space-y-3">
               <div className="flex gap-3">
@@ -16701,7 +16672,7 @@ export default function Stallyard() {
                   <input
                     value={idVerifyForm.idCountry}
                     onChange={(e) => setIdVerifyForm({ ...idVerifyForm, idCountry: e.target.value })}
-                    placeholder="e.g. United States"
+                    placeholder="Nigeria"
                     className="w-full px-3 py-2 rounded-lg border outline-none"
                     style={{ borderColor: "#DDD8CC" }}
                   />
@@ -16822,7 +16793,7 @@ export default function Stallyard() {
               className="text-xl font-semibold mb-2"
               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
             >
-              {CURRENCIES[form.currency]?.symbol || "$"}
+              {CURRENCIES.NGN.symbol}
               {form.price ? Number(form.price).toFixed(2) : "0.00"}
             </div>
             <div className="text-sm mb-3" style={{ color: SLATE }}>
