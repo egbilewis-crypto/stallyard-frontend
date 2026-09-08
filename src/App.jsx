@@ -4170,8 +4170,67 @@ export default function Stallyard() {
   };
 
   const releasePayout = async (orderId) => {
-    const data = await patchOrderOnBackend(orderId, "release");
-    if (!data) return;
+    const sendRelease = async (body) => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/release`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: body ? JSON.stringify(body) : undefined,
+        });
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
+      } catch {
+        return { res: null, data: { error: "Couldn't reach the server — try again" } };
+      }
+    };
+
+    let result = await sendRelease();
+    if (!result.res) {
+      showToast(result.data.error);
+      return;
+    }
+
+    // Normal finance release is allowed only when the same proof + buyer-token
+    // safeguards used by the seller flow are complete. If they are not, make
+    // the admin consciously enter an emergency override instead of silently
+    // bypassing delivery protection.
+    if (!result.res.ok && result.data.code === "DELIVERY_SAFEGUARDS_REQUIRED") {
+      const problems = Array.isArray(result.data.safeguardProblems)
+        ? result.data.safeguardProblems
+        : [];
+      const warning = [
+        "OVERRIDE DELIVERY SAFEGUARDS?",
+        "",
+        "Normal release is blocked because:",
+        ...(problems.length ? problems.map((p) => `• ${p}`) : ["• Required delivery proof is incomplete"]),
+        "",
+        "An override releases real seller funds without the normal buyer-token and/or delivery-picture proof. Active returns still cannot be overridden.",
+        "",
+        "Continue only for an exceptional case you have independently reviewed.",
+      ].join("\n");
+      if (!window.confirm(warning)) return;
+
+      const overrideReason = window.prompt(
+        "Document why this emergency payment release is justified. This reason is written permanently to the admin audit log (minimum 10 characters)."
+      );
+      if (overrideReason === null) return;
+      if (overrideReason.trim().length < 10) {
+        showToast("Enter a clear override reason of at least 10 characters");
+        return;
+      }
+
+      result = await sendRelease({
+        overrideDeliverySafeguards: true,
+        overrideReason: overrideReason.trim(),
+      });
+    }
+
+    if (!result.res?.ok) {
+      showToast(result.data.error || "Couldn't release that payment");
+      return;
+    }
+
+    const data = result.data;
     await persistOrders(
       orders.map((o) =>
         o.id === orderId
@@ -4189,6 +4248,10 @@ export default function Stallyard() {
           d.id === data.resolvedDispute.id ? { ...d, ...data.resolvedDispute } : d
         )
       );
+    }
+    if (data.deliverySafeguardsOverridden) {
+      showToast("Payment released with an audited delivery-safeguard override");
+    } else if (data.resolvedDispute?.id) {
       showToast("Seller payment released and dispute resolved together");
     } else {
       showToast("Payout marked as released");
