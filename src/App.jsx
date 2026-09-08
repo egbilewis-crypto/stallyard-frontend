@@ -7662,137 +7662,146 @@ export default function Stallyard() {
       )}
 
       {/* Header */}
-      <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
-          <button
-            onClick={() => {
-              if (isAdminHost()) {
-                setSelected(null);
-                setView("admin");
-                return;
-              }
-              setSelected(null);
-              setView("browse");
-            }}
-            className="flex items-center gap-2"
-            aria-label={isAdminHost() ? "Admin dashboard" : "Go to home"}
-          >
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-              style={{ backgroundColor: MARIGOLD }}
+      {isAdminHost() ? (
+        <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+            <button
+              onClick={() => { setSelected(null); setView("admin"); }}
+              className="flex items-center gap-2"
+              aria-label="Admin dashboard"
             >
-              <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "16px" }}>S</span>
+              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: MARIGOLD }}>
+                <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "16px" }}>S</span>
+              </div>
+              <h1 className="text-2xl tracking-wide" style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}>
+                Stallyard Admin
+              </h1>
+            </button>
+            <div className="flex items-center gap-2">
+              {currentMember?.isAdmin && (
+                <span className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: "#2A3442", color: "#C9CCD3" }}>
+                  <Shield size={16} />
+                  {ADMIN_ROLE_LABELS[currentMember.adminRole || "super_admin"] || "Admin"}
+                </span>
+              )}
+              {currentUser && (
+                <>
+                  <span className="text-sm hidden sm:inline" style={{ color: "#C9CCD3" }}>{currentMember?.displayName}</span>
+                  <button onClick={logout} aria-label="Log out" className="p-2 rounded-lg" style={{ color: "#C9CCD3" }}>
+                    <LogOut size={16} />
+                  </button>
+                </>
+              )}
             </div>
-            <h1
-              className="text-2xl tracking-wide"
-              style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}
-            >
-              {isAdminHost() ? "Stallyard Admin" : "Stallyard"}
-            </h1>
-          </button>
-          <nav className="flex items-center gap-1">
-            {isAdminHost() ? (
-              <>
-                {currentMember?.isAdmin && (
-                  <span
-                    className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium"
-                    style={{ backgroundColor: "#2A3442", color: "#C9CCD3" }}
-                  >
-                    <Shield size={16} />
-                    {ADMIN_ROLE_LABELS[currentMember.adminRole || "super_admin"] || "Admin"}
+          </div>
+        </header>
+      ) : (
+        <header className="sticky top-0 z-20 bg-white border-b" style={{ borderColor: "#E5E0D6" }}>
+          {/* Utility bar */}
+          <div className="border-b" style={{ borderColor: "#EEEAE1" }}>
+            <div className="max-w-[1500px] mx-auto px-4 h-8 flex items-center justify-between text-xs" style={{ color: INK }}>
+              <div className="flex items-center gap-4 min-w-0">
+                {!currentUser ? (
+                  <span className="whitespace-nowrap">
+                    Hi!{' '}
+                    <button
+                      onClick={() => { setAuthMode("login"); setAuthError(""); setAuthReturnView(view); setView("signup"); }}
+                      className="underline font-medium"
+                      style={{ color: "#2457A6" }}
+                    >
+                      Sign in
+                    </button>
+                    {' '}or{' '}
+                    <button
+                      onClick={() => { setAuthMode("register"); setAuthError(""); setAuthReturnView(view); setView("signup"); }}
+                      className="underline font-medium"
+                      style={{ color: "#2457A6" }}
+                    >
+                      register
+                    </button>
                   </span>
+                ) : (
+                  <span className="whitespace-nowrap">Hi, {currentMember?.displayName || currentUser}</span>
                 )}
-              </>
-            ) : (
-              <>
-                <NavButton id="browse" icon={LayoutGrid} label="Browse" />
-                <NavButton id="sell" icon={Plus} label="Sell" />
-                <NavButton id="dashboard" icon={Store} label="My Stall" />
-                {currentUser && <NavButton id="buyerHome" icon={PackageOpen} label="Dashboard" />}
-                {currentUser && <NavButton id="watchlist" icon={Heart} label="Watchlist" />}
-                {currentUser && <NavButton id="wallet" icon={Wallet} label="Wallet" />}
-                {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
-                <NavButton id="orders" icon={Receipt} label="Orders" />
-                <NavButton id="help" icon={HelpCircle} label="Help" />
-                {currentMember?.isAdmin && (
-                  <NavButton id="admin" icon={Shield} label="Admin" onClick={openAdminPanel} />
-                )}
+                <button onClick={() => { setView("browse"); setSortBy("featured"); }} className="hidden sm:inline hover:underline">Deals</button>
+                <button onClick={() => { setView("browse"); setSortBy("newest"); }} className="hidden md:inline hover:underline">New arrivals</button>
+                <button onClick={() => setView("help")} className="hidden sm:inline hover:underline">Help & Contact</button>
+              </div>
+
+              <div className="flex items-center gap-3 sm:gap-5 whitespace-nowrap">
+                <button onClick={() => setView("sell")} className="hover:underline">Sell</button>
+                <button
+                  onClick={() => currentUser ? setView("watchlist") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("watchlist"), setView("signup"))}
+                  className="hidden sm:inline hover:underline"
+                >
+                  Watchlist
+                </button>
+                <button
+                  onClick={() => currentUser ? setView("buyerHome") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("buyerHome"), setView("signup"))}
+                  className="hidden sm:inline hover:underline"
+                >
+                  My Stallyard
+                </button>
                 {currentUser && (
-                  <button
-                    onClick={() => setNotifPanelOpen((o) => !o)}
-                    className="relative p-2 rounded-lg"
-                    style={{ color: "#C9CCD3" }}
-                    aria-label="Notifications"
-                  >
+                  <button onClick={() => setNotifPanelOpen((o) => !o)} className="relative p-1" aria-label="Notifications">
                     <Bell size={18} />
                     {notifications.some((n) => !n.read) && (
-                      <span
-                        className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
-                        style={{ backgroundColor: BERRY, color: "white" }}
-                      >
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] text-white flex items-center justify-center" style={{ backgroundColor: BERRY }}>
                         {notifications.filter((n) => !n.read).length}
                       </span>
                     )}
                   </button>
                 )}
-                <button
-                  onClick={() => setCartOpen(true)}
-                  className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
-                  style={{ color: "#C9CCD3" }}
-                  aria-label="Open cart"
-                >
-                  <ShoppingBag size={18} />
+                <button onClick={() => setCartOpen(true)} className="relative p-1" aria-label="Open cart">
+                  <ShoppingBag size={19} />
                   {cartCount > 0 && (
-                    <span
-                      className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
-                      style={{ backgroundColor: BERRY, color: "white" }}
-                    >
+                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] text-white flex items-center justify-center" style={{ backgroundColor: BERRY }}>
                       {cartCount}
                     </span>
                   )}
                 </button>
-              </>
-            )}
-            {currentUser ? (
-              <div className="flex items-center gap-2 ml-1 pl-2" style={{ borderLeft: "1px solid #3A4351" }}>
-                <span className="text-sm hidden sm:inline" style={{ color: "#C9CCD3" }}>
-                  {currentMember?.displayName}
-                </span>
-                <button onClick={logout} aria-label="Log out" className="p-2 rounded-lg" style={{ color: "#C9CCD3" }}>
-                  <LogOut size={16} />
-                </button>
+                {currentUser && (
+                  <button onClick={logout} className="hidden lg:inline hover:underline">Log out</button>
+                )}
               </div>
-            ) : (
-              <button
-                onClick={() => {
-                  setAuthMode("register");
-                  setAuthError("");
-                  setAuthReturnView(view);
-                  setView("signup");
-                }}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
-                style={{ backgroundColor: MARIGOLD, color: INK }}
-              >
-                <User size={16} />
-                Log in
-              </button>
-            )}
-          </nav>
-        </div>
-        {!isAdminHost() && (
-          <div className="max-w-6xl mx-auto px-4 pb-3 flex items-center gap-3">
+            </div>
+          </div>
+
+          {/* Main search row */}
+          <div className="max-w-[1500px] mx-auto px-4 py-3 flex items-center gap-3">
+            <button
+              onClick={() => { setSelected(null); setCategoryFilter("All"); setSearch(""); setView("browse"); }}
+              className="flex items-center gap-2 shrink-0"
+              aria-label="Go to Stallyard home"
+            >
+              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: MARIGOLD }}>
+                <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "20px" }}>S</span>
+              </div>
+              <span className="hidden sm:block text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Stallyard</span>
+            </button>
+
             <div className="relative shrink-0" ref={categoriesMenuRef}>
               <button
                 type="button"
                 onClick={() => setCategoriesMenuOpen((open) => !open)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap"
-                style={{ backgroundColor: categoriesMenuOpen ? "#2A3442" : "transparent", color: "#F4F1EA" }}
+                className="hidden md:flex items-center gap-2 px-2 py-2 text-xs leading-tight text-left"
+                style={{ color: SLATE }}
                 aria-haspopup="menu"
                 aria-expanded={categoriesMenuOpen}
               >
-                <span aria-hidden="true" style={{ fontSize: "17px", lineHeight: 1 }}>☰</span>
-                Categories
+                <span>Shop by<br />category</span>
+                <span aria-hidden="true">⌄</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setCategoriesMenuOpen((open) => !open)}
+                className="md:hidden p-2 rounded-full border"
+                style={{ borderColor: "#DDD8CC", color: INK }}
+                aria-label="Open categories"
+              >
+                <LayoutGrid size={18} />
+              </button>
+
               {categoriesMenuOpen && (
                 <div
                   className="absolute left-0 top-full mt-2 w-[330px] max-w-[88vw] bg-white rounded-xl shadow-2xl border overflow-hidden"
@@ -7803,11 +7812,7 @@ export default function Stallyard() {
                   <div className="max-h-[560px] overflow-y-auto py-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setCategoryFilter("All");
-                        setView("browse");
-                        setCategoriesMenuOpen(false);
-                      }}
+                      onClick={() => { setCategoryFilter("All"); setView("browse"); setCategoriesMenuOpen(false); }}
                       className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
                       style={{ color: INK, backgroundColor: categoryFilter === "All" ? "#F6F3EC" : "white" }}
                       role="menuitem"
@@ -7819,12 +7824,7 @@ export default function Stallyard() {
                       <button
                         key={category}
                         type="button"
-                        onClick={() => {
-                          setCategoryFilter(category);
-                          setView("browse");
-                          setSelected(null);
-                          setCategoriesMenuOpen(false);
-                        }}
+                        onClick={() => { setCategoryFilter(category); setView("browse"); setSelected(null); setCategoriesMenuOpen(false); }}
                         className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
                         style={{ color: INK, backgroundColor: categoryFilter === category ? "#F6F3EC" : "white" }}
                         role="menuitem"
@@ -7837,25 +7837,66 @@ export default function Stallyard() {
                 </div>
               )}
             </div>
-            <div className="relative flex-1 min-w-0">
-              <Search
-                size={18}
-                className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none"
-                style={{ color: SLATE }}
-              />
-              <input
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); if (view !== "browse") setView("browse"); }}
-                onFocus={() => setCategoriesMenuOpen(false)}
-                placeholder="Search for anything"
-                className="w-full pl-11 pr-4 py-2.5 rounded-full border-2 outline-none text-sm bg-white"
-                style={{ borderColor: "#DDD8CC", color: INK }}
-                aria-label="Search marketplace"
-              />
+
+            <div className="flex-1 min-w-0 flex items-stretch border-2 rounded-full overflow-hidden bg-white" style={{ borderColor: INK }}>
+              <div className="relative flex-1 min-w-0">
+                <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: SLATE }} />
+                <input
+                  value={search}
+                  onChange={(e) => { setSearch(e.target.value); if (view !== "browse") setView("browse"); }}
+                  onFocus={() => setCategoriesMenuOpen(false)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { setView("browse"); setSelected(null); } }}
+                  placeholder="Search for anything"
+                  className="w-full pl-11 pr-3 py-2.5 outline-none text-sm bg-white"
+                  style={{ color: INK }}
+                  aria-label="Search marketplace"
+                />
+              </div>
+              <select
+                value={categoryFilter}
+                onChange={(e) => { setCategoryFilter(e.target.value); setView("browse"); setSelected(null); }}
+                className="hidden lg:block max-w-[185px] px-4 border-l outline-none bg-white text-sm"
+                style={{ borderColor: "#DDD8CC", color: SLATE }}
+                aria-label="Search category"
+              >
+                <option value="All">All Categories</option>
+                {CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
+              </select>
+            </div>
+
+            <button
+              onClick={() => { setView("browse"); setSelected(null); }}
+              className="shrink-0 px-5 sm:px-8 py-2.5 rounded-full text-sm font-semibold"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              Search
+            </button>
+          </div>
+
+          {/* Quick category strip */}
+          <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
+            <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-7 overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
+              <button
+                onClick={() => { setCategoryFilter("All"); setView("browse"); setSelected(null); }}
+                className="px-3 py-1 rounded-full font-medium shrink-0"
+                style={{ backgroundColor: categoryFilter === "All" ? "#F4F1EA" : "transparent" }}
+              >
+                All
+              </button>
+              {CATEGORIES.slice(0, 12).map((category) => (
+                <button
+                  key={category}
+                  onClick={() => { setCategoryFilter(category); setView("browse"); setSelected(null); }}
+                  className="hover:underline shrink-0"
+                  style={{ fontWeight: categoryFilter === category ? 700 : 400 }}
+                >
+                  {category}
+                </button>
+              ))}
             </div>
           </div>
-        )}
-      </header>
+        </header>
+      )}
 
       {notifPanelOpen && currentUser && (
         <div
