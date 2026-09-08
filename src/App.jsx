@@ -5331,7 +5331,7 @@ export default function Stallyard() {
   const verifyCheckout = async (reference) => {
     setCheckoutVerifying(true);
     try {
-      const res = await authFetch(`${BACKEND_URL}/checkout/verify/${reference}`);
+      const res = await authFetch(`${BACKEND_URL}/checkout/verify/${reference}`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
         setCheckoutVerifyError(data.error || "We couldn't confirm this payment — contact support if you were charged.");
