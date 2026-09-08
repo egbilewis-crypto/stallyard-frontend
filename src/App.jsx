@@ -10,7 +10,7 @@ const SLATE = "#667085";
 
 const BACKEND_URL = "https://stallyard-backend-production.up.railway.app";
 
-// `window.storage` only exists inside Claude's own preview tool. On the real
+// `window.storage` may not exist in every browser environment. On the real
 // deployed site it doesn't exist, so we back it with the browser's own
 // localStorage instead — same shape (get/set/delete/list), so nothing else
 // in this file has to change.
