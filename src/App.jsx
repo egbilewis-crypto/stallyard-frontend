@@ -2377,6 +2377,20 @@ export default function Stallyard() {
   };
 
   const currentMember = members.find((m) => m.username === currentUser) || null;
+
+  // Keep the admin origin completely separate from the buyer/seller storefront.
+  // The admin host gets its own browser title and can render only the admin view.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    document.title = isAdminHost() ? "Stallyard Admin" : "Stallyard";
+    if (isAdminHost()) {
+      if (currentUser && currentMember?.isAdmin && view !== "admin") setView("admin");
+    } else if (currentMember?.isAdmin) {
+      // Staff identities belong on the dedicated operations console, not the marketplace.
+      window.location.replace(ADMIN_URL);
+    }
+  }, [currentUser, currentMember?.isAdmin, view]);
+
   useEffect(() => {
     if (!currentMember?.isAdmin) return;
     const isSuperAdmin = !currentMember.adminRole || currentMember.adminRole === "super_admin";
@@ -6763,15 +6777,11 @@ export default function Stallyard() {
             )}
           </div>
           <button
-            onClick={() => {
-              setAdminLoginMode(false);
-              window.history.replaceState({}, "", "/");
-              setView("browse");
-            }}
+            onClick={() => window.location.assign("https://stallyard.com")}
             className="text-xs font-medium underline mt-4 block mx-auto"
             style={{ color: "#8A93A3" }}
           >
-            ← Back to Stallyard
+            ← Go to public marketplace
           </button>
         </div>
       </div>
@@ -7413,14 +7423,14 @@ export default function Stallyard() {
             onClick={() => {
               if (isAdminHost()) {
                 setSelected(null);
-                openAdminPanel();
+                setView("admin");
                 return;
               }
               setSelected(null);
               setView("browse");
             }}
             className="flex items-center gap-2"
-            aria-label="Go to home"
+            aria-label={isAdminHost() ? "Admin dashboard" : "Go to home"}
           >
             <div
               className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
@@ -7432,7 +7442,7 @@ export default function Stallyard() {
               className="text-2xl tracking-wide"
               style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}
             >
-              Stallyard
+              {isAdminHost() ? "Stallyard Admin" : "Stallyard"}
             </h1>
           </button>
           <nav className="flex items-center gap-1">
@@ -15517,34 +15527,89 @@ export default function Stallyard() {
             })()}
 
             {adminTab === "supportTickets" && hasAdminPermission(currentMember, "support_tickets") && (
-              <div className="space-y-3">
-                {adminTickets.length === 0 && (
-                  <p className="text-sm" style={{ color: SLATE }}>
-                    No support tickets.
-                  </p>
-                )}
-                {adminTickets
-                  .slice()
-                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-                  .map((t) => (
-                    <div key={t.id} className="flex items-center gap-2">
+              <div className="space-y-4">
+                {activeTicketId ? (() => {
+                  const ticket = adminTickets.find((t) => t.id === activeTicketId) || null;
+                  return (
+                    <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
                       <button
-                        onClick={() => {
-                          openTicketThread(t.id);
-                          setView("help");
-                        }}
-                        className="flex-1 text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
-                        style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                        onClick={() => { setActiveTicketId(null); setTicketMessages([]); }}
+                        className="text-sm font-medium underline mb-4"
+                        style={{ color: SLATE }}
                       >
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium truncate" style={{ color: INK }}>{t.subject}</div>
-                          <div className="text-xs" style={{ color: SLATE }}>{t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}</div>
-                        </div>
-                        <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>{TICKET_STATUS_LABEL[t.status] || t.status}</Tag>
+                        ← Back to support tickets
                       </button>
-                      <button type="button" onClick={() => openAdminNotes("support_ticket", t.id, `Support ticket #${t.id}: ${t.subject}`)} className="px-3 py-2 rounded-lg text-xs font-medium border bg-white shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }}>Notes</button>
+                      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                        <div>
+                          <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>{ticket?.subject || "Support ticket"}</h3>
+                          {ticket && <p className="text-xs mt-1" style={{ color: SLATE }}>From {ticket.display_name || ticket.username} · {new Date(ticket.updated_at).toLocaleString()}</p>}
+                        </div>
+                        {ticket && (
+                          <select
+                            value={ticket.status}
+                            onChange={(e) => adminUpdateTicketStatus(ticket.id, e.target.value)}
+                            className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                            style={{ borderColor: "#DDD8CC" }}
+                          >
+                            <option value="open">Open</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="resolved">Resolved</option>
+                          </select>
+                        )}
+                      </div>
+                      {loadingTicketMessages ? (
+                        <p className="text-sm" style={{ color: SLATE }}>Loading…</p>
+                      ) : (
+                        <div className="space-y-3 mb-4 max-h-[50vh] overflow-y-auto">
+                          {ticketMessages.map((m) => {
+                            const fromAdmin = m.is_admin;
+                            return (
+                              <div key={m.id} className={`flex ${fromAdmin ? "justify-start" : "justify-end"}`}>
+                                <div className="max-w-[80%] px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: fromAdmin ? "#F1EFE7" : INK, color: fromAdmin ? INK : "white" }}>
+                                  <div className="text-xs font-medium mb-1" style={{ color: fromAdmin ? SLATE : "#C9CCD3" }}>{m.display_name || m.username}</div>
+                                  {m.body}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={newTicketMessageInput}
+                          onChange={(e) => setNewTicketMessageInput(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && sendTicketMessage()}
+                          placeholder="Write an admin reply…"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <button onClick={sendTicketMessage} disabled={sendingTicketMessage} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                          Send
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                  );
+                })() : (
+                  <>
+                    {adminTickets.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No support tickets.</p>}
+                    {adminTickets.slice().sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).map((t) => (
+                      <div key={t.id} className="flex items-center gap-2">
+                        <button
+                          onClick={() => openTicketThread(t.id)}
+                          className="flex-1 text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
+                          style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate" style={{ color: INK }}>{t.subject}</div>
+                            <div className="text-xs" style={{ color: SLATE }}>{t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}</div>
+                          </div>
+                          <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>{TICKET_STATUS_LABEL[t.status] || t.status}</Tag>
+                        </button>
+                        <button type="button" onClick={() => openAdminNotes("support_ticket", t.id, `Support ticket #${t.id}: ${t.subject}`)} className="px-3 py-2 rounded-lg text-xs font-medium border bg-white shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }}>Notes</button>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -15601,7 +15666,20 @@ export default function Stallyard() {
         </div>
       )}
 
-      <footer style={{ backgroundColor: INK }} className="mt-16">
+      {isAdminHost() ? (
+        <footer style={{ backgroundColor: INK }} className="mt-12">
+          <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-xs font-semibold" style={{ color: "#C9CCD3" }}>Stallyard Admin · Restricted staff system</p>
+              <p className="text-[11px] mt-1" style={{ color: "#8A93A3" }}>Authorized staff access only. Administrative actions may be recorded in the audit log.</p>
+            </div>
+            {currentUser && (
+              <button onClick={logout} className="text-xs font-medium underline" style={{ color: "#C9CCD3" }}>Sign out</button>
+            )}
+          </div>
+        </footer>
+      ) : (
+        <footer style={{ backgroundColor: INK }} className="mt-16">
         <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 sm:grid-cols-4 gap-8">
           <div>
             <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
@@ -15697,7 +15775,9 @@ export default function Stallyard() {
             © {new Date().getFullYear()} Stallyard. Payments processed securely through Paystack.
           </p>
         </div>
-      </footer>
+        </footer>
+
+      )}
 
       {/* Detail modal */}
       {selected && (() => {
