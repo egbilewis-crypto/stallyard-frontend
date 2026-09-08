@@ -16,11 +16,18 @@ const BACKEND_URL =
 // All Stallyard API requests include credentials so the backend can use a
 // Secure, HttpOnly session cookie. Authentication tokens are never stored in
 // localStorage or exposed to frontend JavaScript.
-const backendFetch = (url, options = {}) =>
-  fetch(url, {
+const backendFetch = async (url, options = {}) => {
+  const response = await fetch(url, {
     ...options,
     credentials: "include",
   });
+  if (typeof window !== "undefined" && response.status >= 500) {
+    window.dispatchEvent(new CustomEvent("stallyard:server-error", {
+      detail: { status: response.status },
+    }));
+  }
+  return response;
+};
 
 // `window.storage` may not exist in every browser environment. On the real
 // deployed site it doesn't exist, so we back it with the browser's own
@@ -978,8 +985,43 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
   );
 }
 
+function StallyardErrorScreen({ onRetry }) {
+  return (
+    <div
+      className="min-h-screen w-full flex items-center justify-center px-6"
+      style={{ backgroundColor: CANVAS, fontFamily: "'Work Sans', sans-serif" }}
+    >
+      <div className="w-full max-w-md text-center bg-white rounded-2xl px-8 py-10 shadow-sm border" style={{ borderColor: "#E8E1D5" }}>
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5"
+          style={{ backgroundColor: MARIGOLD }}
+          aria-label="Stallyard emblem"
+        >
+          <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "30px", lineHeight: 1 }}>S</span>
+        </div>
+        <div className="text-sm font-semibold tracking-wide mb-2" style={{ color: BERRY }}>STALLYARD</div>
+        <h1 className="text-2xl font-semibold mb-2" style={{ color: INK }}>Something went wrong</h1>
+        <p className="text-sm mb-6" style={{ color: SLATE }}>Please try again in a moment.</p>
+        <button
+          onClick={onRetry}
+          className="px-5 py-2.5 rounded-lg font-semibold"
+          style={{ backgroundColor: MARIGOLD, color: INK }}
+        >
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Stallyard() {
   useFonts();
+  const [fatalServerError, setFatalServerError] = useState(false);
+  useEffect(() => {
+    const handleServerError = () => setFatalServerError(true);
+    window.addEventListener("stallyard:server-error", handleServerError);
+    return () => window.removeEventListener("stallyard:server-error", handleServerError);
+  }, []);
   const [view, setView] = useState("browse");
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
@@ -6687,6 +6729,10 @@ export default function Stallyard() {
       )}
     </button>
   );
+
+  if (fatalServerError) {
+    return <StallyardErrorScreen onRetry={() => window.location.reload()} />;
+  }
 
   if (adminLoginMode) {
     return (
