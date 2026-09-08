@@ -110,9 +110,9 @@ const ADMIN_ROLE_ORDER = [
 const ADMIN_ROLE_PERMISSIONS = {
   seller_verification: new Set(["seller_verification"]),
   listing_moderator: new Set(["listing_moderation"]),
-  order_dispute: new Set(["dispute_resolution", "order_access"]),
+  order_dispute: new Set(["dispute_resolution", "order_access", "order_management"]),
   finance: new Set(["finance", "order_access"]),
-  customer_support: new Set(["support_tickets"]),
+  customer_support: new Set(["support_tickets", "message_moderation"]),
 };
 function hasAdminPermission(member, permission) {
   if (!member?.isAdmin) return false;
