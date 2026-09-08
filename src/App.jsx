@@ -110,8 +110,8 @@ const ADMIN_ROLE_ORDER = [
 const ADMIN_ROLE_PERMISSIONS = {
   seller_verification: new Set(["seller_verification"]),
   listing_moderator: new Set(["listing_moderation"]),
-  order_dispute: new Set(["dispute_resolution"]),
-  finance: new Set(["finance"]),
+  order_dispute: new Set(["dispute_resolution", "order_access"]),
+  finance: new Set(["finance", "order_access"]),
   customer_support: new Set(["support_tickets"]),
 };
 function hasAdminPermission(member, permission) {
@@ -1610,7 +1610,9 @@ export default function Stallyard() {
         const [mineRes, sellingRes, adminRes] = await Promise.all([
           authFetch(`${BACKEND_URL}/orders/mine`),
           authFetch(`${BACKEND_URL}/orders/selling`),
-          isAdmin ? authFetch(`${BACKEND_URL}/orders`) : Promise.resolve(null),
+          isAdmin && hasAdminPermission(members.find((m) => m.username === currentUser), "order_access")
+            ? authFetch(`${BACKEND_URL}/orders`)
+            : Promise.resolve(null),
         ]);
         const byId = new Map();
         for (const res of [mineRes, sellingRes, adminRes]) {
@@ -2392,7 +2394,12 @@ export default function Stallyard() {
     if (!currentMember?.isAdmin) return;
     const isSuperAdmin = !currentMember.adminRole || currentMember.adminRole === "super_admin";
     const canViewMembers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification");
-    if ((adminTab === "overview" && !isSuperAdmin) || (adminTab === "members" && !canViewMembers)) {
+    const canViewOrders = isSuperAdmin || hasAdminPermission(currentMember, "order_access");
+    if (
+      (adminTab === "overview" && !isSuperAdmin) ||
+      (adminTab === "members" && !canViewMembers) ||
+      (adminTab === "orders" && !canViewOrders)
+    ) {
       const fallbackByRole = {
         seller_verification: "members",
         listing_moderator: "listings",
@@ -12523,7 +12530,7 @@ export default function Stallyard() {
                 { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
                 { id: "members", label: `Members (${members.length})`, permission: "seller_verification" },
                 { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
-                { id: "orders", label: `Orders (${orders.length})` },
+                { id: "orders", label: `Orders (${orders.length})`, permission: "order_access" },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
                   id: "reports",
@@ -13772,7 +13779,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "orders" && (() => {
+            {adminTab === "orders" && hasAdminPermission(currentMember, "order_access") && (() => {
               const activeOrder = activeAdminOrderId != null
                 ? orders.find((o) => Number(o.id) === Number(activeAdminOrderId))
                 : null;
