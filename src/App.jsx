@@ -78,10 +78,12 @@ const CATEGORIES = [
   "Jewelry",
   "Kids & Baby",
   "Movies & Music",
+  "Office",
   "Outdoors",
   "Paper & Party Supplies",
   "Pet Supplies",
   "Shoes",
+  "Tools & Equipment",
   "Toys & Games",
   "Vintage",
   "Weddings",
@@ -275,6 +277,8 @@ const SUBCATEGORIES = {
     "Home Audio",
     "Gaming Consoles",
     "Video Games",
+    "Gaming Controllers",
+    "Gaming Accessories",
     "Smart Watches",
     "Wearable Technology",
     "Chargers & Cables",
@@ -284,6 +288,7 @@ const SUBCATEGORIES = {
     "Storage Devices",
     "Security Cameras",
     "Smart Home Devices",
+    "Media Players",
     "Electronic Accessories",
     "Other Electronics"
   ],
@@ -360,9 +365,13 @@ const SUBCATEGORIES = {
     "Storage & Organization",
     "Bathroom Accessories",
     "Cleaning Supplies",
-    "Garden & Outdoor",
+    "Garden Tools",
+    "Plants",
+    "Pots & Planters",
+    "Outdoor Furniture",
+    "Lawn Equipment",
+    "Grills & Outdoor Cooking",
     "Home Improvement",
-    "Tools",
     "Other Home Items"
   ],
   "Jewelry": [
@@ -420,6 +429,17 @@ const SUBCATEGORIES = {
     "Studio Equipment",
     "Microphones",
     "Other Movies & Music"
+  ],
+  "Office": [
+    "Office Furniture",
+    "Printers & Scanners",
+    "Stationery",
+    "Filing & Storage",
+    "Office Electronics",
+    "School & Office Supplies",
+    "Desk Accessories",
+    "Packaging & Mailing",
+    "Other Office Supplies"
   ],
   "Outdoors": [
     "Camping",
@@ -485,6 +505,18 @@ const SUBCATEGORIES = {
     "Sports Shoes",
     "Traditional Footwear",
     "Other Shoes"
+  ],
+  "Tools & Equipment": [
+    "Hand Tools",
+    "Power Tools",
+    "Measuring Tools",
+    "Workshop Equipment",
+    "Safety Equipment",
+    "Tool Storage",
+    "Welding Equipment",
+    "Construction Tools",
+    "Agricultural Tools",
+    "Other Tools & Equipment"
   ],
   "Toys & Games": [
     "Action Figures",
@@ -670,10 +702,12 @@ const CATEGORY_COLOR = {
   Weddings: "#9A7B87",
   Accessories: "#657A8A",
   "Movies & Music": "#625D8A",
+  Office: "#5E7184",
   "Kids & Baby": "#7E8F72",
   "Toys & Games": "#8A7650",
   "Bath & Beauty": "#8A6D83",
   Shoes: "#6E625A",
+  "Tools & Equipment": "#59636F",
   "Pet Supplies": "#5F7D70",
   Gifts: "#9A624D",
   Outdoors: "#3E7A4E",
@@ -698,10 +732,12 @@ const CATEGORY_ICON = {
   Weddings: "💒",
   Accessories: "⌚",
   "Movies & Music": "🎵",
+  Office: "🗂️",
   "Kids & Baby": "👶",
   "Toys & Games": "🧸",
   "Bath & Beauty": "🧴",
   Shoes: "👟",
+  "Tools & Equipment": "🛠️",
   "Pet Supplies": "🐾",
   Gifts: "🎁",
   Outdoors: "🥾",
@@ -8555,6 +8591,50 @@ export default function Stallyard() {
               </div>
             )
           )}
+        {view === "categories" && (
+          <section className="max-w-6xl mx-auto">
+            <div className="mb-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Shop Stallyard</p>
+              <h1 className="text-3xl sm:text-4xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Categories</h1>
+              <p className="mt-2 text-sm max-w-2xl" style={{ color: SLATE }}>Browse by main category, then choose a subcategory to see active listings across Stallyard.</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {CATEGORIES.map((category) => (
+                <div key={category} className="rounded-2xl border bg-white p-5" style={{ borderColor: "#DDD8CC" }}>
+                  <button
+                    type="button"
+                    onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setSearch(""); setView("browse"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="w-full flex items-center gap-3 text-left group"
+                  >
+                    <span className="w-11 h-11 rounded-full flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: "#F5F1E8" }} aria-hidden="true">{CATEGORY_ICON[category] || "📦"}</span>
+                    <span className="font-semibold text-lg group-hover:underline" style={{ color: INK }}>{category}</span>
+                  </button>
+                  <div className="mt-4 flex flex-wrap gap-x-3 gap-y-2">
+                    {(SUBCATEGORIES[category] || []).map((subcategory) => (
+                      <button
+                        key={subcategory}
+                        type="button"
+                        onClick={() => {
+                          setCategoryFilter(category);
+                          setSubcategoryFilter(subcategory);
+                          setSearch("");
+                          setSelected(null);
+                          setView("browse");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="text-sm text-left hover:underline"
+                        style={{ color: SLATE }}
+                      >
+                        {subcategory}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {view === "browse" && (
           <>
             {isHomeState && (
@@ -8746,7 +8826,7 @@ export default function Stallyard() {
                     min="0"
                     value={priceMin}
                     onChange={(e) => setPriceMin(e.target.value)}
-                    placeholder="$0"
+                    placeholder="₦0"
                     className="w-24 px-2 py-1.5 rounded-lg border outline-none text-sm"
                     style={{ borderColor: "#DDD8CC" }}
                   />
@@ -16776,10 +16856,25 @@ export default function Stallyard() {
               Shop
             </h3>
             <div className="flex flex-col gap-2">
-              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button
+                onClick={() => {
+                  setCategoryFilter("All");
+                  setSubcategoryFilter("All");
+                  setSearch("");
+                  setSelected(null);
+                  setView("browse");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="text-sm text-left"
+                style={{ color: "#E5E7EB" }}
+              >
                 Browse listings
               </button>
-              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button
+                onClick={() => { setSelected(null); setView("categories"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="text-sm text-left"
+                style={{ color: "#E5E7EB" }}
+              >
                 Categories
               </button>
               <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
