@@ -1312,9 +1312,9 @@ export default function Stallyard() {
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [homepageAds, setHomepageAds] = useState([
-    { slot: 1, imageUrl: "", linkUrl: "" },
-    { slot: 2, imageUrl: "", linkUrl: "" },
-    { slot: 3, imageUrl: "", linkUrl: "" },
+    { slot: 1, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
+    { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
+    { slot: 3, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
   ]);
   const [homepageAdUploading, setHomepageAdUploading] = useState(null);
   const [homepageAdSaving, setHomepageAdSaving] = useState(null);
@@ -1636,7 +1636,13 @@ export default function Stallyard() {
           const returned = new Map((raw.ads || []).map((ad) => [Number(ad.slot), ad]));
           setHomepageAds([1, 2, 3].map((slot) => {
             const ad = returned.get(slot) || {};
-            return { slot, imageUrl: ad.image_url || "", linkUrl: ad.link_url || "" };
+            return {
+              slot,
+              imageUrl: ad.image_url || "",
+              mediaType: slot === 1 && ad.media_type === "video" ? "video" : "image",
+              posterUrl: ad.poster_url || "",
+              linkUrl: ad.link_url || "",
+            };
           }));
         }
       } catch {
@@ -5928,6 +5934,63 @@ export default function Stallyard() {
     }
   };
 
+  const handleHomepageAdVideoSelect = async (e, slot) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file || slot !== 1) return;
+    if (!["video/mp4", "video/webm"].includes(file.type)) {
+      showToast("Use an MP4 or WebM video");
+      return;
+    }
+    if (file.size > 40 * 1024 * 1024) {
+      showToast("Video is too large — maximum size is 40 MB");
+      return;
+    }
+    setHomepageAdUploading(slot);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/homepage-ads/upload-video`, {
+        method: "POST",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Video upload failed");
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? {
+        ...ad,
+        imageUrl: data.url,
+        mediaType: "video",
+      } : ad));
+      showToast("Ad 1 video uploaded — click Save ad to publish it");
+    } catch (err) {
+      showToast(err.message || "Couldn't upload that ad video");
+    } finally {
+      setHomepageAdUploading(null);
+    }
+  };
+
+  const handleHomepageAdPosterSelect = async (e, slot) => {
+    const file = (e.target.files || [])[0];
+    e.target.value = "";
+    if (!file || slot !== 1) return;
+    setHomepageAdUploading(slot);
+    try {
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
+      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads/posters" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Poster upload failed");
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, posterUrl: data.url } : ad));
+      showToast("Video poster uploaded — click Save ad to publish it");
+    } catch (err) {
+      showToast(err.message || "Couldn't upload that poster image");
+    } finally {
+      setHomepageAdUploading(null);
+    }
+  };
+
   const saveHomepageAd = async (slot) => {
     const ad = homepageAds.find((item) => item.slot === slot);
     if (!ad) return;
@@ -5936,13 +5999,20 @@ export default function Stallyard() {
       const res = await authFetch(`${BACKEND_URL}/admin/homepage-ads/${slot}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: ad.imageUrl || "", linkUrl: ad.linkUrl || "" }),
+        body: JSON.stringify({
+          imageUrl: ad.imageUrl || "",
+          mediaType: ad.slot === 1 ? (ad.mediaType || "image") : "image",
+          posterUrl: ad.slot === 1 ? (ad.posterUrl || "") : "",
+          linkUrl: ad.linkUrl || "",
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save ad");
       setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
         slot,
         imageUrl: data.ad?.image_url || "",
+        mediaType: slot === 1 && data.ad?.media_type === "video" ? "video" : "image",
+        posterUrl: data.ad?.poster_url || "",
         linkUrl: data.ad?.link_url || "",
       } : item));
       showToast(`Homepage ad ${slot} saved`);
@@ -8046,11 +8116,25 @@ export default function Stallyard() {
                       }}
                     >
                       {ad.imageUrl ? (
-                        <img
-                          src={ad.imageUrl}
-                          alt={`Stallyard featured promotion ${ad.slot}`}
-                          className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
-                        />
+                        isPrimary && ad.mediaType === "video" ? (
+                          <video
+                            src={ad.imageUrl}
+                            poster={ad.posterUrl || undefined}
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                            aria-label="Stallyard featured video promotion"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={ad.imageUrl}
+                            alt={`Stallyard featured promotion ${ad.slot}`}
+                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
+                          />
+                        )
                       ) : (
                         <div
                           className="absolute inset-0 flex items-center justify-center"
@@ -12945,7 +13029,7 @@ export default function Stallyard() {
                     Homepage ads
                   </h3>
                   <p className="text-sm mt-1" style={{ color: SLATE }}>
-                    Control the three clickable promotional images shown at the top of the Stallyard homepage. Ad 1 is the large feature; Ads 2 and 3 are the two smaller cards.
+                    Control the three clickable promotions shown at the top of the Stallyard homepage. Ad 1 can be an image or a short autoplay video; Ads 2 and 3 stay lightweight images.
                   </p>
                 </div>
 
@@ -12955,7 +13039,9 @@ export default function Stallyard() {
                       <div className="flex items-center justify-between gap-2 mb-3">
                         <div>
                           <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
-                          <p className="text-xs" style={{ color: SLATE }}>{ad.slot === 1 ? "Large feature" : "Small feature"}</p>
+                          <p className="text-xs" style={{ color: SLATE }}>
+                            {ad.slot === 1 ? "Large feature — image or video" : "Small feature — image"}
+                          </p>
                         </div>
                         {ad.imageUrl && (
                           <button
@@ -12964,14 +13050,51 @@ export default function Stallyard() {
                             className="text-xs underline"
                             style={{ color: BERRY }}
                           >
-                            Remove image
+                            Remove media
                           </button>
                         )}
                       </div>
 
-                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "4 / 3" : "16 / 9" }}>
+                      {ad.slot === 1 && (
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                          {["image", "video"].map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === 1 ? {
+                                ...item,
+                                mediaType: type,
+                                imageUrl: item.mediaType === type ? item.imageUrl : "",
+                              } : item))}
+                              className="px-3 py-2 rounded-lg border text-sm font-medium"
+                              style={{
+                                borderColor: ad.mediaType === type ? MARIGOLD : "#DDD8CC",
+                                backgroundColor: ad.mediaType === type ? "#FBF0DC" : "white",
+                                color: INK,
+                              }}
+                            >
+                              {type === "image" ? "Image" : "Video"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "16 / 9" : "16 / 9" }}>
                         {ad.imageUrl ? (
-                          <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
+                          ad.slot === 1 && ad.mediaType === "video" ? (
+                            <video
+                              src={ad.imageUrl}
+                              poster={ad.posterUrl || undefined}
+                              muted
+                              loop
+                              playsInline
+                              controls
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
+                          )
                         ) : (
                           <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
                             <ImageIcon size={32} />
@@ -12979,21 +13102,64 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
-                      <label
-                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                        style={{ borderColor: "#DDD8CC", color: SLATE }}
-                      >
-                        <ImageIcon size={16} />
-                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={homepageAdUploading === ad.slot}
-                          onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
-                        />
-                      </label>
+                      {ad.slot === 1 && ad.mediaType === "video" ? (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Video</label>
+                          <label
+                            className="mb-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change video" : "Choose video"}
+                            <input
+                              type="file"
+                              accept="video/mp4,video/webm"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdVideoSelect(e, ad.slot)}
+                            />
+                          </label>
+                          <p className="text-xs mb-3" style={{ color: SLATE }}>MP4 or WebM, ideally 10–20 seconds, maximum 40 MB. It will autoplay muted and loop.</p>
+
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Poster image (optional)</label>
+                          {ad.posterUrl && (
+                            <div className="mb-2 rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
+                              <img src={ad.posterUrl} alt="Ad 1 video poster" className="w-full h-24 object-cover" />
+                            </div>
+                          )}
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {ad.posterUrl ? "Change poster" : "Choose poster image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdPosterSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
+                      )}
 
                       <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
                       <input
