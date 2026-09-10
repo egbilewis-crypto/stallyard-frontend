@@ -1641,6 +1641,7 @@ export default function Stallyard() {
   }, [categoriesMenuOpen]);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  const [sessionUserProfile, setSessionUserProfile] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
   const [pendingPasswordReset, setPendingPasswordReset] = useState(null);
@@ -2013,11 +2014,13 @@ export default function Stallyard() {
           bootstrapAuthenticated = true;
           setAuthToken("cookie-session");
           if (sessionData.user?.username) {
+            setSessionUserProfile(sessionData.user);
             setCurrentUser(sessionData.user.username);
             await window.storage.set("stallyard-session", sessionData.user.username, false);
           }
         } else {
           setAuthToken(null);
+          setSessionUserProfile(null);
           await window.storage.delete("stallyard-session", false);
           // Remove any token left behind by pre-cookie versions of Stallyard.
           await window.storage.delete("stallyard-auth-token", false);
@@ -2661,6 +2664,7 @@ export default function Stallyard() {
       setEmailVerifyError(data.error || "Something went wrong creating your account.");
       return;
     }
+    setSessionUserProfile(data.user);
     const newMember = backendUserToMember(data.user);
     await persistMembers([...members, newMember]);
     await saveAuthToken(true);
@@ -2751,6 +2755,7 @@ export default function Stallyard() {
       return;
     }
     const existing = members.find((m) => m.username === currentUser);
+    setSessionUserProfile(data.user);
     const updatedMember = backendUserToMember(data.user, existing);
     await persistMembers(members.map((m) => (m.username === currentUser ? updatedMember : m)));
     setProfileStageOpen(false);
@@ -2827,6 +2832,7 @@ export default function Stallyard() {
 
   const completeLogin = async (data, username) => {
     const existing = members.find((m) => m.username === username);
+    setSessionUserProfile(data.user);
     const member = backendUserToMember(data.user, existing);
     const nextMembers = existing
       ? members.map((m) => (m.username === username ? member : m))
@@ -2996,7 +3002,13 @@ export default function Stallyard() {
     showToast("Logged out");
   };
 
-  const currentMember = members.find((m) => m.username === currentUser) || null;
+  const publicCurrentMember = members.find((m) => m.username === currentUser) || null;
+  // For the signed-in user's own account, trust the authenticated /session/me
+  // profile instead of the privacy-limited public /users record. This keeps
+  // seller approval/verification state available without exposing it publicly.
+  const currentMember = currentUser && sessionUserProfile?.username === currentUser
+    ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
+    : publicCurrentMember;
 
   // Keep the admin origin completely separate from the buyer/seller storefront.
   // The admin host gets its own browser title and can render only the admin view.
