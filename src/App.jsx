@@ -88,6 +88,463 @@ const CATEGORIES = [
   "Other",
 ];
 
+const SUBCATEGORIES = {
+  "Accessories": [
+    "Belts",
+    "Hats & Caps",
+    "Scarves & Wraps",
+    "Sunglasses",
+    "Eyewear",
+    "Hair Accessories",
+    "Gloves",
+    "Wallets",
+    "Keychains",
+    "Umbrellas",
+    "Watches",
+    "Fashion Accessories",
+    "Other Accessories"
+  ],
+  "Art": [
+    "Paintings",
+    "Drawings & Illustrations",
+    "Prints",
+    "Photography",
+    "Sculpture",
+    "Digital Art",
+    "Wall Art",
+    "African Art",
+    "Mixed Media",
+    "Art Supplies",
+    "Posters",
+    "Other Art"
+  ],
+  "Auto Parts": [
+    "Engine Parts",
+    "Transmission Parts",
+    "Brakes",
+    "Suspension & Steering",
+    "Tires",
+    "Wheels & Rims",
+    "Batteries",
+    "Alternators & Starters",
+    "Filters",
+    "Exhaust Parts",
+    "Cooling System",
+    "Fuel System",
+    "Electrical Parts",
+    "Headlights & Lighting",
+    "Mirrors",
+    "Body Parts",
+    "Bumpers",
+    "Doors & Windows",
+    "Interior Parts",
+    "Car Audio",
+    "GPS & Electronics",
+    "Tools & Equipment",
+    "Motorcycle Parts",
+    "Truck Parts",
+    "Car Care Products",
+    "Other Auto Parts"
+  ],
+  "Bags & Purses": [
+    "Handbags",
+    "Shoulder Bags",
+    "Crossbody Bags",
+    "Tote Bags",
+    "Backpacks",
+    "Clutches",
+    "Wallets",
+    "Travel Bags",
+    "Laptop Bags",
+    "School Bags",
+    "Briefcases",
+    "Luggage",
+    "Cosmetic Bags",
+    "Other Bags"
+  ],
+  "Bath & Beauty": [
+    "Skin Care",
+    "Hair Care",
+    "Makeup",
+    "Fragrances",
+    "Bath Products",
+    "Body Care",
+    "Nail Care",
+    "Shaving & Grooming",
+    "Beauty Tools",
+    "Hair Extensions & Wigs",
+    "Natural Beauty Products",
+    "Men's Grooming",
+    "Other Beauty Products"
+  ],
+  "Books": [
+    "Fiction",
+    "Nonfiction",
+    "Children's Books",
+    "Textbooks",
+    "Academic Books",
+    "Religious Books",
+    "Business Books",
+    "Self-Help",
+    "Cookbooks",
+    "Comics & Graphic Novels",
+    "Magazines",
+    "Dictionaries",
+    "Exam Preparation",
+    "Used Books",
+    "Rare Books",
+    "Other Books"
+  ],
+  "Clothing": [
+    "Men's Clothing",
+    "Women's Clothing",
+    "Boys' Clothing",
+    "Girls' Clothing",
+    "Dresses",
+    "Shirts",
+    "T-Shirts",
+    "Trousers",
+    "Jeans",
+    "Shorts",
+    "Skirts",
+    "Suits",
+    "Jackets & Coats",
+    "Sweaters",
+    "Sportswear",
+    "Underwear",
+    "Sleepwear",
+    "Swimwear",
+    "Traditional Nigerian Clothing",
+    "Maternity Clothing",
+    "Uniforms",
+    "Other Clothing"
+  ],
+  "Collectibles": [
+    "Coins",
+    "Stamps",
+    "Trading Cards",
+    "Sports Memorabilia",
+    "Music Memorabilia",
+    "Movie Memorabilia",
+    "Historical Memorabilia",
+    "Figurines",
+    "Dolls",
+    "Antiques",
+    "Vintage Collectibles",
+    "Autographs",
+    "Advertising Collectibles",
+    "African Collectibles",
+    "Other Collectibles"
+  ],
+  "Craft Supplies & Tools": [
+    "Beads",
+    "Fabric",
+    "Yarn",
+    "Sewing Supplies",
+    "Knitting Supplies",
+    "Crochet Supplies",
+    "Jewelry Making",
+    "Leatherworking",
+    "Woodworking",
+    "Painting Supplies",
+    "Drawing Supplies",
+    "Sculpting Supplies",
+    "Candle Making",
+    "Soap Making",
+    "Floral Supplies",
+    "Craft Tools",
+    "Other Craft Supplies"
+  ],
+  "Electronics": [
+    "Mobile Phones",
+    "Smartphones",
+    "Tablets",
+    "Laptops",
+    "Desktop Computers",
+    "Computer Components",
+    "Computer Accessories",
+    "Monitors",
+    "Televisions",
+    "Projectors",
+    "Cameras",
+    "Camera Accessories",
+    "Video Cameras",
+    "Headphones",
+    "Earbuds",
+    "Speakers",
+    "Home Audio",
+    "Gaming Consoles",
+    "Video Games",
+    "Smart Watches",
+    "Wearable Technology",
+    "Chargers & Cables",
+    "Power Banks",
+    "Routers & Networking",
+    "Printers & Scanners",
+    "Storage Devices",
+    "Security Cameras",
+    "Smart Home Devices",
+    "Electronic Accessories",
+    "Other Electronics"
+  ],
+  "Gifts": [
+    "Birthday Gifts",
+    "Wedding Gifts",
+    "Anniversary Gifts",
+    "Graduation Gifts",
+    "Baby Gifts",
+    "Gifts for Him",
+    "Gifts for Her",
+    "Gifts for Kids",
+    "Corporate Gifts",
+    "Personalized Gifts",
+    "Gift Sets",
+    "Gift Cards",
+    "Holiday Gifts",
+    "Other Gifts"
+  ],
+  "Groceries": [
+    "Rice & Grains",
+    "Pasta & Noodles",
+    "Flour & Baking",
+    "Cooking Oil",
+    "Spices & Seasonings",
+    "Canned Foods",
+    "Snacks",
+    "Biscuits & Cookies",
+    "Sweets & Chocolate",
+    "Beverages",
+    "Tea & Coffee",
+    "Breakfast Foods",
+    "Dairy Products",
+    "Frozen Foods",
+    "Fresh Produce",
+    "Meat & Seafood",
+    "Nigerian Food Products",
+    "Health Foods",
+    "Baby Food",
+    "Other Groceries"
+  ],
+  "Handmade": [
+    "Handmade Jewelry",
+    "Handmade Clothing",
+    "Handmade Bags",
+    "Handmade Shoes",
+    "Handmade Furniture",
+    "Handmade Home Decor",
+    "Handmade Art",
+    "Handmade Toys",
+    "Handmade Beauty Products",
+    "Handmade Gifts",
+    "Handmade Accessories",
+    "Traditional Crafts",
+    "Other Handmade Items"
+  ],
+  "Home": [
+    "Furniture",
+    "Living Room Furniture",
+    "Bedroom Furniture",
+    "Dining Furniture",
+    "Office Furniture",
+    "Home Decor",
+    "Rugs & Carpets",
+    "Curtains & Blinds",
+    "Lighting",
+    "Bedding",
+    "Mattresses",
+    "Kitchenware",
+    "Cookware",
+    "Dinnerware",
+    "Small Appliances",
+    "Major Appliances",
+    "Storage & Organization",
+    "Bathroom Accessories",
+    "Cleaning Supplies",
+    "Garden & Outdoor",
+    "Home Improvement",
+    "Tools",
+    "Other Home Items"
+  ],
+  "Jewelry": [
+    "Rings",
+    "Necklaces",
+    "Earrings",
+    "Bracelets",
+    "Anklets",
+    "Chains",
+    "Pendants",
+    "Brooches",
+    "Engagement Rings",
+    "Wedding Rings",
+    "Men's Jewelry",
+    "Women's Jewelry",
+    "Gold Jewelry",
+    "Silver Jewelry",
+    "Beaded Jewelry",
+    "Costume Jewelry",
+    "Traditional Jewelry",
+    "Other Jewelry"
+  ],
+  "Kids & Baby": [
+    "Baby Clothing",
+    "Kids' Clothing",
+    "Baby Shoes",
+    "Kids' Shoes",
+    "Diapers",
+    "Baby Feeding",
+    "Bottles",
+    "Strollers",
+    "Car Seats",
+    "Cribs",
+    "Baby Bedding",
+    "Baby Furniture",
+    "Baby Bath",
+    "Maternity Products",
+    "School Supplies",
+    "Kids' Accessories",
+    "Other Baby & Kids Items"
+  ],
+  "Movies & Music": [
+    "DVDs",
+    "Blu-rays",
+    "CDs",
+    "Vinyl Records",
+    "Music Downloads/Media",
+    "Movie Collectibles",
+    "Music Collectibles",
+    "Musical Instruments",
+    "Guitars",
+    "Keyboards & Pianos",
+    "Drums",
+    "DJ Equipment",
+    "Studio Equipment",
+    "Microphones",
+    "Other Movies & Music"
+  ],
+  "Outdoors": [
+    "Camping",
+    "Hiking",
+    "Fishing",
+    "Cycling",
+    "Sports Equipment",
+    "Football",
+    "Basketball",
+    "Fitness Equipment",
+    "Gym Equipment",
+    "Running",
+    "Swimming",
+    "Hunting Accessories",
+    "Outdoor Furniture",
+    "Garden Equipment",
+    "Travel Gear",
+    "Other Outdoor Items"
+  ],
+  "Paper & Party Supplies": [
+    "Invitations",
+    "Greeting Cards",
+    "Gift Wrap",
+    "Gift Bags",
+    "Stickers",
+    "Stationery",
+    "Notebooks",
+    "Journals",
+    "Party Decorations",
+    "Balloons",
+    "Cake Decorations",
+    "Party Favors",
+    "Event Supplies",
+    "Other Party Supplies"
+  ],
+  "Pet Supplies": [
+    "Dog Supplies",
+    "Cat Supplies",
+    "Bird Supplies",
+    "Fish & Aquarium Supplies",
+    "Pet Food",
+    "Pet Beds",
+    "Collars & Leashes",
+    "Pet Clothing",
+    "Pet Toys",
+    "Grooming Supplies",
+    "Pet Carriers",
+    "Other Pet Supplies"
+  ],
+  "Shoes": [
+    "Men's Shoes",
+    "Women's Shoes",
+    "Boys' Shoes",
+    "Girls' Shoes",
+    "Sneakers",
+    "Sandals",
+    "Slippers",
+    "Boots",
+    "Heels",
+    "Flats",
+    "Formal Shoes",
+    "Work Shoes",
+    "Sports Shoes",
+    "Traditional Footwear",
+    "Other Shoes"
+  ],
+  "Toys & Games": [
+    "Action Figures",
+    "Dolls",
+    "Educational Toys",
+    "Building Toys",
+    "Baby Toys",
+    "Outdoor Toys",
+    "Remote-Control Toys",
+    "Board Games",
+    "Card Games",
+    "Puzzles",
+    "Video Games",
+    "Gaming Accessories",
+    "Stuffed Animals",
+    "Other Toys & Games"
+  ],
+  "Vintage": [
+    "Vintage Clothing",
+    "Vintage Jewelry",
+    "Vintage Furniture",
+    "Vintage Home Decor",
+    "Vintage Electronics",
+    "Vintage Books",
+    "Vintage Toys",
+    "Vintage Bags",
+    "Vintage Shoes",
+    "Vintage Collectibles",
+    "Other Vintage Items"
+  ],
+  "Weddings": [
+    "Wedding Dresses",
+    "Bridesmaid Dresses",
+    "Groom & Groomsmen",
+    "Wedding Shoes",
+    "Wedding Jewelry",
+    "Wedding Accessories",
+    "Invitations",
+    "Decorations",
+    "Cake Accessories",
+    "Wedding Favors",
+    "Bridal Shower",
+    "Traditional Wedding Items",
+    "Wedding Gifts",
+    "Other Wedding Supplies"
+  ],
+  "Other": [
+    "Business & Industrial",
+    "Office Supplies",
+    "Medical Supplies",
+    "Agricultural Equipment",
+    "Construction Equipment",
+    "Tools & Machinery",
+    "Renewable Energy",
+    "Solar Equipment",
+    "Safety Equipment",
+    "Miscellaneous"
+  ]
+};
+
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
 
 const NIGERIAN_STATES = [
@@ -366,6 +823,7 @@ function backendListingToFrontend(row, existing) {
     description: row.description || "",
     price: Number(row.price),
     category: row.category,
+    subcategory: row.subcategory || "",
     condition: row.condition,
     shippingFee: Number(row.shipping_fee) || 0,
     emoji: row.emoji || "📦",
@@ -1156,6 +1614,7 @@ export default function Stallyard() {
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("All");
   const [categoriesMenuOpen, setCategoriesMenuOpen] = useState(false);
   const categoriesMenuRef = useRef(null);
   const [conditionFilter, setConditionFilter] = useState("All");
@@ -1458,6 +1917,7 @@ export default function Stallyard() {
     description: "",
     price: "",
     category: "Handmade",
+    subcategory: "",
     condition: "New",
     emoji: "📦",
     fitMake: "",
@@ -6068,6 +6528,10 @@ export default function Stallyard() {
       showToast("Give it a price before publishing");
       return;
     }
+    if (!isDraft && !form.subcategory) {
+      showToast("Choose a subcategory before publishing");
+      return;
+    }
     if (!isDraft && form.images.length < MIN_LISTING_PHOTOS) {
       showToast(`Add at least ${MIN_LISTING_PHOTOS} photos before publishing`);
       return;
@@ -6143,6 +6607,7 @@ export default function Stallyard() {
             description: form.description,
             price: form.price ? Number(form.price) : 0,
             category: form.category,
+            subcategory: form.subcategory,
             condition: form.condition,
             shippingFee: Number(form.shippingFee) || 0,
             emoji: form.emoji,
@@ -6197,6 +6662,7 @@ export default function Stallyard() {
       description: listing.description,
       price: String(listing.price),
       category: listing.category,
+      subcategory: listing.subcategory || "",
       condition: listing.condition || "New",
       emoji: listing.emoji,
       fitMake: listing.fitMake || "",
@@ -6889,6 +7355,7 @@ export default function Stallyard() {
   const filtered = listings
     .filter((l) => {
       const matchesCategory = categoryFilter === "All" || l.category === categoryFilter;
+      const matchesSubcategory = subcategoryFilter === "All" || l.subcategory === subcategoryFilter;
       const matchesCondition = conditionFilter === "All" || (l.condition || "New") === conditionFilter;
       const q = search.trim().toLowerCase();
       const matchesSearch =
@@ -6897,7 +7364,7 @@ export default function Stallyard() {
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
-      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
+      return matchesCategory && matchesSubcategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
     })
     .sort((a, b) => {
       if (sortBy === "price-asc") return Number(a.price) - Number(b.price);
@@ -6918,7 +7385,7 @@ export default function Stallyard() {
     .slice()
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     .slice(0, 10);
-  const isHomeState = !search.trim() && categoryFilter === "All" && !priceMin && !priceMax && conditionFilter === "All";
+  const isHomeState = !search.trim() && categoryFilter === "All" && subcategoryFilter === "All" && !priceMin && !priceMax && conditionFilter === "All";
 
   const NavButton = ({ id, icon: Icon, label, badge, onClick }) => (
     <button
@@ -7882,7 +8349,7 @@ export default function Stallyard() {
                   <div className="max-h-[560px] overflow-y-auto py-2">
                     <button
                       type="button"
-                      onClick={() => { setCategoryFilter("All"); setView("browse"); setCategoriesMenuOpen(false); }}
+                      onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setCategoriesMenuOpen(false); }}
                       className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
                       style={{ color: INK, backgroundColor: categoryFilter === "All" ? "#F6F3EC" : "white" }}
                       role="menuitem"
@@ -7894,7 +8361,7 @@ export default function Stallyard() {
                       <button
                         key={category}
                         type="button"
-                        onClick={() => { setCategoryFilter(category); setView("browse"); setSelected(null); setCategoriesMenuOpen(false); }}
+                        onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setView("browse"); setSelected(null); setCategoriesMenuOpen(false); }}
                         className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
                         style={{ color: INK, backgroundColor: categoryFilter === category ? "#F6F3EC" : "white" }}
                         role="menuitem"
@@ -7924,7 +8391,7 @@ export default function Stallyard() {
               </div>
               <select
                 value={categoryFilter}
-                onChange={(e) => { setCategoryFilter(e.target.value); setView("browse"); setSelected(null); }}
+                onChange={(e) => { setCategoryFilter(e.target.value); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
                 className="hidden lg:block max-w-[185px] px-4 border-l outline-none bg-white text-sm"
                 style={{ borderColor: "#DDD8CC", color: SLATE }}
                 aria-label="Search category"
@@ -7947,7 +8414,7 @@ export default function Stallyard() {
           <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
             <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-7 overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
               <button
-                onClick={() => { setCategoryFilter("All"); setView("browse"); setSelected(null); }}
+                onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
                 className="px-3 py-1 rounded-full font-medium shrink-0"
                 style={{ backgroundColor: categoryFilter === "All" ? "#F4F1EA" : "transparent" }}
               >
@@ -7956,7 +8423,7 @@ export default function Stallyard() {
               {CATEGORIES.slice(0, 12).map((category) => (
                 <button
                   key={category}
-                  onClick={() => { setCategoryFilter(category); setView("browse"); setSelected(null); }}
+                  onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
                   className="hover:underline shrink-0"
                   style={{ fontWeight: categoryFilter === category ? 700 : 400 }}
                 >
@@ -8345,6 +8812,20 @@ export default function Stallyard() {
               </div>
             )}
 
+            {categoryFilter !== "All" && (SUBCATEGORIES[categoryFilter] || []).length > 0 && (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold mb-1" style={{ color: SLATE }}>Subcategory</label>
+                <select
+                  value={subcategoryFilter}
+                  onChange={(e) => setSubcategoryFilter(e.target.value)}
+                  className="w-full sm:w-auto px-3 py-2 rounded-lg border bg-white text-sm"
+                  style={{ borderColor: "#DDD8CC", color: INK }}
+                >
+                  <option value="All">All {categoryFilter}</option>
+                  {(SUBCATEGORIES[categoryFilter] || []).map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
             {categoryFilter !== "All" && (
               <button
                 onClick={() => setCategoryFilter("All")}
@@ -8616,6 +9097,7 @@ export default function Stallyard() {
                       setForm({
                         ...form,
                         category: e.target.value,
+                        subcategory: "",
                         emoji:
                           e.target.value === "Auto Parts" && form.emoji === "📦"
                             ? "🔧"
@@ -8634,6 +9116,22 @@ export default function Stallyard() {
                     ))}
                   </select>
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Subcategory
+                </label>
+                <select
+                  value={form.subcategory}
+                  onChange={(e) => setForm({ ...form, subcategory: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                  style={{ borderColor: "#DDD8CC" }}
+                >
+                  <option value="">Choose a subcategory</option>
+                  {(SUBCATEGORIES[form.category] || []).map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </div>
               <div className="flex gap-3 flex-wrap">
                 <div className="flex-1 min-w-[100px]">
@@ -17380,7 +17878,7 @@ export default function Stallyard() {
               {form.price ? Number(form.price).toFixed(2) : "0.00"}
             </div>
             <div className="text-sm mb-3" style={{ color: SLATE }}>
-              {form.category} · {form.condition}
+              {form.category}{form.subcategory ? ` › ${form.subcategory}` : ""} · {form.condition}
               {form.quantity && ` · Qty: ${form.quantity}`}
             </div>
             {form.description && (
