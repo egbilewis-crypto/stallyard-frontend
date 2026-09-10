@@ -7114,14 +7114,6 @@ export default function Stallyard() {
     showToast(isFollowing ? "Unfollowed" : "Following");
   };
 
-  const noAdminExists = members.length > 0 && !members.some((m) => m.isAdmin);
-
-  const claimAdmin = async () => {
-    if (!currentUser) return;
-    await persistMembers(members.map((m) => (m.username === currentUser ? { ...m, isAdmin: true } : m)));
-    showToast("You're now the marketplace admin");
-  };
-
   const myListings = listings.filter((l) => l.ownerUsername === currentUser);
   const filteredMyListings =
     manageListingsTab === "all" ? myListings : myListings.filter((l) => l.status === manageListingsTab);
@@ -8551,23 +8543,6 @@ export default function Stallyard() {
               </div>
             )
           )}
-        {membersLoaded && noAdminExists && currentUser && !currentMember?.isAdmin && (
-          <div
-            className="mb-6 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
-            style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
-          >
-            <p className="text-sm" style={{ color: INK }}>
-              This marketplace doesn't have an admin yet.
-            </p>
-            <button
-              onClick={claimAdmin}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium"
-              style={{ backgroundColor: INK, color: "white" }}
-            >
-              Claim admin access
-            </button>
-          </div>
-        )}
         {view === "browse" && (
           <>
             {isHomeState && (
