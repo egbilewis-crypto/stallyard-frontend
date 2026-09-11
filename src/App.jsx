@@ -9131,6 +9131,85 @@ export default function Stallyard() {
           </>
         )}
 
+        {view === "become-seller" && (
+          <section className="max-w-6xl mx-auto">
+            <div className="text-center mb-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Sell on Stallyard</p>
+              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Become a Stallyard seller</h1>
+              <p className="mt-4 text-sm sm:text-base max-w-3xl mx-auto leading-7" style={{ color: SLATE }}>
+                Reach buyers across Nigeria, list your products, and get paid after a secure delivery handoff. Seller verification is required before any listing can go live.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-10">
+              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
+                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">✓</div>
+                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Get verified first</h2>
+                <p className="text-sm leading-6" style={{ color: SLATE }}>Stallyard reviews seller information before selling is enabled. This helps protect buyers and the marketplace.</p>
+              </div>
+              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
+                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">5%</div>
+                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Simple selling fee</h2>
+                <p className="text-sm leading-6" style={{ color: SLATE }}>Stallyard charges a 5% commission on completed sales. Marketplace payments are processed in Nigerian naira.</p>
+              </div>
+              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
+                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">₦</div>
+                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Get paid after delivery</h2>
+                <p className="text-sm leading-6" style={{ color: SLATE }}>At delivery, the buyer gives you their private token. You enter it and upload the delivery photo. If there is no active dispute or return, your payment can be released.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
+                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>What you’ll need</h2>
+                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A Stallyard account with your name and email</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A verified Nigerian phone number</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your address in Nigeria</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A valid government-issued ID</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>One bank statement showing your account information and account history</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your Nigerian payout bank details</span></li>
+                </ul>
+              </div>
+
+              <div className="rounded-2xl border p-6 sm:p-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
+                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>How selling works</h2>
+                <ol className="space-y-4 text-sm leading-6" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>1.</span><span>Create your Stallyard account and submit seller verification.</span></li>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>2.</span><span>After approval, create your listing with photos, price, category and subcategory.</span></li>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>3.</span><span>The buyer pays electronically through Paystack. Stallyard does not use cash on delivery.</span></li>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>4.</span><span>Deliver the item, enter the buyer’s delivery token and upload the delivery photo.</span></li>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>5.</span><span>If the delivery checks pass and there is no active dispute or return, the seller payment is released.</span></li>
+                </ol>
+              </div>
+            </div>
+
+            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
+              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Ready to start selling?</h2>
+              <p className="mt-2 text-sm max-w-2xl mx-auto" style={{ color: "#C9CCD3" }}>
+                Seller verification must be approved before your first listing can go live.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!currentUser) {
+                    openRegistration("seller");
+                    return;
+                  }
+                  setSelected(null);
+                  setView("sell");
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                className="mt-6 px-6 py-3 rounded-lg font-semibold"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                {currentUser ? (currentMember?.isApproved === false ? "Start seller verification" : "Create a listing") : "Start seller registration"}
+              </button>
+              <p className="text-xs mt-4" style={{ color: "#8A93A3" }}>Nigeria-only marketplace · Payments in naira · 5% commission on completed sales</p>
+            </div>
+          </section>
+        )}
+
         {view === "sell" && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
@@ -17082,7 +17161,7 @@ export default function Stallyard() {
               Sell
             </h3>
             <div className="flex flex-col gap-2">
-              <button onClick={() => setView("sell")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button onClick={() => { setSelected(null); setView("become-seller"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Become a seller
               </button>
               <button onClick={() => setView("dashboard")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
