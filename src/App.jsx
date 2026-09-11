@@ -9131,6 +9131,102 @@ export default function Stallyard() {
           </>
         )}
 
+        {view === "shipping-delivery" && (
+          <section className="max-w-6xl mx-auto">
+            <div className="text-center mb-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Shipping & delivery</p>
+              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>From seller to buyer, safely</h1>
+              <p className="mt-4 text-sm sm:text-base max-w-3xl mx-auto leading-7" style={{ color: SLATE }}>
+                Stallyard is a Nigeria-only marketplace. Sellers arrange delivery, buyers keep their delivery token private until the item is physically received, and seller funds stay protected until the delivery checks are complete.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
+              {[
+                { number: "1", title: "Seller prepares the order", text: "After a paid order appears, the seller prepares the item for delivery and adds carrier or tracking information when available." },
+                { number: "2", title: "Buyer follows the order", text: "The buyer can check the order status in Stallyard. The private 10-digit delivery token must not be shared while the item is still in transit." },
+                { number: "3", title: "Buyer receives the item", text: "Only after the item is physically delivered should the buyer give the delivery token to the seller." },
+                { number: "4", title: "Seller confirms delivery", text: "The seller enters the buyer's token and uploads a delivery photo. If the token is valid, proof is present, and there is no active dispute or return, the seller payment can be released." },
+              ].map((step) => (
+                <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-start gap-4">
+                    <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 font-bold text-lg" style={{ backgroundColor: MARIGOLD, color: INK }}>{step.number}</div>
+                    <div>
+                      <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{step.title}</h2>
+                      <p className="text-sm leading-6" style={{ color: SLATE }}>{step.text}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
+                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>For buyers</h2>
+                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Keep your 10-digit delivery token private until the item is actually in your possession.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Inspect the delivered item before handing the token to the seller.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Use your Stallyard order page to follow order and delivery status.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>If an item is late, missing, damaged, or significantly not as described, use Stallyard's support/dispute process instead of giving the token early.</span></li>
+                </ul>
+              </div>
+
+              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
+                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>For sellers</h2>
+                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Package the item securely and keep delivery/tracking information accurate when available.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Never ask the buyer for the delivery token before the item is physically delivered.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Enter the token only at delivery and upload a clear delivery photo as proof.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Do not mark an item delivered before actual delivery. An active dispute or return keeps the payment locked.</span></li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border p-6 sm:p-8 mb-8" style={{ borderColor: "#E7C8C5", backgroundColor: "#FFF7F6" }}>
+              <h2 className="text-2xl font-semibold mb-4" style={{ color: INK }}>If something goes wrong</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm leading-6" style={{ color: SLATE }}>
+                <div><strong style={{ color: INK }}>Late or missing delivery:</strong> check the order status and tracking information first, then contact support if the delivery cannot be resolved.</div>
+                <div><strong style={{ color: INK }}>Damaged or wrong item:</strong> do not give the delivery token simply to complete the transaction. Use the return/dispute process where applicable.</div>
+                <div><strong style={{ color: INK }}>Active dispute or return:</strong> seller payment remains locked while the case is being reviewed.</div>
+                <div><strong style={{ color: INK }}>No cash on delivery:</strong> marketplace payments are processed electronically through Paystack.</div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
+              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Need to check an order?</h2>
+              <p className="mt-2 text-sm" style={{ color: "#C9CCD3" }}>Open your Stallyard orders to review delivery status, or contact support if you need help.</p>
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!currentUser) {
+                      setAuthMode("login");
+                      setAuthError("");
+                      setAuthReturnView("orders");
+                      setView("signin");
+                    } else {
+                      setView("orders");
+                    }
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg font-semibold"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Track your orders
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setView("help"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg border font-semibold"
+                  style={{ borderColor: "#667085", color: "#FFFFFF" }}
+                >
+                  Contact support
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
         {view === "become-seller" && (
           <section className="max-w-6xl mx-auto">
             <div className="text-center mb-10">
@@ -9849,9 +9945,14 @@ export default function Stallyard() {
         {view === "dashboard" && (
           <div>
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-              <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-                My Stall
-              </h2>
+              <div>
+                <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                  Seller dashboard
+                </h2>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  Manage your listings, orders, deliveries, payouts, messages, and seller performance.
+                </p>
+              </div>
               {currentUser && currentMember?.isApproved !== false && (
                 <button
                   onClick={() => {
@@ -9862,10 +9963,32 @@ export default function Stallyard() {
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
                   <Plus size={16} />
-                  List new item
+                  Create a listing
                 </button>
               )}
             </div>
+            {currentUser && currentMember?.isApproved !== false && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
+                {[
+                  { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Money", action: () => setView("wallet") },
+                  { label: "Messages", action: () => setView("messages") },
+                  { label: "My Stall", action: () => openStorefront(currentUser) },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.action}
+                    className="px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium bg-white text-left sm:text-center"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
             {currentUser &&
               currentMember?.isApproved === false &&
               (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
@@ -9947,7 +10070,7 @@ export default function Stallyard() {
                     ID verification exemption on file
                   </p>
                 ) : null}
-                <h3 className="text-sm font-semibold mb-3 mt-4" style={{ color: INK }}>
+                <h3 id="seller-overview" className="text-sm font-semibold mb-3 mt-4 scroll-mt-24" style={{ color: INK }}>
                   Overview
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
@@ -10139,7 +10262,7 @@ export default function Stallyard() {
                         className="text-xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}
                       >
-                        ${walletNetAvailable.toFixed(2)}
+                        {formatMoney(walletNetAvailable, "NGN")}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
                         available
@@ -10150,7 +10273,7 @@ export default function Stallyard() {
                         className="text-xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
                       >
-                        ${walletHeld.toFixed(2)}
+                        {formatMoney(walletHeld, "NGN")}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
                         on hold
@@ -10169,7 +10292,7 @@ export default function Stallyard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span style={{ color: SLATE }}>$</span>
+                    <span style={{ color: SLATE }}>₦</span>
                     <input
                       type="number"
                       min="0"
@@ -10211,7 +10334,7 @@ export default function Stallyard() {
                         .map((w) => (
                           <div key={w.id} className="flex items-center justify-between text-sm">
                             <span style={{ color: INK }}>
-                              ${Number(w.amount).toFixed(2)} to your bank
+                              {formatMoney(Number(w.amount), "NGN")} to your bank
                             </span>
                             <span className="text-xs" style={{ color: SLATE }}>
                               Requested {new Date(w.requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -10297,7 +10420,7 @@ export default function Stallyard() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+                <div id="seller-listings" className="flex items-center gap-2 mb-3 overflow-x-auto scroll-mt-24">
                   {LISTING_MANAGE_TABS.map((t) => {
                     const count =
                       t.key === "all" ? myListings.length : myListings.filter((l) => l.status === t.key).length;
@@ -10488,8 +10611,8 @@ export default function Stallyard() {
                   </div>
                 )}
 
-                <h3 className="text-lg font-semibold mt-10 mb-3" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
-                  Sales
+                <h3 id="seller-sales" className="text-lg font-semibold mt-10 mb-3 scroll-mt-24" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+                  Orders & delivery
                 </h3>
                 {mySales.length > 0 && (
                   <div className="flex items-center gap-2 mb-3 overflow-x-auto">
@@ -17164,10 +17287,11 @@ export default function Stallyard() {
               <button onClick={() => { setSelected(null); setView("become-seller"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Become a seller
               </button>
-              <button onClick={() => setView("dashboard")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
-                Seller dashboard
-              </button>
-              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button
+                onClick={() => { setSelected(null); setView("shipping-delivery"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="text-sm text-left"
+                style={{ color: "#E5E7EB" }}
+              >
                 Shipping & delivery
               </button>
               <button onClick={() => setView("wallet")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
