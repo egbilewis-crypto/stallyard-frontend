@@ -1703,6 +1703,7 @@ export default function Stallyard() {
   const [adminTotpError, setAdminTotpError] = useState("");
   const [startingAdminTotpSetup, setStartingAdminTotpSetup] = useState(false);
   const [confirmingAdminTotpSetup, setConfirmingAdminTotpSetup] = useState(false);
+  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller | business
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -2721,7 +2722,7 @@ export default function Stallyard() {
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
-      accountType: "personal",
+      accountType: registrationIntent === "business" ? "business" : "personal",
       licensePhotos: [],
     });
     showToast(
@@ -2803,7 +2804,24 @@ export default function Stallyard() {
     );
   };
 
-    const login = async () => {
+  const openRegistration = (intent = "buyer") => {
+    const normalizedIntent = ["buyer", "seller", "business"].includes(intent) ? intent : "buyer";
+    setRegistrationIntent(normalizedIntent);
+    setAuthMode("register");
+    setAuthError("");
+    setPendingEmailVerification(null);
+    setEmailVerifyError("");
+    setAuthReturnView(normalizedIntent === "buyer" ? "browse" : "sell");
+    setAuthForm((prev) => ({
+      ...prev,
+      accountType: normalizedIntent === "business" ? "business" : "personal",
+      country: "Nigeria",
+    }));
+    setView("signup");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const login = async () => {
     setAuthError("");
     const username = authForm.username.trim().toLowerCase();
     let res;
@@ -8631,6 +8649,175 @@ export default function Stallyard() {
                   </div>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+
+        {view === "how-it-works" && (
+          <section className="max-w-5xl mx-auto">
+            <div className="text-center mb-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Simple. Secure. Built for Nigeria.</p>
+              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>How Stallyard works</h1>
+              <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Buy and sell across Nigeria with secure Paystack payments, a buyer delivery token, and proof of delivery before seller funds are released.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
+              {[
+                { number: "1", title: "Find an item", text: "Browse active Stallyard listings, search by keyword, or shop by category and subcategory." },
+                { number: "2", title: "Pay securely", text: "Complete checkout in Nigerian naira through Paystack. Stallyard does not support cash on delivery." },
+                { number: "3", title: "Receive your order", text: "The buyer receives a unique 10-digit delivery token after payment. Keep the token private until the item is physically delivered." },
+                { number: "4", title: "Confirm delivery", text: "At delivery, the buyer gives the token to the seller. The seller enters the token and uploads a delivery photo. If the token is valid, proof is present, and there is no active dispute or return, the seller payment is released." },
+              ].map((step) => (
+                <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-start gap-4">
+                    <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 font-bold text-lg" style={{ backgroundColor: MARIGOLD, color: INK }}>{step.number}</div>
+                    <div>
+                      <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{step.title}</h2>
+                      <p className="text-sm leading-6" style={{ color: SLATE }}>{step.text}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-2xl border p-6 sm:p-8 mb-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
+              <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>Important things to know</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-sm leading-6" style={{ color: SLATE }}>
+                <div className="flex gap-3"><span aria-hidden="true">🇳🇬</span><span><strong style={{ color: INK }}>Nigeria only:</strong> Stallyard is for buyers and sellers in Nigeria and marketplace payments are in naira.</span></div>
+                <div className="flex gap-3"><span aria-hidden="true">✓</span><span><strong style={{ color: INK }}>Verified sellers:</strong> sellers must complete Stallyard verification before they can list items.</span></div>
+                <div className="flex gap-3"><span aria-hidden="true">🔒</span><span><strong style={{ color: INK }}>No cash on delivery:</strong> payments are processed electronically through Paystack.</span></div>
+                <div className="flex gap-3"><span aria-hidden="true">⚖️</span><span><strong style={{ color: INK }}>Disputes and returns:</strong> an active dispute or return blocks seller payment release while the issue is reviewed.</span></div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
+              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Ready to use Stallyard?</h2>
+              <p className="mt-2 text-sm" style={{ color: "#C9CCD3" }}>Browse active listings or create an account to get started.</p>
+              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setSearch(""); setSelected(null); setView("browse"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg font-semibold"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Browse listings
+                </button>
+                {!currentUser && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-lg border font-semibold"
+                    style={{ borderColor: "#667085", color: "#FFFFFF" }}
+                  >
+                    Create an account
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {view === "create-account" && (
+          <section className="max-w-6xl mx-auto">
+            <div className="text-center mb-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Join Stallyard</p>
+              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Create your Stallyard account</h1>
+              <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Choose the account path that fits what you want to do. Stallyard is a Nigeria-only marketplace and marketplace payments are in naira.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+              {[
+                {
+                  intent: "buyer",
+                  icon: "🛍️",
+                  title: "Create a buyer account",
+                  text: "Shop active listings, save items, place orders, track delivery and use your private delivery token at handoff.",
+                  button: "Create buyer account",
+                },
+                {
+                  intent: "seller",
+                  icon: "🏷️",
+                  title: "Create a seller account",
+                  text: "Create a personal account, complete seller verification, then list products and receive payouts after valid delivery confirmation.",
+                  button: "Create seller account",
+                },
+                {
+                  intent: "business",
+                  icon: "🏢",
+                  title: "Create a business account",
+                  text: "Register your business/stall profile, complete the required verification, and sell under your business identity on Stallyard.",
+                  button: "Create business account",
+                },
+              ].map((option) => (
+                <div key={option.intent} className="rounded-2xl border bg-white p-6 flex flex-col" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">{option.icon}</div>
+                  <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{option.title}</h2>
+                  <p className="text-sm leading-6 mb-6 flex-1" style={{ color: SLATE }}>{option.text}</p>
+                  <button
+                    type="button"
+                    onClick={() => openRegistration(option.intent)}
+                    className="w-full px-4 py-2.5 rounded-lg font-semibold text-sm"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    {option.button}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="rounded-2xl border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+              <div className="p-6 sm:p-8 border-b" style={{ borderColor: "#EEE9DE", backgroundColor: "#FFF9EE" }}>
+                <h2 className="text-2xl sm:text-3xl font-semibold" style={{ color: INK }}>What you’ll need to sign up</h2>
+                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Basic account creation is quick. Seller and business accounts require additional verification before listings can go live.</p>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+                <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
+                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Buyer account</h3>
+                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Username and a strong password</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Working email address and email verification</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>First and last name</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Nigerian phone number and Nigeria residence details for account/checkout use</span></li>
+                  </ul>
+                </div>
+
+                <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
+                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Seller verification</h3>
+                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Everything needed for a buyer account</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Valid government-issued ID</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Verified phone number and Nigerian address/profile details</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>One bank statement to support seller verification and account-tenure review</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Seller approval is required before publishing listings</span></li>
+                  </ul>
+                </div>
+
+                <div className="p-6 sm:p-7">
+                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Business account</h3>
+                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business or stall name</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business/office location in Nigeria</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Representative’s name, phone number and government-issued ID</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Bank statement and seller-verification information before selling</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Payout bank details are added securely for seller withdrawals/payouts</span></li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" style={{ backgroundColor: INK }}>
+              <div>
+                <h2 className="text-xl sm:text-2xl font-semibold text-white">Already have a Stallyard account?</h2>
+                <p className="mt-1 text-sm" style={{ color: "#C9CCD3" }}>Sign in and continue where you left off.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setAuthMode("login"); setAuthError(""); setAuthReturnView("browse"); setView("signin"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="px-5 py-2.5 rounded-lg font-semibold shrink-0"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                Sign in
+              </button>
             </div>
           </section>
         )}
@@ -16877,15 +17064,12 @@ export default function Stallyard() {
               >
                 Categories
               </button>
-              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button onClick={() => { setSelected(null); setView("how-it-works"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 How it works
               </button>
               {!currentUser && (
                 <button
-                  onClick={() => {
-                    setAuthMode("register");
-                    setView("signup");
-                  }}
+                  onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                   className="text-sm text-left"
                   style={{ color: "#E5E7EB" }}
                 >
