@@ -17067,15 +17067,13 @@ export default function Stallyard() {
               <button onClick={() => { setSelected(null); setView("how-it-works"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 How it works
               </button>
-              {!currentUser && (
-                <button
-                  onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  className="text-sm text-left"
-                  style={{ color: "#E5E7EB" }}
-                >
-                  Create an account
-                </button>
-              )}
+              <button
+                onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="text-sm text-left"
+                style={{ color: "#E5E7EB" }}
+              >
+                Create an account
+              </button>
             </div>
           </div>
 
