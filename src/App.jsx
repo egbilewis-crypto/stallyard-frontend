@@ -644,9 +644,9 @@ const ADMIN_ROLE_ORDER = [
 const ADMIN_ROLE_PERMISSIONS = {
   seller_verification: new Set(["seller_verification"]),
   listing_moderator: new Set(["listing_moderation"]),
-  order_dispute: new Set(["dispute_resolution", "order_access", "order_management"]),
+  order_dispute: new Set(["dispute_resolution", "order_access", "order_management", "seller_report_review"]),
   finance: new Set(["finance", "order_access"]),
-  customer_support: new Set(["support_tickets", "message_moderation"]),
+  customer_support: new Set(["support_tickets", "message_moderation", "seller_report_review"]),
 };
 function hasAdminPermission(member, permission) {
   if (!member?.isAdmin) return false;
@@ -14811,6 +14811,11 @@ export default function Stallyard() {
                   permission: "dispute_resolution",
                 },
                 {
+                  id: "sellerReports",
+                  label: `Seller reports (${sellerReports.filter((r) => ["open", "in_review"].includes(r.status)).length})`,
+                  permission: "seller_report_review",
+                },
+                {
                   id: "accountReports",
                   label: `Account reports (${accountReports.filter((r) => r.status === "open").length})`,
                   requireSuperAdmin: true,
@@ -17640,6 +17645,24 @@ export default function Stallyard() {
                       )}
                     </div>
                   ))}
+              </div>
+            )}
+
+            {adminTab === "sellerReports" && hasAdminPermission(currentMember, "seller_report_review") && (
+              <div className="space-y-3">
+                <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Seller reports</h3>
+                {sellerReports.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No seller reports.</p>}
+                {sellerReports.map((r) => (
+                  <div key={r.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: ["open", "in_review"].includes(r.status) ? BERRY : "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2 flex-wrap"><span className="text-sm font-medium" style={{ color: INK }}>{r.reference} · Report against {r.seller_display_name || r.seller_username}</span><Tag color={r.status === "resolved" ? SAGE : r.status === "dismissed" ? SLATE : MARIGOLD}>{r.status.replace("_", " ")}</Tag></div>
+                    <div className="text-xs mt-1" style={{ color: SLATE }}>Reported by {r.reporter_display_name || r.reporter_username}{r.order_id ? ` · ${orderNumber(r.order_id)}` : ""} · {new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs font-medium mt-2" style={{ color: INK }}>{String(r.reason).replaceAll("_", " ")}</div>
+                    <div className="text-sm p-3 rounded-lg mt-2" style={{ backgroundColor: CANVAS, color: INK }}>{r.details}</div>
+                    {(r.evidence_urls || []).length > 0 && <div className="flex gap-2 mt-2 flex-wrap">{r.evidence_urls.map((url, index) => <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Report evidence ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" /></a>)}</div>}
+                    {r.admin_note && <div className="text-xs mt-2" style={{ color: SLATE }}>Admin note: {r.admin_note}</div>}
+                    {["open", "in_review"].includes(r.status) && <div className="flex gap-3 mt-3">{r.status === "open" && <button onClick={() => updateSellerReport(r.id, "in_review")} className="text-xs font-medium underline" style={{ color: MARIGOLD }}>Start review</button>}<button onClick={() => updateSellerReport(r.id, "resolved")} className="text-xs font-medium underline" style={{ color: SAGE }}>Resolve</button><button onClick={() => updateSellerReport(r.id, "dismissed")} className="text-xs font-medium underline" style={{ color: SLATE }}>Dismiss</button></div>}
+                  </div>
+                ))}
               </div>
             )}
 
