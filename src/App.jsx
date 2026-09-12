@@ -1003,6 +1003,7 @@ function backendOrderToFrontend(row) {
       // Secret delivery token is returned only on buyer-facing order responses.
       deliveryToken: i.delivery_token || null,
       deliveryTokenGeneratedAt: i.delivery_token_generated_at ? new Date(i.delivery_token_generated_at).getTime() : null,
+      deliveryTokenSentAt: i.delivery_token_sent_at ? new Date(i.delivery_token_sent_at).getTime() : null,
       deliveryTokenRedeemedAt: i.delivery_token_redeemed_at ? new Date(i.delivery_token_redeemed_at).getTime() : null,
       returnStatus: i.return_status || null,
       returnReason: i.return_reason || "",
@@ -1964,6 +1965,7 @@ export default function Stallyard() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [messageInput, setMessageInput] = useState("");
   const [messageError, setMessageError] = useState("");
+  const [sendingDeliveryTokenId, setSendingDeliveryTokenId] = useState(null);
   const [offerModalOpen, setOfferModalOpen] = useState(false);
   const [offerAmount, setOfferAmount] = useState("");
   const [form, setForm] = useState({
@@ -5302,6 +5304,36 @@ export default function Stallyard() {
       showToast("Couldn't reach the server — try again");
     } finally {
       setGeneratingTokenKey(null);
+    }
+  };
+
+  const sendDeliveryTokenToSeller = async (orderId, itemId) => {
+    const accepted = window.confirm(
+      "Send this token only after you have received and inspected the item. Sending it lets the seller complete delivery and release payment after uploading the delivery photo. Continue?"
+    );
+    if (!accepted) return;
+    setSendingDeliveryTokenId(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/send-delivery-token`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't send the token — try again");
+        return;
+      }
+      await persistOrders(
+        orders.map((order) => order.id !== orderId ? order : {
+          ...order,
+          items: order.items.map((item) => item.id === itemId ? {
+            ...item,
+            deliveryTokenSentAt: item.deliveryTokenSentAt || Date.now(),
+          } : item),
+        })
+      );
+      showToast(data.alreadySent ? "Token was already sent to the seller" : "Token sent to seller and added to Messages");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSendingDeliveryTokenId(null);
     }
   };
 
@@ -10848,6 +10880,7 @@ export default function Stallyard() {
                                         {FULFILLMENT_LABEL[i.fulfillmentStatus] || "New"}
                                       </Tag>
                                       {i.buyerConfirmedAt && <Tag color={SAGE}>Buyer confirmed</Tag>}
+                                      {i.deliveryTokenSentAt && <Tag color={MARIGOLD}>Token received</Tag>}
                                       <select
                                         value={i.fulfillmentStatus || "new"}
                                         onChange={(e) => updateItemFulfillment(o.id, i.id, e.target.value)}
@@ -10863,6 +10896,13 @@ export default function Stallyard() {
                                       </select>
                                     </div>
                                   </div>
+                                  {i.deliveryTokenSentAt && i.deliveryToken && !["shipped", "delivered"].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium" style={{ color: INK }}>Buyer sent delivery token</div>
+                                      <div className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{i.deliveryToken}</div>
+                                      <div className="text-xs" style={{ color: SLATE }}>The token is also in Messages. Delivery photo is still required before payment release.</div>
+                                    </div>
+                                  )}
                                   {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") && (
                                     <div className="flex items-center gap-2 mt-2 flex-wrap">
                                       <select
@@ -10947,6 +10987,13 @@ export default function Stallyard() {
                                         <div className="text-xs mb-2" style={{ color: SLATE }}>
                                           At handoff, ask the buyer for the 10-digit token, upload the delivery photo, then enter the token below.
                                         </div>
+                                        {i.deliveryTokenSentAt && i.deliveryToken && (
+                                          <div className="mb-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "white" }}>
+                                            <div className="text-xs font-medium" style={{ color: INK }}>Buyer sent this token</div>
+                                            <div className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{i.deliveryToken}</div>
+                                            <div className="text-xs" style={{ color: SLATE }}>It was also added to your Messages.</div>
+                                          </div>
+                                        )}
                                         <div className="flex items-center gap-2 flex-wrap">
                                           <input
                                             value={redeemTokenDrafts[i.id] || ""}
@@ -11599,6 +11646,21 @@ export default function Stallyard() {
                                       >
                                         {item.deliveryToken || deliveryTokens[item.id]}
                                       </div>
+                                      <button
+                                        onClick={() => sendDeliveryTokenToSeller(o.id, item.id)}
+                                        disabled={
+                                          !!item.deliveryTokenSentAt ||
+                                          sendingDeliveryTokenId === item.id
+                                        }
+                                        className="w-full mt-2 px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                        style={{ backgroundColor: item.deliveryTokenSentAt ? SAGE : MARIGOLD, color: INK }}
+                                      >
+                                        {item.deliveryTokenSentAt
+                                          ? "Token sent to seller"
+                                          : sendingDeliveryTokenId === item.id
+                                            ? "Sending token…"
+                                            : "Send token to seller"}
+                                      </button>
                                       <p className="text-xs mt-2" style={{ color: BERRY }}>
                                         The seller must also upload delivery proof and enter this token before held payment can be released.
                                       </p>
