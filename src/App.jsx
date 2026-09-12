@@ -1036,7 +1036,14 @@ function backendOrderToFrontend(row) {
       returnRequestedAt: i.return_requested_at ? new Date(i.return_requested_at).getTime() : null,
       returnTrackingNumber: i.return_tracking_number || "",
       returnEvidenceUrls: i.return_evidence_urls || [],
-      statusHistory: [{ status: i.fulfillment_status || "new", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
+      statusHistory: Array.isArray(i.status_history) && i.status_history.length > 0
+        ? i.status_history.map((event) => ({
+            status: event.event_type || "updated",
+            label: event.label || "Order updated",
+            details: event.details || {},
+            at: event.created_at ? new Date(event.created_at).getTime() : Date.now(),
+          }))
+        : [{ status: "order_placed", label: "Order placed", at: row.created_at ? new Date(row.created_at).getTime() : Date.now() }],
     })),
   };
 }
@@ -1352,55 +1359,31 @@ function TrackingTimeline({ item, orderCreatedAt, ink, slate, sage, berry }) {
   const history = item.statusHistory && item.statusHistory.length > 0
     ? item.statusHistory
     : [{ status: "new", at: orderCreatedAt }];
-  const isTerminalIssue = item.fulfillmentStatus === "cancelled" || item.fulfillmentStatus === "returned";
-  const findAt = (status) => history.find((h) => h.status === status)?.at;
-
-  if (isTerminalIssue) {
-    const at = findAt(item.fulfillmentStatus) || history[history.length - 1]?.at;
-    return (
-      <div className="flex items-center gap-2 text-xs" style={{ color: berry }}>
-        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: berry }} />
-        {FULFILLMENT_LABEL[item.fulfillmentStatus]}
-        {at && (
-          <span style={{ color: slate }}>
-            ·{" "}
-            {new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-          </span>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex items-center gap-2">
-      {TRACKING_STEPS.map((step, idx) => {
-        const at = findAt(step.status);
-        const done = !!at;
+    <div>
+      <div className="text-xs font-medium mb-2" style={{ color: ink }}>Order status history</div>
+      <div className="space-y-0">
+      {history.map((event, idx) => {
+        const isProblem = /cancel|return|failed|dispute_opened/.test(event.status);
+        const isPending = /estimate|location|processing|sent|proof/.test(event.status);
+        const color = isProblem ? berry : isPending ? "#E8A94D" : sage;
+        const start = event.details?.start ? formatDeliveryDate(event.details.start) : "";
+        const end = event.details?.end ? formatDeliveryDate(event.details.end) : "";
         return (
-          <div key={step.status} className="flex items-center gap-2">
+          <div key={`${event.status}-${event.at}-${idx}`} className="flex gap-2 items-start text-xs">
             <div className="flex flex-col items-center">
-              <span
-                className="w-2.5 h-2.5 rounded-full"
-                style={{ backgroundColor: done ? sage : "#DDD8CC" }}
-              />
-              <span className="text-[10px] mt-1 whitespace-nowrap" style={{ color: done ? ink : slate }}>
-                {step.label}
-              </span>
-              {at && (
-                <span className="text-[10px]" style={{ color: slate }}>
-                  {new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                </span>
-              )}
+              <span className="w-2.5 h-2.5 rounded-full mt-1" style={{ backgroundColor: color }} />
+              {idx < history.length - 1 && <span className="w-0.5 h-7" style={{ backgroundColor: color + "50" }} />}
             </div>
-            {idx < TRACKING_STEPS.length - 1 && (
-              <div
-                className="h-0.5 w-8"
-                style={{ backgroundColor: findAt(TRACKING_STEPS[idx + 1].status) ? sage : "#DDD8CC" }}
-              />
-            )}
+            <div className="pb-2 min-w-0">
+              <div className="font-medium" style={{ color: isProblem ? berry : ink }}>{event.label || FULFILLMENT_LABEL[event.status] || "Order updated"}</div>
+              <div style={{ color: slate }}>{new Date(event.at || orderCreatedAt).toLocaleString()}</div>
+              {start && <div style={{ color: slate }}>{end && end !== start ? `${start} – ${end}` : start}</div>}
+            </div>
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -11253,6 +11236,16 @@ export default function Stallyard() {
                                         <option value="returned">Returned</option>
                                       </select>
                                     </div>
+                                  </div>
+                                  <div className="mt-3 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                    <TrackingTimeline
+                                      item={i}
+                                      orderCreatedAt={o.createdAt}
+                                      ink={INK}
+                                      slate={SLATE}
+                                      sage={SAGE}
+                                      berry={BERRY}
+                                    />
                                   </div>
                                   {i.cancellationStatus === "requested" && (
                                     <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: CANVAS }}>
