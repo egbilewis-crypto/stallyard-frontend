@@ -2192,6 +2192,8 @@ export default function Stallyard() {
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
+  const [bankResolution, setBankResolution] = useState({ status: "idle", accountName: "", nameMatches: false, error: "" });
+  const [bankOwnerConfirmed, setBankOwnerConfirmed] = useState(false);
   const [pendingBankChange, setPendingBankChange] = useState(false);
   const [accountEmailCodeSent, setAccountEmailCodeSent] = useState(false);
   const [accountEmailCodeInput, setAccountEmailCodeInput] = useState("");
@@ -3451,6 +3453,33 @@ export default function Stallyard() {
     currentMember?.isApproved || currentMember?.isAdmin ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
+
+  useEffect(() => {
+    const accountNumber = bankForm.accountNumber.replace(/\D/g, "");
+    setBankOwnerConfirmed(false);
+    if (!bankForm.bankCode || accountNumber.length !== 10 || !currentUser) {
+      setBankResolution({ status: "idle", accountName: "", nameMatches: false, error: "" });
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setBankResolution({ status: "checking", accountName: "", nameMatches: false, error: "" });
+      try {
+        const response = await authFetch(`${BACKEND_URL}/paystack/resolve-account`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bankCode: bankForm.bankCode, accountNumber }),
+        });
+        const data = await response.json();
+        if (cancelled) return;
+        if (!response.ok) setBankResolution({ status: "error", accountName: "", nameMatches: false, error: data.error || "Account could not be verified" });
+        else setBankResolution({ status: "verified", accountName: data.accountName, nameMatches: !!data.nameMatches,
+          error: data.nameMatches ? "" : "This name does not match your verified Stallyard identity." });
+      } catch {
+        if (!cancelled) setBankResolution({ status: "error", accountName: "", nameMatches: false, error: "Couldn't reach Paystack — try again" });
+      }
+    }, 600);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [bankForm.bankCode, bankForm.accountNumber, currentUser]);
 
   // Keep the admin origin completely separate from the buyer/seller storefront.
   // The admin host gets its own browser title and can render only the admin view.
@@ -6452,6 +6481,14 @@ export default function Stallyard() {
       showToast("Choose a bank and enter your account number");
       return;
     }
+    if (bankResolution.status !== "verified" || !bankResolution.nameMatches) {
+      showToast("Wait for Paystack to verify an account owner name that matches your identity");
+      return;
+    }
+    if (!bankOwnerConfirmed) {
+      showToast("Confirm that the displayed account owner name is yours");
+      return;
+    }
     setBankSaving(true);
     try {
       const res = await authFetch(`${BACKEND_URL}/sellers/bank-details`, {
@@ -6461,6 +6498,7 @@ export default function Stallyard() {
           userId: currentMember.backendId,
           bankCode: bankForm.bankCode,
           accountNumber: bankForm.accountNumber.trim(),
+          confirmedAccountName: bankResolution.accountName,
         }),
       });
       const data = await res.json();
@@ -6477,8 +6515,9 @@ export default function Stallyard() {
       await persistMembers(
         members.map((m) => (m.username === currentUser ? { ...m, hasBankDetails: true } : m))
       );
-      showToast("Bank details saved");
+      showToast(`Bank details saved${data.accountName ? ` for ${data.accountName}` : ""}`);
       setBankForm({ bankCode: "", accountNumber: "" });
+      setBankOwnerConfirmed(false);
     } catch {
       showToast("Couldn't reach the server — try again");
     } finally {
@@ -6509,7 +6548,8 @@ export default function Stallyard() {
       setPendingBankChange(false);
       setBankChangeCodeInput("");
       setBankForm({ bankCode: "", accountNumber: "" });
-      showToast("Bank account updated");
+      setBankOwnerConfirmed(false);
+      showToast(`Bank account updated${data.accountName ? ` for ${data.accountName}` : ""}`);
     } catch {
       showToast("Couldn't reach the server — try again");
     } finally {
@@ -10910,17 +10950,27 @@ export default function Stallyard() {
                 </p>
               </div>
               {currentUser && hasSellerListingAccess && (
-                <button
-                  onClick={() => {
-                    resetForm();
-                    setView("sell");
-                  }}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  <Plus size={16} />
-                  Create a listing
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setView("wallet")}
+                    className="px-3 py-1.5 rounded-lg border text-sm font-medium bg-white"
+                    style={{ borderColor: SAGE, color: INK }}
+                  >
+                    Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+                  </button>
+                  <button
+                    onClick={() => {
+                      resetForm();
+                      setView("sell");
+                    }}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    <Plus size={16} />
+                    Create a listing
+                  </button>
+                </div>
               )}
             </div>
             {currentUser && hasSellerListingAccess && (
@@ -10929,7 +10979,7 @@ export default function Stallyard() {
                   { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
                   { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
                   { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Money", action: () => setView("wallet") },
+                  { label: "Seller wallet", action: () => setView("wallet") },
                   { label: "Messages", action: () => setView("messages") },
                   { label: "My Stall", action: () => openStorefront(currentUser) },
                 ].map((item) => (
@@ -13541,7 +13591,7 @@ export default function Stallyard() {
                       className="text-2xl font-semibold"
                       style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}
                     >
-                      ${walletNetAvailable.toFixed(2)}
+                      {formatMoney(walletNetAvailable, "NGN")}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
@@ -13552,7 +13602,7 @@ export default function Stallyard() {
                       className="text-2xl font-semibold"
                       style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
                     >
-                      ${walletHeld.toFixed(2)}
+                      {formatMoney(walletHeld, "NGN")}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
@@ -13563,7 +13613,7 @@ export default function Stallyard() {
                       className="text-2xl font-semibold"
                       style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                     >
-                      ${withdrawalsPaidTotal.toFixed(2)}
+                      {formatMoney(withdrawalsPaidTotal, "NGN")}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
@@ -13574,7 +13624,7 @@ export default function Stallyard() {
                       className="text-2xl font-semibold"
                       style={{ fontFamily: "'IBM Plex Mono', monospace", color: BERRY }}
                     >
-                      ${walletVoided.toFixed(2)}
+                      {formatMoney(walletVoided, "NGN")}
                     </div>
                   </div>
                 </div>
@@ -14265,8 +14315,10 @@ export default function Stallyard() {
                         </select>
                         <input
                           value={bankForm.accountNumber}
-                          onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value })}
+                          onChange={(e) => setBankForm({ ...bankForm, accountNumber: e.target.value.replace(/\D/g, "").slice(0, 10) })}
                           placeholder="Account number"
+                          inputMode="numeric"
+                          maxLength={10}
                           className="px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
@@ -14279,6 +14331,15 @@ export default function Stallyard() {
                           {bankSaving ? "Saving..." : "Save"}
                         </button>
                       </div>
+                      {bankResolution.status === "checking" && <p className="text-xs mb-2" style={{ color: SLATE }}>Checking account owner with Paystack…</p>}
+                      {bankResolution.accountName && (
+                        <div className="mb-2 p-3 rounded-lg border" style={{ borderColor: bankResolution.nameMatches ? SAGE : BERRY, backgroundColor: bankResolution.nameMatches ? "#EDF4EE" : "#FBEAEA" }}>
+                          <p className="text-xs" style={{ color: SLATE }}>Paystack-verified account owner</p>
+                          <p className="font-semibold" style={{ color: INK }}>{bankResolution.accountName}</p>
+                          {bankResolution.nameMatches ? <label className="flex gap-2 items-center text-xs mt-2" style={{ color: INK }}><input type="checkbox" checked={bankOwnerConfirmed} onChange={(e) => setBankOwnerConfirmed(e.target.checked)} />I confirm this bank account belongs to me.</label> : <p className="text-xs mt-1" style={{ color: BERRY }}>{bankResolution.error}</p>}
+                        </div>
+                      )}
+                      {bankResolution.status === "error" && <p className="text-xs mb-2" style={{ color: BERRY }}>{bankResolution.error}</p>}
                     </>
                   )}
                 </div>
@@ -14313,7 +14374,7 @@ export default function Stallyard() {
                     </button>
                   </div>
                   <p className="text-xs" style={{ color: SLATE }}>
-                    Up to ${walletNetAvailable.toFixed(2)} available. The admin marks requests as paid outside this app.
+                    Up to {formatMoney(walletNetAvailable, "NGN")} available. The admin marks requests as paid outside this app.
                   </p>
                 </div>
 
