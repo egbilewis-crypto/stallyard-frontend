@@ -966,6 +966,8 @@ function backendOrderToFrontend(row) {
     paystackRefundId: row.paystack_refund_id || null,
     refundType: row.refund_type || null,
     refundAmount: Number(row.refund_amount) || 0,
+    cancellationFee: Number(row.cancellation_fee) || 0,
+    buyerExitType: row.buyer_exit_type || null,
     refundReason: row.refund_reason || "",
     refundRequestedBy: row.refund_requested_by || null,
     refundRequestedAt: row.refund_requested_at ? new Date(row.refund_requested_at).getTime() : null,
@@ -5488,6 +5490,44 @@ export default function Stallyard() {
         } : item),
       }));
       showToast("Cancellation request sent to the seller");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const cancelAndRefundOrder = async (order) => {
+    const fee = Math.round(Number(order.total || 0) * 0.02 * 100) / 100;
+    const refund = Math.round((Number(order.total || 0) - fee) * 100) / 100;
+    const received = order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl);
+    const accepted = window.confirm(
+      `Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
+    );
+    if (!accepted) return;
+    const reason = window.prompt(received ? "Why are you returning and refunding this order?" : "Why are you cancelling this order?");
+    if (!reason?.trim()) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/buyer-cancel-refund`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't submit the refund");
+        return;
+      }
+      await persistOrders(orders.map((current) => current.id !== order.id ? current : {
+        ...current,
+        paymentStatus: "refund_pending",
+        refundStatus: data.order?.refund_status || "pending",
+        refundType: "buyer_cancellation",
+        refundAmount: Number(data.refundAmount || refund),
+        cancellationFee: Number(data.cancellationFee || fee),
+        buyerExitType: data.buyerExitType || (received ? "return_refund" : "cancellation"),
+        refundReason: reason.trim(),
+        refundRequestedAt: Date.now(),
+      }));
+      showToast(`Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -11792,25 +11832,13 @@ export default function Stallyard() {
                                   </a>
                                 </div>
                               )}
-                              {!item.cancellationStatus && o.paymentStatus === "held" && !o.isDisputed &&
-                                !["delivered", "cancelled", "returned"].includes(item.fulfillmentStatus) &&
-                                !item.buyerConfirmedAt && !item.deliveryTokenSentAt && !item.deliveryTokenRedeemedAt &&
-                                !["requested", "approved"].includes(item.returnStatus) && (
-                                  <button
-                                    onClick={() => requestCancellation(o.id, item.id)}
-                                    className="text-xs font-medium underline mt-2 block"
-                                    style={{ color: BERRY }}
-                                  >
-                                    Request cancellation
-                                  </button>
-                                )}
                               {item.cancellationStatus && (
                                 <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
                                   <Tag color={item.cancellationStatus === "approved" ? SAGE : item.cancellationStatus === "denied" ? BERRY : MARIGOLD}>
                                     Cancellation {item.cancellationStatus}
                                   </Tag>
                                   {item.cancellationReason && <div className="text-xs mt-1" style={{ color: SLATE }}>Reason: {item.cancellationReason}</div>}
-                                  {item.cancellationStatus === "approved" && <div className="text-xs mt-1" style={{ color: SLATE }}>Stallyard was notified to review your refund.</div>}
+                                  {item.cancellationStatus === "approved" && <div className="text-xs mt-1" style={{ color: SLATE }}>Your automatic refund was processed.</div>}
                                 </div>
                               )}
                               {item.fulfillmentStatus === "delivered" && item.proofOfDeliveryUrl && (
@@ -11898,7 +11926,7 @@ export default function Stallyard() {
                               )}
                             </div>
 
-                            {((o.paymentStatus === "held" && item.fulfillmentStatus === "shipped") || item.returnStatus) && (
+                            {item.returnStatus && (
                               <div className="pl-6 mb-2">
                                 {!item.returnStatus ? (
                                   returnDrafts[draftKey] ? (
@@ -12190,21 +12218,33 @@ export default function Stallyard() {
                         );
                       })}
                     </div>
-                    <div className="mt-3 pt-3 flex items-center justify-between border-t" style={{ borderColor: "#EFEBE0" }}>
+                    <div className="mt-3 pt-3 flex items-center justify-between gap-3 border-t" style={{ borderColor: "#EFEBE0" }}>
                       <div className="flex items-center gap-2">
                         {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
-                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
+                        {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
                         {o.isDisputed && <Tag color={BERRY}>Issue reported — under review</Tag>}
+                        {o.refundType === "buyer_cancellation" && o.refundAmount > 0 && (
+                          <span className="text-xs" style={{ color: SLATE }}>
+                            Refund {formatMoney(o.refundAmount, o.currency)} · 2% fee {formatMoney(o.cancellationFee, o.currency)}
+                          </span>
+                        )}
                       </div>
-                      {!o.isDisputed && o.paymentStatus === "held" && (
-                        <button
-                          onClick={() => fileDispute(o.id)}
-                          className="text-xs font-medium underline"
-                          style={{ color: SLATE }}
-                        >
-                          Report an issue
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3 flex-wrap justify-end">
+                        {!o.isDisputed && o.paymentStatus === "held" &&
+                          !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
+                            <button onClick={() => cancelAndRefundOrder(o)} className="text-xs font-semibold underline" style={{ color: BERRY }}>
+                              {o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)
+                                ? "Return order & refund"
+                                : "Cancel order & refund"}
+                            </button>
+                          )}
+                        {!o.isDisputed && o.paymentStatus === "held" &&
+                          !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
+                            <button onClick={() => fileDispute(o.id)} className="text-xs font-medium underline" style={{ color: SLATE }}>
+                              Report an issue
+                            </button>
+                          )}
+                      </div>
                     </div>
                   </div>
                 ))}
