@@ -9639,6 +9639,25 @@ export default function Stallyard() {
           </section>
         )}
 
+        {view === "user-agreement" && (
+          <div className="max-w-3xl mx-auto">
+            <div className="p-6 sm:p-8 rounded-2xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+              <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MARIGOLD }}>
+                Legal
+              </p>
+              <h2 className="text-3xl mb-3" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                User Agreement
+              </h2>
+              <div className="p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8" }}>
+                <p className="text-sm font-semibold" style={{ color: INK }}>Draft under review</p>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  Stallyard's User Agreement is currently being prepared. The complete agreement will be published here after it has been reviewed and approved.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {view === "how-it-works" && (
           <section className="max-w-5xl mx-auto">
             <div className="text-center mb-10">
@@ -18793,6 +18812,13 @@ export default function Stallyard() {
               </button>
               <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Fees
+              </button>
+              <button
+                onClick={() => { setSelected(null); setView("user-agreement"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                className="text-sm text-left"
+                style={{ color: "#E5E7EB" }}
+              >
+                User Agreement
               </button>
             </div>
           </div>
