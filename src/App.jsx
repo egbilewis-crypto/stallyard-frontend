@@ -1006,6 +1006,7 @@ function backendOrderToFrontend(row) {
       qty: i.qty,
       shippingFee: Number(i.shipping_fee) || 0,
       sellerName: i.seller_name,
+      sellerId: i.seller_id,
       ownerUsername: i.seller_username,
       fulfillmentStatus: i.fulfillment_status || "new",
       trackingNumber: i.tracking_number || "",
@@ -1982,6 +1983,11 @@ export default function Stallyard() {
   const [suspiciousActivityMessage, setSuspiciousActivityMessage] = useState("");
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
+  const [sellerReports, setSellerReports] = useState([]);
+  const [sellerReportTarget, setSellerReportTarget] = useState(null);
+  const [sellerReportReceipt, setSellerReportReceipt] = useState(null);
+  const [sellerReportForm, setSellerReportForm] = useState({ reason: "", details: "", evidenceUrls: [] });
+  const [submittingSellerReport, setSubmittingSellerReport] = useState(false);
   const [adminDisputes, setAdminDisputes] = useState([]);
   const [myDisputes, setMyDisputes] = useState([]);
   const [activeDisputeCaseId, setActiveDisputeCaseId] = useState(null);
@@ -2329,6 +2335,7 @@ export default function Stallyard() {
         setSavedCards([]);
         setSavedAddresses([]);
         setAdminDisputes([]);
+        setSellerReports([]);
         setMyDisputes([]);
         return;
       }
@@ -2439,6 +2446,15 @@ export default function Stallyard() {
           }
         } catch {
           // couldn't reach backend for account reports — leave empty
+        }
+        try {
+          const sellerReportsRes = await authFetch(`${BACKEND_URL}/seller-reports`);
+          if (sellerReportsRes.ok) {
+            const { reports } = await sellerReportsRes.json();
+            setSellerReports(reports || []);
+          }
+        } catch {
+          // couldn't reach backend for seller reports — leave empty
         }
       }
       try {
@@ -3918,6 +3934,66 @@ export default function Stallyard() {
     } catch {
       showToast("Couldn't reach the server — try again");
     }
+  };
+
+  const openSellerReport = (sellerId, sellerName, orderId = null) => {
+    if (!currentUser) {
+      setAuthReturnView(view);
+      setView("login");
+      return;
+    }
+    setSellerReportTarget({ sellerId, sellerName, orderId });
+    setSellerReportForm({ reason: "", details: "", evidenceUrls: [] });
+  };
+
+  const addSellerReportEvidence = async (event) => {
+    const files = Array.from(event.target.files || []).slice(0, 5 - sellerReportForm.evidenceUrls.length);
+    const valid = files.filter((file) => file.type.startsWith("image/") && file.size <= 2 * 1024 * 1024);
+    if (valid.length !== files.length) showToast("Evidence must be images no larger than 2 MB each");
+    const urls = await Promise.all(valid.map(readFileAsDataURL));
+    setSellerReportForm((form) => ({ ...form, evidenceUrls: [...form.evidenceUrls, ...urls].slice(0, 5) }));
+    event.target.value = "";
+  };
+
+  const submitSellerReport = async () => {
+    if (!sellerReportForm.reason) return showToast("Choose why you are reporting this seller");
+    if (sellerReportForm.details.trim().length < 10) return showToast("Please explain what happened in at least 10 characters");
+    setSubmittingSellerReport(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/seller-reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sellerId: sellerReportTarget.sellerId,
+          orderId: sellerReportTarget.orderId,
+          reason: sellerReportForm.reason,
+          details: sellerReportForm.details.trim(),
+          evidenceUrls: sellerReportForm.evidenceUrls,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error || "Couldn't submit the seller report");
+      setSellerReportTarget(null);
+      setSellerReportReceipt(data.report.reference);
+      showToast(`Report submitted — reference ${data.report.reference}`);
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setSubmittingSellerReport(false);
+    }
+  };
+
+  const updateSellerReport = async (reportId, status) => {
+    const adminNote = window.prompt("Internal review note (optional)") || "";
+    try {
+      const res = await authFetch(`${BACKEND_URL}/seller-reports/${reportId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status, adminNote }),
+      });
+      const data = await res.json();
+      if (!res.ok) return showToast(data.error || "Couldn't update seller report");
+      setSellerReports((reports) => reports.map((report) => report.id === reportId ? { ...report, ...data.report } : report));
+      showToast(`Seller report marked ${status.replace("_", " ")}`);
+    } catch { showToast("Couldn't reach the server — try again"); }
   };
 
   const openAdminPanel = () => {
@@ -12129,6 +12205,13 @@ export default function Stallyard() {
                               >
                                 Message seller about this order
                               </button>
+                              <button
+                                onClick={() => openSellerReport(item.sellerId, item.sellerName || item.ownerUsername, o.id)}
+                                className="text-xs font-medium underline mt-2 ml-3 inline-block"
+                                style={{ color: BERRY }}
+                              >
+                                Report seller
+                              </button>
                               {(item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && item.trackingNumber && (
                                 <div className="text-xs mt-2" style={{ color: SLATE }}>
                                   {item.carrier ? `${item.carrier} tracking: ` : "Tracking: "}
@@ -12754,6 +12837,15 @@ export default function Stallyard() {
                     >
                       Message seller
                     </button>
+                    {currentUser !== viewingSeller && (
+                      <button
+                        onClick={() => openSellerReport(seller.backendId, seller.displayName)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium border"
+                        style={{ borderColor: BERRY, color: BERRY }}
+                      >
+                        Report seller
+                      </button>
+                    )}
                     </div>
                   </div>
 
@@ -15021,6 +15113,7 @@ export default function Stallyard() {
                     );
                     const suspendedUsers = members.filter((m) => m.isSuspended).length;
                     const suspiciousActivity = accountReports.filter((r) => r.status === "open").length;
+                    const openSellerReports = sellerReports.filter((r) => ["open", "in_review"].includes(r.status)).length;
                     const systemAlerts = withdrawals.filter((w) => w.status === "failed").length;
 
                     return [
@@ -15031,6 +15124,7 @@ export default function Stallyard() {
                       { label: "Refund requests", value: refundRequests, tab: "orders" },
                       { label: "Suspended users", value: suspendedUsers, tab: "members" },
                       { label: "Suspicious activity reports", value: suspiciousActivity, tab: "accountReports" },
+                      { label: "Seller reports", value: openSellerReports, tab: "accountReports" },
                       { label: "System alerts", value: systemAlerts, tab: "withdrawals" },
                     ].map((s) => (
                       <button
@@ -17539,6 +17633,27 @@ export default function Stallyard() {
 
             {adminTab === "accountReports" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div className="space-y-3">
+                <h3 className="text-lg font-semibold" style={{ color: INK }}>Seller reports</h3>
+                {sellerReports.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No seller reports.</p>}
+                {sellerReports.map((r) => (
+                  <div key={`seller-report-${r.id}`} className="p-4 rounded-lg border bg-white" style={{ borderColor: ["open", "in_review"].includes(r.status) ? BERRY : "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2 flex-wrap">
+                      <div className="text-sm font-medium" style={{ color: INK }}>{r.reference} · Report against {r.seller_display_name || r.seller_username}</div>
+                      <Tag color={r.status === "resolved" ? SAGE : r.status === "dismissed" ? SLATE : MARIGOLD}>{r.status.replace("_", " ")}</Tag>
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: SLATE }}>Reported by {r.reporter_display_name || r.reporter_username}{r.order_id ? ` · Order ${orderNumber(r.order_id)}` : ""} · {new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs font-medium mt-2" style={{ color: INK }}>{String(r.reason).replaceAll("_", " ")}</div>
+                    <div className="text-sm p-3 rounded-lg mt-2" style={{ backgroundColor: CANVAS, color: INK }}>{r.details}</div>
+                    {(r.evidence_urls || []).length > 0 && <div className="flex gap-2 mt-2 flex-wrap">{r.evidence_urls.map((url, index) => <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Report evidence ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" /></a>)}</div>}
+                    {r.admin_note && <div className="text-xs mt-2" style={{ color: SLATE }}>Admin note: {r.admin_note}</div>}
+                    {["open", "in_review"].includes(r.status) && <div className="flex gap-3 mt-3 flex-wrap">
+                      {r.status === "open" && <button onClick={() => updateSellerReport(r.id, "in_review")} className="text-xs font-medium underline" style={{ color: MARIGOLD }}>Start review</button>}
+                      <button onClick={() => updateSellerReport(r.id, "resolved")} className="text-xs font-medium underline" style={{ color: SAGE }}>Resolve</button>
+                      <button onClick={() => updateSellerReport(r.id, "dismissed")} className="text-xs font-medium underline" style={{ color: SLATE }}>Dismiss</button>
+                    </div>}
+                  </div>
+                ))}
+                <h3 className="text-lg font-semibold pt-4" style={{ color: INK }}>Account security reports</h3>
                 {accountReports.length === 0 && (
                   <p className="text-sm" style={{ color: SLATE }}>
                     No account reports.
@@ -19562,6 +19677,44 @@ export default function Stallyard() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {sellerReportReceipt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.65)" }} onClick={() => setSellerReportReceipt(null)}>
+          <div className="bg-white rounded-2xl max-w-sm w-full p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Report received</h3>
+            <p className="text-sm mt-2" style={{ color: SLATE }}>Save this reference if you contact Stallyard support.</p>
+            <div className="p-3 rounded-lg mt-3 font-semibold" style={{ backgroundColor: CANVAS, color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{sellerReportReceipt}</div>
+            <button onClick={() => setSellerReportReceipt(null)} className="w-full py-2 rounded-lg mt-4 font-medium" style={{ backgroundColor: INK, color: "white" }}>Done</button>
+          </div>
+        </div>
+      )}
+
+      {sellerReportTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.65)" }} onClick={() => setSellerReportTarget(null)}>
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 relative max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <button onClick={() => setSellerReportTarget(null)} className="absolute top-4 right-4" aria-label="Close"><X size={20} style={{ color: SLATE }} /></button>
+            <h3 className="text-xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Report {sellerReportTarget.sellerName}</h3>
+            <p className="text-xs mb-4" style={{ color: SLATE }}>This sends a safety report to Stallyard. It does not request a refund or open a payment dispute.</p>
+            {sellerReportTarget.orderId && <div className="text-xs mb-3" style={{ color: SLATE }}>Related order: {orderNumber(sellerReportTarget.orderId)}</div>}
+            <label className="block text-sm font-medium mb-1" style={{ color: INK }}>Reason</label>
+            <select value={sellerReportForm.reason} onChange={(e) => setSellerReportForm((form) => ({ ...form, reason: e.target.value }))} className="w-full px-3 py-2 rounded-lg border bg-white mb-3" style={{ borderColor: "#DDD8CC" }}>
+              <option value="">Choose a reason</option>
+              <option value="fraud">Fraud or scam</option><option value="counterfeit">Counterfeit item</option>
+              <option value="harassment">Harassment</option><option value="prohibited_item">Prohibited item</option>
+              <option value="misleading_listing">Misleading listing</option><option value="delivery_misconduct">Delivery misconduct</option><option value="other">Other</option>
+            </select>
+            <label className="block text-sm font-medium mb-1" style={{ color: INK }}>What happened?</label>
+            <textarea value={sellerReportForm.details} onChange={(e) => setSellerReportForm((form) => ({ ...form, details: e.target.value }))} rows={5} maxLength={2000} placeholder="Give enough detail for Stallyard to investigate." className="w-full px-3 py-2 rounded-lg border mb-3" style={{ borderColor: "#DDD8CC" }} />
+            <label className="inline-block px-3 py-2 rounded-lg border text-sm font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+              Add evidence ({sellerReportForm.evidenceUrls.length}/5)
+              <input type="file" accept="image/*" multiple onChange={addSellerReportEvidence} className="hidden" disabled={sellerReportForm.evidenceUrls.length >= 5} />
+            </label>
+            {sellerReportForm.evidenceUrls.length > 0 && <div className="flex gap-2 mt-3 flex-wrap">{sellerReportForm.evidenceUrls.map((url, index) => <div key={index} className="relative"><img src={url} alt={`Evidence ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" /><button onClick={() => setSellerReportForm((form) => ({ ...form, evidenceUrls: form.evidenceUrls.filter((_, i) => i !== index) }))} className="absolute -top-2 -right-2 w-5 h-5 rounded-full text-xs" style={{ backgroundColor: BERRY, color: "white" }}>×</button></div>)}</div>}
+            <button onClick={submitSellerReport} disabled={submittingSellerReport} className="w-full py-2.5 rounded-lg font-medium mt-4 disabled:opacity-50" style={{ backgroundColor: BERRY, color: "white" }}>{submittingSellerReport ? "Submitting…" : "Submit seller report"}</button>
+            <p className="text-xs mt-3" style={{ color: SLATE }}>The seller will not be shown your identity or report details through this feature.</p>
           </div>
         </div>
       )}
