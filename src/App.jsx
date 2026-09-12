@@ -7449,6 +7449,17 @@ export default function Stallyard() {
     (i) => i.returnStatus === "requested" || i.isDisputed
   ).length;
   const buyerPendingReturnsCount = myPurchasedItems.filter((i) => i.returnStatus === "requested").length;
+  const buyerTokensReadyCount = myOrders.reduce(
+    (count, order) => count + (order.paymentStatus === "held" && !order.isDisputed
+      ? order.items.filter((item) =>
+          !!item.deliveryToken &&
+          !item.deliveryTokenSentAt &&
+          !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
+          !["requested", "approved"].includes(item.returnStatus)
+        ).length
+      : 0),
+    0
+  );
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
 
   // View-only list of how this buyer has actually paid in the past,
@@ -11137,7 +11148,27 @@ export default function Stallyard() {
             <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
               Needs your attention
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+              <button
+                onClick={() => setView("orders")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: buyerTokensReadyCount ? MARIGOLD : "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerTokensReadyCount ? MARIGOLD : INK }}
+                >
+                  {buyerTokensReadyCount}
+                </div>
+                <div className="text-xs font-medium" style={{ color: INK }}>
+                  delivery token{buyerTokensReadyCount === 1 ? "" : "s"} ready
+                </div>
+                {buyerTokensReadyCount > 0 && (
+                  <div className="text-xs mt-1" style={{ color: SLATE }}>
+                    Review the order and send only after accepting the item →
+                  </div>
+                )}
+              </button>
               <button
                 onClick={() => setView("messages")}
                 className="p-3 rounded-lg border bg-white text-left"
