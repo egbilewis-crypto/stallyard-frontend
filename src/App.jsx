@@ -676,6 +676,17 @@ function formatMoney(amount, currency) {
   return `${symbol}${num}`;
 }
 
+function formatDeliveryDate(value) {
+  const date = String(value || "").slice(0, 10);
+  if (!date) return "";
+  const [year, month, day] = date.split("-").map(Number);
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 const CONDITION_COLOR = {
   New: "#6B8F71",
   Used: "#667085",
@@ -999,6 +1010,14 @@ function backendOrderToFrontend(row) {
       fulfillmentStatus: i.fulfillment_status || "new",
       trackingNumber: i.tracking_number || "",
       carrier: i.carrier || "",
+      estimatedDeliveryStart: i.estimated_delivery_start ? String(i.estimated_delivery_start).slice(0, 10) : "",
+      estimatedDeliveryEnd: i.estimated_delivery_end ? String(i.estimated_delivery_end).slice(0, 10) : "",
+      liveLocationEnabled: !!i.live_location_enabled,
+      liveLocationLatitude: i.live_location_latitude === null || i.live_location_latitude === undefined ? null : Number(i.live_location_latitude),
+      liveLocationLongitude: i.live_location_longitude === null || i.live_location_longitude === undefined ? null : Number(i.live_location_longitude),
+      liveLocationAccuracy: i.live_location_accuracy === null || i.live_location_accuracy === undefined ? null : Number(i.live_location_accuracy),
+      liveLocationUpdatedAt: i.live_location_updated_at ? new Date(i.live_location_updated_at).getTime() : null,
+      liveLocationExpiresAt: i.live_location_expires_at ? new Date(i.live_location_expires_at).getTime() : null,
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
       shippedAt: i.shipped_at ? new Date(i.shipped_at).getTime() : null,
       proofOfDeliveryUrl: i.proof_of_delivery_url || "",
@@ -1382,6 +1401,66 @@ function TrackingTimeline({ item, orderCreatedAt, ink, slate, sage, berry }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function RefundProgress({ order, ink, slate, sage, berry, marigold, canvas }) {
+  const status = order.paymentStatus === "refunded" ? "processed" : String(order.refundStatus || "").toLowerCase();
+  const isComplete = status === "processed";
+  const isFailed = status === "failed";
+  const needsAttention = ["request_unknown", "needs-attention", "needs_attention"].includes(status);
+  const submittedToPaystack = !!order.paystackRefundId || !["", "requesting"].includes(status);
+  const isProcessing = submittedToPaystack && !isComplete && !isFailed;
+  const latestAt = order.refundedAt || order.refundRequestedAt;
+  const steps = [
+    { label: "Cancellation submitted", done: !!order.refundRequestedAt || !!status, at: order.refundRequestedAt },
+    { label: order.refundType === "buyer_cancellation" ? "2% fee and refund calculated" : "Refund amount calculated", done: Number(order.refundAmount || 0) > 0 },
+    { label: "Refund sent to Paystack", done: submittedToPaystack },
+    { label: needsAttention ? "Paystack needs attention" : "Paystack processing", done: isProcessing || isComplete, warning: needsAttention },
+    { label: isFailed ? "Refund failed — action required" : "Refund completed", done: isComplete || isFailed, failed: isFailed, at: order.refundedAt },
+  ];
+
+  return (
+    <div className="mt-4 p-4 rounded-xl border" style={{ borderColor: isFailed ? berry : isComplete ? sage : marigold, backgroundColor: canvas }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="font-semibold text-sm" style={{ color: ink }}>Refund progress</div>
+        <Tag color={isFailed ? berry : isComplete ? sage : marigold}>
+          {isFailed ? "Action required" : isComplete ? "Completed" : needsAttention ? "Needs attention" : "In progress"}
+        </Tag>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 text-xs">
+        <div><span style={{ color: slate }}>Original total</span><div className="font-semibold" style={{ color: ink }}>{formatMoney(order.total, order.currency)}</div></div>
+        <div><span style={{ color: slate }}>Cancellation fee</span><div className="font-semibold" style={{ color: order.cancellationFee > 0 ? berry : ink }}>{formatMoney(order.cancellationFee || 0, order.currency)}</div></div>
+        <div><span style={{ color: slate }}>Refund amount</span><div className="font-semibold" style={{ color: sage }}>{formatMoney(order.refundAmount || 0, order.currency)}</div></div>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {steps.map((step, index) => (
+          <div key={step.label} className="flex gap-2 items-start text-xs">
+            <div className="flex flex-col items-center">
+              <span className="w-3 h-3 rounded-full mt-0.5" style={{ backgroundColor: step.failed ? berry : step.warning ? marigold : step.done ? sage : "#DDD8CC" }} />
+              {index < steps.length - 1 && <span className="w-0.5 h-5" style={{ backgroundColor: step.done ? sage + "60" : "#DDD8CC" }} />}
+            </div>
+            <div style={{ color: step.failed ? berry : step.warning ? marigold : step.done ? ink : slate }}>
+              <span className={step.done ? "font-medium" : ""}>{step.label}</span>
+              {step.at && <span style={{ color: slate }}> · {new Date(step.at).toLocaleString()}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {latestAt && <div className="text-xs mt-3" style={{ color: slate }}>Latest update: {new Date(latestAt).toLocaleString()}</div>}
+      {order.paystackRefundId && <div className="text-xs mt-1 break-all" style={{ color: slate }}>Paystack refund reference: <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: ink }}>{order.paystackRefundId}</span></div>}
+      {order.refundFailureReason && <div className="text-xs mt-2 p-2 rounded-lg" style={{ color: berry, backgroundColor: "white" }}>{order.refundFailureReason}</div>}
+      {!isFailed && (
+        <div className="text-xs mt-3" style={{ color: slate }}>
+          {isComplete
+            ? "Paystack has completed the refund. Your bank may take additional time to display the credit."
+            : "Stallyard will update this timeline when Paystack confirms the refund. Do not submit another cancellation request."}
+        </div>
+      )}
     </div>
   );
 }
@@ -1899,6 +1978,9 @@ export default function Stallyard() {
   const [returnDrafts, setReturnDrafts] = useState({});
   const [returnTrackingDrafts, setReturnTrackingDrafts] = useState({});
   const [trackingDrafts, setTrackingDrafts] = useState({});
+  const [deliveryEstimateDrafts, setDeliveryEstimateDrafts] = useState({});
+  const locationWatchersRef = useRef({});
+  const locationLastSentRef = useRef({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
@@ -2483,6 +2565,24 @@ export default function Stallyard() {
     const interval = setInterval(() => setNowTick(Date.now()), 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Refresh buyer orders while signed in so an active seller location moves on
+  // the buyer's order page without requiring a manual browser refresh.
+  useEffect(() => {
+    if (!currentUser || !authToken) return undefined;
+    const interval = setInterval(async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/orders/mine`);
+        if (!res.ok) return;
+        const { orders: rows } = await res.json();
+        const refreshed = new Map((rows || []).map((row) => [row.id, backendOrderToFrontend(row)]));
+        setOrders((all) => all.map((order) => refreshed.get(order.id) || order));
+      } catch {
+        // Keep the last known location during a temporary network interruption.
+      }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [currentUser, authToken]);
 
   useEffect(() => {
     if (!cartOpen) return;
@@ -5192,6 +5292,12 @@ export default function Stallyard() {
   const updateItemFulfillment = async (orderId, itemId, status) => {
     const ok = await patchOrderItemOnBackend(itemId, { fulfillmentStatus: status });
     if (!ok) return;
+    if (["delivered", "cancelled", "returned"].includes(status)) {
+      const watchId = locationWatchersRef.current[itemId];
+      if (watchId !== undefined) navigator.geolocation?.clearWatch(watchId);
+      delete locationWatchersRef.current[itemId];
+      delete locationLastSentRef.current[itemId];
+    }
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -5203,6 +5309,7 @@ export default function Stallyard() {
                   ? {
                       ...i,
                       fulfillmentStatus: status,
+                      ...(["delivered", "cancelled", "returned"].includes(status) ? { liveLocationEnabled: false } : {}),
                       statusHistory: [...(i.statusHistory || []), { status, at: Date.now() }],
                     }
                   : i
@@ -5228,6 +5335,92 @@ export default function Stallyard() {
     );
     showToast("Tracking number saved");
   };
+
+  const updateEstimatedDelivery = async (orderId, itemId, estimatedDeliveryStart, estimatedDeliveryEnd) => {
+    if (estimatedDeliveryStart && estimatedDeliveryEnd && estimatedDeliveryEnd < estimatedDeliveryStart) {
+      showToast("Estimated delivery end cannot be earlier than the start date");
+      return false;
+    }
+    const ok = await patchOrderItemOnBackend(itemId, { estimatedDeliveryStart, estimatedDeliveryEnd });
+    if (!ok) return false;
+    await persistOrders(
+      orders.map((o) => o.id !== orderId ? o : {
+        ...o,
+        items: o.items.map((i) => i.id === itemId ? { ...i, estimatedDeliveryStart, estimatedDeliveryEnd } : i),
+      })
+    );
+    showToast(estimatedDeliveryStart ? "Estimated delivery saved" : "Estimated delivery cleared");
+    return true;
+  };
+
+  const saveSellerLocation = async (orderId, itemId, position) => {
+    const location = {
+      liveLocationEnabled: true,
+      liveLocationLatitude: position.coords.latitude,
+      liveLocationLongitude: position.coords.longitude,
+      liveLocationAccuracy: position.coords.accuracy,
+    };
+    const ok = await patchOrderItemOnBackend(itemId, {
+      liveLocationLatitude: location.liveLocationLatitude,
+      liveLocationLongitude: location.liveLocationLongitude,
+      liveLocationAccuracy: location.liveLocationAccuracy,
+    });
+    if (!ok) return false;
+    const updatedAt = Date.now();
+    setOrders((all) => all.map((o) => o.id !== orderId ? o : {
+      ...o,
+      items: o.items.map((i) => i.id === itemId ? {
+        ...i,
+        ...location,
+        liveLocationUpdatedAt: updatedAt,
+      } : i),
+    }));
+    return true;
+  };
+
+  const startSellerLocationSharing = (orderId, itemId) => {
+    if (!navigator.geolocation) {
+      showToast("Location sharing is not supported on this phone");
+      return;
+    }
+    if (locationWatchersRef.current[itemId] !== undefined) return;
+    const watchId = navigator.geolocation.watchPosition(
+      async (position) => {
+        const now = Date.now();
+        if (now - (locationLastSentRef.current[itemId] || 0) < 15000) return;
+        locationLastSentRef.current[itemId] = now;
+        const saved = await saveSellerLocation(orderId, itemId, position);
+        if (saved && !locationLastSentRef.current[`${itemId}-announced`]) {
+          locationLastSentRef.current[`${itemId}-announced`] = now;
+          showToast("Live delivery location is now shared with the buyer");
+        }
+      },
+      (error) => {
+        delete locationWatchersRef.current[itemId];
+        showToast(error.code === 1 ? "Allow location access on your phone to start sharing" : "Unable to get your current location");
+      },
+      { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
+    );
+    locationWatchersRef.current[itemId] = watchId;
+  };
+
+  const stopSellerLocationSharing = async (orderId, itemId) => {
+    const watchId = locationWatchersRef.current[itemId];
+    if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+    delete locationWatchersRef.current[itemId];
+    delete locationLastSentRef.current[itemId];
+    const ok = await patchOrderItemOnBackend(itemId, { liveLocationEnabled: false });
+    if (!ok) return;
+    setOrders((all) => all.map((o) => o.id !== orderId ? o : {
+      ...o,
+      items: o.items.map((i) => i.id === itemId ? { ...i, liveLocationEnabled: false } : i),
+    }));
+    showToast("Location sharing stopped");
+  };
+
+  useEffect(() => () => {
+    Object.values(locationWatchersRef.current).forEach((watchId) => navigator.geolocation?.clearWatch(watchId));
+  }, []);
 
   const updateItemCarrier = async (orderId, itemId, carrier) => {
     const ok = await patchOrderItemOnBackend(itemId, { carrier });
@@ -11026,6 +11219,10 @@ export default function Stallyard() {
                                 trackingDrafts[trackKey] !== undefined
                                   ? trackingDrafts[trackKey]
                                   : i.trackingNumber || "";
+                              const estimateDraft = deliveryEstimateDrafts[trackKey] || {
+                                start: i.estimatedDeliveryStart || "",
+                                end: i.estimatedDeliveryEnd || "",
+                              };
                               return (
                                 <div
                                   key={i.id}
@@ -11114,6 +11311,88 @@ export default function Stallyard() {
                                       >
                                         Save
                                       </button>
+                                    </div>
+                                  )}
+                                  {!['cancelled', 'returned', 'delivered'].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium mb-1" style={{ color: INK }}>Estimated delivery</div>
+                                      <div className="text-xs mb-2" style={{ color: SLATE }}>
+                                        Enter one date for “expected by,” or add an end date to show a delivery range.
+                                      </div>
+                                      <div className="flex items-end gap-2 flex-wrap">
+                                        <label className="text-xs">
+                                          <span className="block mb-1">Start date</span>
+                                          <input
+                                            type="date"
+                                            value={estimateDraft.start}
+                                            onChange={(e) => setDeliveryEstimateDrafts((drafts) => ({
+                                              ...drafts,
+                                              [trackKey]: { ...estimateDraft, start: e.target.value },
+                                            }))}
+                                            className="px-2 py-1 rounded-lg border outline-none bg-white"
+                                            style={{ borderColor: "#DDD8CC", color: INK }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1">End date (optional)</span>
+                                          <input
+                                            type="date"
+                                            min={estimateDraft.start || undefined}
+                                            value={estimateDraft.end}
+                                            onChange={(e) => setDeliveryEstimateDrafts((drafts) => ({
+                                              ...drafts,
+                                              [trackKey]: { ...estimateDraft, end: e.target.value },
+                                            }))}
+                                            className="px-2 py-1 rounded-lg border outline-none bg-white"
+                                            style={{ borderColor: "#DDD8CC", color: INK }}
+                                          />
+                                        </label>
+                                        <button
+                                          onClick={async () => {
+                                            const saved = await updateEstimatedDelivery(o.id, i.id, estimateDraft.start, estimateDraft.end);
+                                            if (saved) setDeliveryEstimateDrafts((drafts) => {
+                                              const next = { ...drafts };
+                                              delete next[trackKey];
+                                              return next;
+                                            });
+                                          }}
+                                          className="px-3 py-1 rounded-lg text-xs font-medium"
+                                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                                        >
+                                          Save estimate
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.fulfillmentStatus === "shipped" && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium" style={{ color: INK }}>Live delivery location</div>
+                                      <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                        Optional. The buyer can see your phone’s location only for this delivery. Keep this page open for live updates.
+                                      </div>
+                                      {i.liveLocationEnabled && i.liveLocationUpdatedAt && (
+                                        <div className="text-xs mt-1" style={{ color: SAGE }}>
+                                          Sharing active · Last updated {new Date(i.liveLocationUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                        </div>
+                                      )}
+                                      <div className="flex gap-2 mt-2 flex-wrap">
+                                        <button
+                                          onClick={() => startSellerLocationSharing(o.id, i.id)}
+                                          className="px-3 py-1 rounded-lg text-xs font-medium"
+                                          style={{ backgroundColor: SAGE, color: "white" }}
+                                        >
+                                          {i.liveLocationEnabled ? "Resume phone updates" : "Start sharing location"}
+                                        </button>
+                                        {i.liveLocationEnabled && (
+                                          <button
+                                            onClick={() => stopSellerLocationSharing(o.id, i.id)}
+                                            className="px-3 py-1 rounded-lg border text-xs font-medium bg-white"
+                                            style={{ borderColor: BERRY, color: BERRY }}
+                                          >
+                                            Stop sharing
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   )}
                                   {i.fulfillmentStatus === "delivered" && (
@@ -11832,6 +12111,35 @@ export default function Stallyard() {
                                   </a>
                                 </div>
                               )}
+                              {item.estimatedDeliveryStart && (
+                                <div className="mt-2 p-2 rounded-lg border text-xs" style={{ borderColor: MARIGOLD, backgroundColor: CANVAS }}>
+                                  <span className="font-medium" style={{ color: INK }}>Estimated delivery: </span>
+                                  <span style={{ color: SLATE }}>
+                                    {item.estimatedDeliveryEnd && item.estimatedDeliveryEnd !== item.estimatedDeliveryStart
+                                      ? `${formatDeliveryDate(item.estimatedDeliveryStart)} – ${formatDeliveryDate(item.estimatedDeliveryEnd)}`
+                                      : formatDeliveryDate(item.estimatedDeliveryStart)}
+                                  </span>
+                                </div>
+                              )}
+                              {item.liveLocationEnabled && (!item.liveLocationExpiresAt || item.liveLocationExpiresAt > Date.now()) && item.liveLocationLatitude !== null && item.liveLocationLongitude !== null && (
+                                <div className="mt-2 p-3 rounded-lg border text-xs" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                  <div className="font-medium" style={{ color: INK }}>Seller is sharing their delivery location</div>
+                                  <div className="mt-1" style={{ color: SLATE }}>
+                                    Last updated {item.liveLocationUpdatedAt ? new Date(item.liveLocationUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "just now"}
+                                    {item.liveLocationAccuracy ? ` · Accuracy about ${Math.round(item.liveLocationAccuracy)} m` : ""}
+                                  </div>
+                                  <a
+                                    href={`https://www.google.com/maps/search/?api=1&query=${item.liveLocationLatitude},${item.liveLocationLongitude}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-block mt-2 underline font-medium"
+                                    style={{ color: SAGE }}
+                                  >
+                                    View live location on map →
+                                  </a>
+                                  <div className="mt-1" style={{ color: SLATE }}>Location updates while the seller keeps Stallyard open on their phone.</div>
+                                </div>
+                              )}
                               {item.cancellationStatus && (
                                 <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
                                   <Tag color={item.cancellationStatus === "approved" ? SAGE : item.cancellationStatus === "denied" ? BERRY : MARIGOLD}>
@@ -12218,6 +12526,9 @@ export default function Stallyard() {
                         );
                       })}
                     </div>
+                    {(o.refundStatus || o.paymentStatus === "refund_pending" || o.paymentStatus === "refunded") && (
+                      <RefundProgress order={o} ink={INK} slate={SLATE} sage={SAGE} berry={BERRY} marigold={MARIGOLD} canvas={CANVAS} />
+                    )}
                     <div className="mt-3 pt-3 flex items-center justify-between gap-3 border-t" style={{ borderColor: "#EFEBE0" }}>
                       <div className="flex items-center gap-2">
                         {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
