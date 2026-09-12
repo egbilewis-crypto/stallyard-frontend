@@ -1091,6 +1091,8 @@ function backendUserToMember(user, existing) {
     casualSellerStatus: user.casual_seller_status ?? existing?.casualSellerStatus ?? "none",
     casualSellerLimit: Number(user.casual_seller_limit ?? existing?.casualSellerLimit ?? 500000),
     casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
+    sellerTier: user.seller_tier ?? existing?.sellerTier ?? (user.is_approved ? "verified" : "buyer"),
+    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 20000000),
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -2157,6 +2159,7 @@ export default function Stallyard() {
   const [expandedBuyerRiskId, setExpandedBuyerRiskId] = useState(null);
   const [casualSellerApplications, setCasualSellerApplications] = useState([]);
   const [casualSellerReports, setCasualSellerReports] = useState([]);
+  const [verifiedSellerApplications, setVerifiedSellerApplications] = useState([]);
   const [casualSellerAdminLoading, setCasualSellerAdminLoading] = useState(false);
   const [selectedCasualApplication, setSelectedCasualApplication] = useState(null);
   const [casualEvidenceUrls, setCasualEvidenceUrls] = useState({});
@@ -2310,6 +2313,7 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
+  const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
@@ -2881,13 +2885,17 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === currentUser);
     if (target?.backendId) {
       try {
-        const res = await authFetch(`${BACKEND_URL}/profile/apply-to-sell`, {
+        if (!bankStatementDraft) { showToast("Upload a bank statement before applying for verified seller status"); return; }
+        if (!verifiedSellerConsent) { showToast("Accept the verified-seller declaration before applying"); return; }
+        const res = await authFetch(`${BACKEND_URL}/verified-seller/apply`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bankStatementUrl: bankStatementDraft || null }),
+          body: JSON.stringify({ bankStatement: bankStatementDraft, consent: true }),
         });
         if (!res.ok) {
-          showToast("Couldn't submit application — try again");
+          let message = "Couldn't submit application — try again";
+          try { const data = await res.json(); if (data?.error) message = data.error; } catch {}
+          showToast(message);
           return;
         }
       } catch {
@@ -2903,13 +2911,14 @@ export default function Stallyard() {
               hasAppliedToSell: true,
               verificationStatus: "pending",
               rejectionReason: "",
-              bankStatementUrl: bankStatementDraft || m.bankStatementUrl,
+              bankStatementUrl: null,
             }
           : m
       )
     );
     setBankStatementDraft(null);
-    showToast("Seller application submitted — you'll be notified once reviewed");
+    setVerifiedSellerConsent(false);
+    showToast("Verified-seller application submitted — you'll be notified after admin review");
   };
 
   const saveVacationSettings = async () => {
@@ -5530,6 +5539,31 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't load casual-seller verification"); }
     finally { setCasualSellerAdminLoading(false); }
   };
+
+  const fetchVerifiedSellerApplications = async () => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Couldn't load verified-seller applications");
+      setVerifiedSellerApplications(data.applications || []);
+    } catch (err) { showToast(err.message || "Couldn't load verified-seller applications"); }
+  };
+
+  const viewVerifiedSellerBankStatement = async (application) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/bank-statement`);
+      if (!response.ok) throw new Error("Bank statement unavailable");
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) { showToast(err.message); }
+  };
+
+  useEffect(() => {
+    if (adminTab === "members" && currentMember?.isAdmin && hasAdminPermission(currentMember, "seller_verification")) {
+      fetchVerifiedSellerApplications();
+    }
+  }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
   useEffect(() => {
     if (adminTab === "casualVerification" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
@@ -10247,6 +10281,18 @@ export default function Stallyard() {
                 <p className="text-xs mt-1" style={{ color: SLATE }}>
                   ₦{Number(casualSellerStatus?.currentActiveValue || 0).toLocaleString("en-NG")} active · ₦{Number(casualSellerStatus?.remainingValue ?? 500000).toLocaleString("en-NG")} remaining from your ₦500,000 limit
                 </p>
+                {currentMember?.verificationStatus !== "pending" ? (
+                  <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
+                    <p className="text-sm font-medium" style={{ color: INK }}>Need up to ₦20,000,000 in active listings?</p>
+                    <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for admin approval.</p>
+                    <label className="inline-block px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
+                      {bankStatementDraft ? "✓ Bank statement attached" : "Upload required bank statement"}
+                      <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
+                    </label>
+                    <label className="flex gap-2 text-xs mt-2" style={{ color: SLATE }}><input type="checkbox" checked={verifiedSellerConsent} onChange={(e) => setVerifiedSellerConsent(e.target.checked)} /><span>I confirm that the application, address, identity and payout-bank information belong to me and may be retained for seller verification and fraud prevention.</span></label>
+                    <button onClick={applyToSell} className="mt-2 px-4 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>Apply for verified seller status</button>
+                  </div>
+                ) : <p className="text-xs mt-2" style={{ color: MARIGOLD }}>Your verified-seller application is awaiting admin review.</p>}
               </div>
             )}
 
@@ -15185,6 +15231,7 @@ export default function Stallyard() {
                   key={t.id}
                   onClick={() => {
                     setAdminTab(t.id);
+                    if (t.id === "members") fetchVerifiedSellerApplications();
                     if (t.id === "auditLog") fetchAuditLog();
                     if (t.id === "staff") fetchAdminStaff();
                     if (t.id === "reconciliation") fetchReconciliation();
@@ -15850,6 +15897,17 @@ export default function Stallyard() {
                     <Plus size={16} />
                     Add member
                   </button>
+                )}
+                {verifiedSellerApplications.filter((application) => application.status === "pending").length > 0 && (
+                  <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
+                    <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified-seller applications awaiting approval</h4>
+                    <div className="space-y-2">{verifiedSellerApplications.filter((application) => application.status === "pending").map((application) => (
+                      <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
+                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p></div>
+                        <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View private bank statement</button>
+                      </div>
+                    ))}</div>
+                  </div>
                 )}
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
                   Admin staff are listed separately from regular members, each sorted A–Z — documents for each
