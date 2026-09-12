@@ -1832,7 +1832,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
             <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
             <label className="block text-xs" style={{ color: SLATE }}>Date of birth<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
             <select className="w-full px-3 py-2 rounded-lg border" value={form.idType} onChange={(e) => setForm({ ...form, idType: e.target.value })}>
-              <option value="nin">NIN slip/card</option><option value="passport">Nigerian passport</option><option value="drivers_license">Driver's licence</option><option value="voters_card">Permanent Voter Card</option>
+              <option value="nin">National Identification Number (NIN)</option><option value="passport">Nigerian International Passport</option><option value="drivers_license">Nigerian Driver's Licence</option><option value="voters_card">Permanent Voter's Card (PVC)</option><option value="cerpac">Residence/Work Permit (CERPAC)</option>
             </select>
             <input className="w-full px-3 py-2 rounded-lg border" placeholder="ID number" value={form.idNumber} onChange={(e) => setForm({ ...form, idNumber: e.target.value })} />
             <label className="block text-xs" style={{ color: SLATE }}>ID expiration, if applicable<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.idExpiration} onChange={(e) => setForm({ ...form, idExpiration: e.target.value })} /></label>
@@ -8855,6 +8855,7 @@ export default function Stallyard() {
                         <option>Driver's License</option>
                         <option>NIN</option>
                         <option>Permanent Voter's Card</option>
+                        <option>Residence/Work Permit (CERPAC)</option>
                       </select>
                     )}
                     {false && (
@@ -19830,6 +19831,7 @@ export default function Stallyard() {
                     <option>Passport</option>
                     <option>National ID</option>
                     <option>Driver's License</option>
+                    <option>Residence/Work Permit (CERPAC)</option>
                   </select>
                 </div>
                 <div className="flex-1">
