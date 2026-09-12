@@ -10362,20 +10362,36 @@ export default function Stallyard() {
 
             {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
               <div className="mb-6 p-3 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "white" }}>
-                <p className="text-sm font-medium" style={{ color: INK }}>Casual seller verified</p>
-                <p className="text-xs mt-1" style={{ color: SLATE }}>
-                  ₦{Number(casualSellerStatus?.currentActiveValue || 0).toLocaleString("en-NG")} active · ₦{Number(casualSellerStatus?.remainingValue ?? 500000).toLocaleString("en-NG")} remaining from your ₦500,000 limit
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-sm font-medium" style={{ color: INK }}>Casual Seller</p>
+                  <Tag color={SAGE}>Verified</Tag>
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  ₦{Number(casualSellerStatus?.currentActiveValue || 0).toLocaleString("en-NG")} active · ₦{Number(casualSellerStatus?.remainingValue ?? 500000).toLocaleString("en-NG")} remaining from your ₦500,000 combined limit
+                </p>
+                <div className="h-2 rounded-full overflow-hidden mt-2" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: SAGE,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 500000) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  Only active listings count. Draft, sold, cancelled, expired and removed listings do not count toward this limit.
                 </p>
                 {currentMember?.verificationStatus !== "pending" ? (
                   <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
-                    <p className="text-sm font-medium" style={{ color: INK }}>Need up to ₦20,000,000 in active listings?</p>
+                    <p className="text-sm font-medium" style={{ color: INK }}>Need more than ₦500,000?</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦10,000,000 in combined active listings.</p>
                     <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for admin approval.</p>
                     <label className="inline-block px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
                       {bankStatementDraft ? "✓ Bank statement attached" : "Upload required bank statement"}
                       <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
                     </label>
                     <label className="flex gap-2 text-xs mt-2" style={{ color: SLATE }}><input type="checkbox" checked={verifiedSellerConsent} onChange={(e) => setVerifiedSellerConsent(e.target.checked)} /><span>I confirm that the application, address, identity and payout-bank information belong to me and may be retained for seller verification and fraud prevention.</span></label>
-                    <button onClick={applyToSell} className="mt-2 px-4 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>Apply for verified seller status</button>
+                    <button onClick={applyToSell} className="mt-2 px-4 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>Upgrade to Verified Seller</button>
                   </div>
                 ) : <p className="text-xs mt-2" style={{ color: MARIGOLD }}>Your verified-seller application is awaiting admin review.</p>}
               </div>
@@ -11046,6 +11062,38 @@ export default function Stallyard() {
               <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
                 <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your live selfie and Nigerian ID to publish up to ₦500,000 in combined active listings.</p></div>
                 <button onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: SAGE, color: "white" }}>Start verification</button>
+              </div>
+            )}
+            {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
+              <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: INK }}>Casual Seller allowance</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Number(casualSellerStatus?.remainingValue ?? 500000), "NGN")} remaining
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setView("sell")}
+                    className="px-3 py-2 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    Upgrade to Verified Seller
+                  </button>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden mt-3" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: SAGE,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 500000) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦10,000,000.
+                </p>
               </div>
             )}
             {currentUser &&
