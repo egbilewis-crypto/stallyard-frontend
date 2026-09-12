@@ -1005,6 +1005,10 @@ function backendOrderToFrontend(row) {
       deliveryTokenGeneratedAt: i.delivery_token_generated_at ? new Date(i.delivery_token_generated_at).getTime() : null,
       deliveryTokenSentAt: i.delivery_token_sent_at ? new Date(i.delivery_token_sent_at).getTime() : null,
       deliveryTokenRedeemedAt: i.delivery_token_redeemed_at ? new Date(i.delivery_token_redeemed_at).getTime() : null,
+      cancellationStatus: i.cancellation_status || null,
+      cancellationReason: i.cancellation_reason || "",
+      cancellationRequestedAt: i.cancellation_requested_at ? new Date(i.cancellation_requested_at).getTime() : null,
+      cancellationRespondedAt: i.cancellation_responded_at ? new Date(i.cancellation_responded_at).getTime() : null,
       returnStatus: i.return_status || null,
       returnReason: i.return_reason || "",
       returnNote: i.return_note || "",
@@ -5458,6 +5462,63 @@ export default function Stallyard() {
       )
     );
     showToast("Return requested");
+  };
+
+  const requestCancellation = async (orderId, itemId) => {
+    const reason = window.prompt("Why do you want to cancel this item?");
+    if (!reason?.trim()) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/request-cancellation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't request cancellation");
+        return;
+      }
+      await persistOrders(orders.map((order) => order.id !== orderId ? order : {
+        ...order,
+        items: order.items.map((item) => item.id === itemId ? {
+          ...item,
+          cancellationStatus: "requested",
+          cancellationReason: reason.trim(),
+          cancellationRequestedAt: Date.now(),
+        } : item),
+      }));
+      showToast("Cancellation request sent to the seller");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const respondToCancellation = async (orderId, itemId, decision) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/cancellation-response`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't update the cancellation request");
+        return;
+      }
+      await persistOrders(orders.map((order) => order.id !== orderId ? order : {
+        ...order,
+        items: order.items.map((item) => item.id === itemId ? {
+          ...item,
+          cancellationStatus: decision,
+          cancellationRespondedAt: Date.now(),
+          fulfillmentStatus: decision === "approved" ? "cancelled" : item.fulfillmentStatus,
+          deliveryToken: decision === "approved" ? null : item.deliveryToken,
+        } : item),
+      }));
+      showToast(decision === "approved" ? "Cancellation approved — refund review notified" : "Cancellation denied");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const approveReturn = async (orderId, itemId) => {
@@ -10956,6 +11017,18 @@ export default function Stallyard() {
                                       </select>
                                     </div>
                                   </div>
+                                  {i.cancellationStatus === "requested" && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: CANVAS }}>
+                                      <div className="font-medium" style={{ color: INK }}>Buyer requested cancellation</div>
+                                      <div className="mt-1">Reason: {i.cancellationReason}</div>
+                                      <div className="flex gap-3 mt-2">
+                                        <button onClick={() => respondToCancellation(o.id, i.id, "approved")} className="font-medium underline" style={{ color: SAGE }}>Approve</button>
+                                        <button onClick={() => respondToCancellation(o.id, i.id, "denied")} className="font-medium underline" style={{ color: BERRY }}>Deny</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.cancellationStatus === "approved" && <div className="mt-2"><Tag color={SAGE}>Cancellation approved — refund review</Tag></div>}
+                                  {i.cancellationStatus === "denied" && <div className="mt-2"><Tag color={BERRY}>Cancellation denied</Tag></div>}
                                   {i.deliveryTokenSentAt && i.deliveryToken && !["shipped", "delivered"].includes(i.fulfillmentStatus) && (
                                     <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
                                       <div className="text-xs font-medium" style={{ color: INK }}>Buyer sent delivery token</div>
@@ -11719,6 +11792,27 @@ export default function Stallyard() {
                                   </a>
                                 </div>
                               )}
+                              {!item.cancellationStatus && o.paymentStatus === "held" && !o.isDisputed &&
+                                !["delivered", "cancelled", "returned"].includes(item.fulfillmentStatus) &&
+                                !item.buyerConfirmedAt && !item.deliveryTokenSentAt && !item.deliveryTokenRedeemedAt &&
+                                !["requested", "approved"].includes(item.returnStatus) && (
+                                  <button
+                                    onClick={() => requestCancellation(o.id, item.id)}
+                                    className="text-xs font-medium underline mt-2 block"
+                                    style={{ color: BERRY }}
+                                  >
+                                    Request cancellation
+                                  </button>
+                                )}
+                              {item.cancellationStatus && (
+                                <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                  <Tag color={item.cancellationStatus === "approved" ? SAGE : item.cancellationStatus === "denied" ? BERRY : MARIGOLD}>
+                                    Cancellation {item.cancellationStatus}
+                                  </Tag>
+                                  {item.cancellationReason && <div className="text-xs mt-1" style={{ color: SLATE }}>Reason: {item.cancellationReason}</div>}
+                                  {item.cancellationStatus === "approved" && <div className="text-xs mt-1" style={{ color: SLATE }}>Stallyard was notified to review your refund.</div>}
+                                </div>
+                              )}
                               {item.fulfillmentStatus === "delivered" && item.proofOfDeliveryUrl && (
                                 <div className="mt-2">
                                   <div className="text-xs mb-1" style={{ color: SLATE }}>
@@ -11750,7 +11844,9 @@ export default function Stallyard() {
                                     </button>
                                   </div>
                                 )}
-                              {o.paymentStatus === "held" && (
+                              {o.paymentStatus === "held" &&
+                                !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
+                                !["requested", "approved"].includes(item.cancellationStatus) && (
                                 <div className="mt-2">
                                   {(item.deliveryToken || deliveryTokens[item.id]) ? (
                                     <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
@@ -11802,7 +11898,7 @@ export default function Stallyard() {
                               )}
                             </div>
 
-                            {(item.fulfillmentStatus === "shipped" || item.returnStatus) && (
+                            {((o.paymentStatus === "held" && item.fulfillmentStatus === "shipped") || item.returnStatus) && (
                               <div className="pl-6 mb-2">
                                 {!item.returnStatus ? (
                                   returnDrafts[draftKey] ? (
@@ -12100,7 +12196,7 @@ export default function Stallyard() {
                               {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
                         {o.isDisputed && <Tag color={BERRY}>Issue reported — under review</Tag>}
                       </div>
-                      {!o.isDisputed && (
+                      {!o.isDisputed && o.paymentStatus === "held" && (
                         <button
                           onClick={() => fileDispute(o.id)}
                           className="text-xs font-medium underline"
