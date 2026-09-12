@@ -1088,6 +1088,9 @@ function backendUserToMember(user, existing) {
       (user.is_approved ? "approved" : user.has_applied_to_sell ? "pending" : "none"),
     bankStatementUrl: user.bank_statement_url ?? existing?.bankStatementUrl ?? null,
     rejectionReason: user.rejection_reason ?? existing?.rejectionReason ?? "",
+    casualSellerStatus: user.casual_seller_status ?? existing?.casualSellerStatus ?? "none",
+    casualSellerLimit: Number(user.casual_seller_limit ?? existing?.casualSellerLimit ?? 500000),
+    casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -1644,6 +1647,218 @@ function StallyardErrorScreen({ onRetry }) {
   );
 }
 
+function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToast }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const detectorRef = useRef(null);
+  const neutralFaceSizeRef = useRef(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({ legalName: "", dateOfBirth: "", idType: "nin", idNumber: "", idExpiration: "", consent: false });
+  const [captures, setCaptures] = useState({ liveSelfie: "", holdingIdSelfie: "", challengeFrames: [] });
+  const [documents, setDocuments] = useState({ idFront: "", idBack: "" });
+  const [faceChecks, setFaceChecks] = useState([]);
+  const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
+  const [faceMatchScore, setFaceMatchScore] = useState(null);
+  const challengePool = ["blink", "turn_left", "turn_right", "smile", "move_closer"];
+  const [challenges] = useState(() => [...challengePool].sort(() => Math.random() - 0.5).slice(0, 3));
+
+  const labels = {
+    blink: "Blink slowly, then look at the camera",
+    turn_left: "Turn your head to the left",
+    turn_right: "Turn your head to the right",
+    smile: "Smile while looking at the camera",
+    move_closer: "Move your face slightly closer",
+  };
+
+  useEffect(() => () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
+    if (detectorRef.current?.close) detectorRef.current.close();
+  }, []);
+
+  const initializeFaceDetector = async () => {
+    const vision = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm");
+    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm");
+    const detector = await vision.FaceLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" },
+      runningMode: "IMAGE", numFaces: 2, outputFaceBlendshapes: true,
+    });
+    return detector;
+  };
+
+  const startCamera = async () => {
+    setError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("This browser cannot securely open the camera. Use an updated phone browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      detectorRef.current = await initializeFaceDetector();
+      setCameraReady(true);
+      setFaceDetectionSupported(true);
+    } catch {
+      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
+      setError("The secure camera or on-device face checker could not start. Check camera permission and your connection, then try again.");
+    }
+  };
+
+  const captureCamera = async (kind, requestedChallenge = null) => {
+    const video = videoRef.current;
+    if (!video || !cameraReady || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    const size = Math.min(video.videoWidth, video.videoHeight);
+    const sx = Math.floor((video.videoWidth - size) / 2), sy = Math.floor((video.videoHeight - size) / 2);
+    canvas.width = 900; canvas.height = 900;
+    canvas.getContext("2d").drawImage(video, sx, sy, size, size, 0, 0, 900, 900);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    let facePresent = false;
+    if (detectorRef.current) {
+      try {
+        const result = detectorRef.current.detect(canvas);
+        facePresent = result.faceLandmarks?.length === 1;
+        if (facePresent) {
+          const landmarks = result.faceLandmarks[0];
+          const xs = landmarks.map((point) => point.x), ys = landmarks.map((point) => point.y);
+          const faceWidth = Math.max(...xs) - Math.min(...xs), faceHeight = Math.max(...ys) - Math.min(...ys);
+          if (kind === "live") neutralFaceSizeRef.current = faceWidth * faceHeight;
+          if (requestedChallenge) {
+            const scores = Object.fromEntries((result.faceBlendshapes?.[0]?.categories || []).map((item) => [item.categoryName, item.score]));
+            const noseRatio = (landmarks[1].x - Math.min(...xs)) / Math.max(faceWidth, 0.001);
+            const challengePassed = requestedChallenge === "blink" ? Math.max(scores.eyeBlinkLeft || 0, scores.eyeBlinkRight || 0) > 0.45
+              : requestedChallenge === "smile" ? Math.max(scores.mouthSmileLeft || 0, scores.mouthSmileRight || 0) > 0.45
+              : requestedChallenge === "turn_left" || requestedChallenge === "turn_right" ? Math.abs(noseRatio - 0.5) > 0.06
+              : requestedChallenge === "move_closer" ? neutralFaceSizeRef.current && faceWidth * faceHeight > neutralFaceSizeRef.current * 1.18
+              : false;
+            if (!challengePassed) { setError(`The “${labels[requestedChallenge]}” movement was not detected. Hold the position and capture again.`); return; }
+          }
+        }
+      } catch { facePresent = false; }
+      if (!facePresent) { setError("Exactly one clear face must be visible. Adjust the lighting and try again."); return; }
+    }
+    setFaceChecks((current) => [...current, facePresent]);
+    setError("");
+    if (kind === "live") setCaptures((current) => ({ ...current, liveSelfie: dataUrl }));
+    else if (kind === "holding") setCaptures((current) => ({ ...current, holdingIdSelfie: dataUrl }));
+    else setCaptures((current) => ({ ...current, challengeFrames: [...current.challengeFrames, dataUrl].slice(0, 3) }));
+  };
+
+  const chooseDocument = async (event, key) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setError("Identity evidence must be an image."); return; }
+    try {
+      const dataUrl = await resizeImageFile(file, 1400, 0.86);
+      setDocuments((current) => ({ ...current, [key]: dataUrl }));
+      setError("");
+    } catch { setError("That image could not be read. Choose a clear photograph."); }
+  };
+
+  const loadFaceMatcher = async () => {
+    if (!window.faceapi) {
+      await new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-stallyard-face-api="true"]');
+        if (existing) { existing.addEventListener("load", resolve, { once: true }); existing.addEventListener("error", reject, { once: true }); return; }
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
+        script.dataset.stallyardFaceApi = "true"; script.onload = resolve; script.onerror = reject; document.head.appendChild(script);
+      });
+    }
+    const modelPath = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights";
+    await Promise.all([
+      window.faceapi.nets.ssdMobilenetv1.loadFromUri(modelPath),
+      window.faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
+      window.faceapi.nets.faceRecognitionNet.loadFromUri(modelPath),
+    ]);
+    return window.faceapi;
+  };
+
+  const dataUrlImage = (src) => new Promise((resolve, reject) => {
+    const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src;
+  });
+
+  const verifyFaceMatchesId = async () => {
+    const faceapi = await loadFaceMatcher();
+    const [selfieImage, idImage] = await Promise.all([dataUrlImage(captures.liveSelfie), dataUrlImage(documents.idFront)]);
+    const [selfieFace, idFace] = await Promise.all([
+      faceapi.detectSingleFace(selfieImage).withFaceLandmarks().withFaceDescriptor(),
+      faceapi.detectSingleFace(idImage).withFaceLandmarks().withFaceDescriptor(),
+    ]);
+    if (!selfieFace || !idFace) throw new Error("A clear face could not be found in both the live selfie and ID photo. Retake the unclear image.");
+    const distance = faceapi.euclideanDistance(selfieFace.descriptor, idFace.descriptor);
+    const score = Math.max(0, Math.min(100, Math.round((1 - distance) * 100)));
+    setFaceMatchScore(score);
+    if (distance > 0.5) throw new Error("The live selfie does not closely match the face on the ID. Check that the ID belongs to you and retake both images.");
+    return { passed: true, score, distance: Number(distance.toFixed(4)), selfieDescriptor: Array.from(selfieFace.descriptor) };
+  };
+
+  const submit = async () => {
+    setError("");
+    if (!faceDetectionSupported) { setError("Automatic face detection is unavailable on this browser. Use an updated supported phone or browser so Stallyard does not approve an unverified person."); return; }
+    if (!form.legalName.trim() || !form.dateOfBirth || !form.idNumber.trim() || !documents.idFront) { setError("Complete your identity details and add the front of your ID."); return; }
+    if (!captures.liveSelfie || !captures.holdingIdSelfie || captures.challengeFrames.length !== 3) { setError("Complete the live selfie, all three challenges, and the selfie holding your ID."); return; }
+    if (!form.consent) { setError("You must accept the identity-record consent before submitting."); return; }
+    setSubmitting(true);
+    try {
+      const faceMatch = await verifyFaceMatchesId();
+      const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, idNumber: form.idNumber.trim(), idFront: documents.idFront, idBack: documents.idBack || null,
+          ...captures, challenges, faceDetectionSupported, faceChecks, faceMatch }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Verification could not be completed");
+      onApproved(data);
+      showToast(data.status === "approved" ? "Identity verified — you can now publish up to ₦500,000 in active listings" : "Verification needs attention — review the result and try again");
+      onClose();
+    } catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 overflow-y-auto" style={{ backgroundColor: "rgba(27,36,48,.72)" }} onClick={onClose}>
+      <div className="w-full max-w-3xl rounded-2xl p-5 my-6" style={{ backgroundColor: CANVAS }} onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div><h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Automatic casual-seller verification</h2><p className="text-sm" style={{ color: SLATE }}>Verify once to publish up to ₦500,000 in combined active listings.</p></div>
+          <button onClick={onClose} aria-label="Close"><X size={22} /></button>
+        </div>
+        <div className="grid md:grid-cols-2 gap-5">
+          <div className="space-y-3">
+            <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
+            <label className="block text-xs" style={{ color: SLATE }}>Date of birth<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
+            <select className="w-full px-3 py-2 rounded-lg border" value={form.idType} onChange={(e) => setForm({ ...form, idType: e.target.value })}>
+              <option value="nin">NIN slip/card</option><option value="passport">Nigerian passport</option><option value="drivers_license">Driver's licence</option><option value="voters_card">Permanent Voter Card</option>
+            </select>
+            <input className="w-full px-3 py-2 rounded-lg border" placeholder="ID number" value={form.idNumber} onChange={(e) => setForm({ ...form, idNumber: e.target.value })} />
+            <label className="block text-xs" style={{ color: SLATE }}>ID expiration, if applicable<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.idExpiration} onChange={(e) => setForm({ ...form, idExpiration: e.target.value })} /></label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="p-3 rounded-lg border cursor-pointer text-sm">{documents.idFront ? "✓ ID front added" : "Add ID front"}<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => chooseDocument(e, "idFront")} /></label>
+              <label className="p-3 rounded-lg border cursor-pointer text-sm">{documents.idBack ? "✓ ID back added" : "Add ID back"}<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => chooseDocument(e, "idBack")} /></label>
+            </div>
+          </div>
+          <div>
+            <div className="aspect-square rounded-xl overflow-hidden bg-black mb-2"><video ref={videoRef} muted playsInline className="w-full h-full object-cover" /></div>
+            {!cameraReady ? <button onClick={startCamera} className="w-full py-2 rounded-lg font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>Open secure camera</button> : (
+              <div className="space-y-2 text-sm">
+                <button onClick={() => captureCamera("live")} className="w-full py-2 rounded-lg border">{captures.liveSelfie ? "✓ Retake neutral live selfie" : "Capture neutral live selfie"}</button>
+                {challenges.map((challenge, index) => <button key={challenge} disabled={captures.challengeFrames.length !== index} onClick={() => captureCamera("challenge", challenge)} className="w-full py-2 px-2 rounded-lg border disabled:opacity-40 text-left">{captures.challengeFrames[index] ? "✓ " : `${index + 1}. `}{labels[challenge]}</button>)}
+                <button onClick={() => captureCamera("holding")} className="w-full py-2 rounded-lg border">{captures.holdingIdSelfie ? "✓ Retake selfie holding ID" : "Hold your ID beside your face and capture"}</button>
+              </div>
+            )}
+          </div>
+        </div>
+        <label className="flex gap-2 mt-5 text-xs" style={{ color: SLATE }}><input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} /><span>I consent to Stallyard collecting and securely retaining my identity images and verification results for fraud prevention, account security, seller accountability, transaction investigations, and legal recordkeeping. They may be accessed only by authorized Stallyard verification personnel.</span></label>
+        {error && <p className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
+        {faceMatchScore !== null && <p className="text-xs mt-2" style={{ color: SAGE }}>Live-selfie to ID face match: {faceMatchScore}%</p>}
+        <button disabled={submitting} onClick={submit} className="w-full mt-4 py-3 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{submitting ? "Securely checking and saving…" : "Submit for automatic verification"}</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Stallyard() {
   useFonts();
   const [fatalServerError, setFatalServerError] = useState(false);
@@ -1940,6 +2155,11 @@ export default function Stallyard() {
   const [buyerRiskSearch, setBuyerRiskSearch] = useState("");
   const [buyerRiskFilter, setBuyerRiskFilter] = useState("all");
   const [expandedBuyerRiskId, setExpandedBuyerRiskId] = useState(null);
+  const [casualSellerApplications, setCasualSellerApplications] = useState([]);
+  const [casualSellerReports, setCasualSellerReports] = useState([]);
+  const [casualSellerAdminLoading, setCasualSellerAdminLoading] = useState(false);
+  const [selectedCasualApplication, setSelectedCasualApplication] = useState(null);
+  const [casualEvidenceUrls, setCasualEvidenceUrls] = useState({});
   // Admin-wide search and filters for the high-volume operational tabs.
   const [adminListingSearch, setAdminListingSearch] = useState("");
   const [adminListingStatusFilter, setAdminListingStatusFilter] = useState("all");
@@ -2090,6 +2310,8 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
+  const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
+  const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
   const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
@@ -2595,6 +2817,14 @@ export default function Stallyard() {
     }, 15000);
     return () => clearInterval(interval);
   }, [currentUser, authToken]);
+
+  useEffect(() => {
+    if (!currentUser || !authToken || sessionUserProfile?.is_admin) { setCasualSellerStatus(null); return; }
+    authFetch(`${BACKEND_URL}/casual-seller/status`)
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => { if (data) setCasualSellerStatus(data); })
+      .catch(() => {});
+  }, [currentUser, authToken, sessionUserProfile?.is_admin]);
 
   useEffect(() => {
     if (!cartOpen) return;
@@ -3208,6 +3438,10 @@ export default function Stallyard() {
   const currentMember = currentUser && sessionUserProfile?.username === currentUser
     ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
     : publicCurrentMember;
+  const hasSellerListingAccess = !!(
+    currentMember?.isApproved || currentMember?.isAdmin ||
+    currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
+  );
 
   // Keep the admin origin completely separate from the buyer/seller storefront.
   // The admin host gets its own browser title and can render only the admin view.
@@ -5280,6 +5514,53 @@ export default function Stallyard() {
     }
   };
 
+  const fetchCasualSellerVerification = async () => {
+    setCasualSellerAdminLoading(true);
+    try {
+      const [applicationsRes, reportsRes] = await Promise.all([
+        authFetch(`${BACKEND_URL}/admin/casual-seller-applications`),
+        authFetch(`${BACKEND_URL}/admin/casual-seller-reports`),
+      ]);
+      const applicationsData = await applicationsRes.json();
+      const reportsData = await reportsRes.json();
+      if (!applicationsRes.ok) throw new Error(applicationsData.error || "Couldn't load applications");
+      if (!reportsRes.ok) throw new Error(reportsData.error || "Couldn't load reports");
+      setCasualSellerApplications(applicationsData.applications || []);
+      setCasualSellerReports(reportsData.reports || []);
+    } catch (err) { showToast(err.message || "Couldn't load casual-seller verification"); }
+    finally { setCasualSellerAdminLoading(false); }
+  };
+
+  useEffect(() => {
+    if (adminTab === "casualVerification" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
+      fetchCasualSellerVerification();
+    }
+  }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
+
+  const openCasualApplicationEvidence = async (application) => {
+    Object.values(casualEvidenceUrls).forEach((url) => URL.revokeObjectURL(url));
+    setCasualEvidenceUrls({});
+    setSelectedCasualApplication(application);
+    const urls = {};
+    for (const key of application.evidence_keys || []) {
+      try {
+        const response = await authFetch(`${BACKEND_URL}/admin/casual-seller-applications/${application.id}/evidence/${key}`);
+        if (response.ok) urls[key] = URL.createObjectURL(await response.blob());
+      } catch {}
+    }
+    setCasualEvidenceUrls(urls);
+  };
+
+  const downloadCasualSellerReport = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/casual-seller-reports/${report.id}/download`);
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || "Report unavailable"); }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a"); link.href = url; link.download = `stallyard-casual-sellers-${String(report.report_date).slice(0, 10)}.pdf`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { showToast(err.message || "Couldn't download report"); }
+  };
+
   const verifyPaystackReconciliation = async (orderId) => {
     setPaystackCheckingOrderId(orderId);
     try {
@@ -7081,8 +7362,9 @@ export default function Stallyard() {
       showToast("Register or log in to publish a listing");
       return;
     }
-    if (currentMember?.isApproved === false) {
-      showToast("Your seller account is still pending admin approval");
+    if (!hasSellerListingAccess) {
+      showToast("Complete automatic casual-seller verification before publishing");
+      setCasualVerificationOpen(true);
       return;
     }
     if (needsIdVerification) {
@@ -7126,7 +7408,7 @@ export default function Stallyard() {
       } else if (existingListing?.status === "draft" || existingListing?.status === "rejected") {
         // Once a seller is approved, everything they list — including
         // auctions — goes live immediately without a separate review queue.
-        const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
+        const autoApproved = hasSellerListingAccess;
         statusPatch = { status: autoApproved ? "active" : "pending" };
       }
       const patch = {
@@ -7143,7 +7425,9 @@ export default function Stallyard() {
             body: JSON.stringify(patch),
           });
           if (!res.ok) {
-            showToast("Couldn't save changes — try again");
+            let message = "Couldn't save changes — try again";
+            try { const data = await res.json(); if (data?.error) message = data.error; } catch {}
+            showToast(message);
             return;
           }
           const { listing } = await res.json();
@@ -7162,7 +7446,7 @@ export default function Stallyard() {
       const isAuction = form.listingType === "auction";
       // Once a seller is approved, everything they list — including
       // auctions — goes live immediately without a separate review queue.
-      const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
+      const autoApproved = hasSellerListingAccess;
       const status = isDraft ? "draft" : autoApproved ? "active" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
@@ -9901,7 +10185,7 @@ export default function Stallyard() {
                 className="mt-6 px-6 py-3 rounded-lg font-semibold"
                 style={{ backgroundColor: MARIGOLD, color: INK }}
               >
-                {currentUser ? (currentMember?.isApproved === false ? "Start seller verification" : "Create a listing") : "Start seller registration"}
+                {currentUser ? (hasSellerListingAccess ? "Create a listing" : "Start seller verification") : "Start seller registration"}
               </button>
               <p className="text-xs mt-4" style={{ color: "#8A93A3" }}>Nigeria-only marketplace · Payments in naira · 5% commission on completed sales</p>
             </div>
@@ -9940,6 +10224,30 @@ export default function Stallyard() {
                 Selling as <strong style={{ color: INK }}>{currentMember.displayName}</strong>
                 {currentMember.isVerified && <Tag color={SAGE}>Identity verified</Tag>}
               </p>
+            )}
+
+            {currentUser && !hasSellerListingAccess && (
+              <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="font-semibold text-sm" style={{ color: INK }}>Sell as a verified casual seller</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings without waiting for admin approval.</p>
+                  </div>
+                  <button onClick={() => setCasualVerificationOpen(true)} className="px-4 py-2 rounded-lg font-medium text-sm" style={{ backgroundColor: SAGE, color: "white" }}>
+                    {casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
+                  </button>
+                </div>
+                {casualSellerStatus?.application?.decision_reason && <p className="text-xs mt-2" style={{ color: BERRY }}>{casualSellerStatus.application.decision_reason}</p>}
+              </div>
+            )}
+
+            {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
+              <div className="mb-6 p-3 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "white" }}>
+                <p className="text-sm font-medium" style={{ color: INK }}>Casual seller verified</p>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>
+                  ₦{Number(casualSellerStatus?.currentActiveValue || 0).toLocaleString("en-NG")} active · ₦{Number(casualSellerStatus?.remainingValue ?? 500000).toLocaleString("en-NG")} remaining from your ₦500,000 limit
+                </p>
+              </div>
             )}
 
             {currentUser &&
@@ -10036,7 +10344,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {(!currentUser || (currentMember?.isApproved !== false && !needsIdVerification)) && (
+            {(!currentUser || (hasSellerListingAccess && !needsIdVerification)) && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
@@ -10555,7 +10863,7 @@ export default function Stallyard() {
                   Manage your listings, orders, deliveries, payouts, messages, and seller performance.
                 </p>
               </div>
-              {currentUser && currentMember?.isApproved !== false && (
+              {currentUser && hasSellerListingAccess && (
                 <button
                   onClick={() => {
                     resetForm();
@@ -10569,7 +10877,7 @@ export default function Stallyard() {
                 </button>
               )}
             </div>
-            {currentUser && currentMember?.isApproved !== false && (
+            {currentUser && hasSellerListingAccess && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
                 {[
                   { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
@@ -10589,6 +10897,12 @@ export default function Stallyard() {
                     {item.label}
                   </button>
                 ))}
+              </div>
+            )}
+            {currentUser && !hasSellerListingAccess && (
+              <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
+                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your live selfie and Nigerian ID to publish up to ₦500,000 in combined active listings.</p></div>
+                <button onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: SAGE, color: "white" }}>Start verification</button>
               </div>
             )}
             {currentUser &&
@@ -14839,6 +15153,7 @@ export default function Stallyard() {
                 { id: "reconciliation", label: "Reconciliation", permission: "finance" },
                 { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
                 { id: "buyerRisk", label: "Buyer risk", requireSuperAdmin: true },
+                { id: "casualVerification", label: "Casual seller verification", requireSuperAdmin: true },
                 {
                   id: "refunds",
                   label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
@@ -14875,6 +15190,7 @@ export default function Stallyard() {
                     if (t.id === "reconciliation") fetchReconciliation();
                     if (t.id === "sellerPerformance") fetchSellerPerformance();
                     if (t.id === "buyerRisk") fetchBuyerRisk();
+                    if (t.id === "casualVerification") fetchCasualSellerVerification();
                     if (t.id === "systemHealth") fetchSystemHealth();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
@@ -16224,6 +16540,30 @@ export default function Stallyard() {
                     </div>
                   </>
                 )}
+              </div>
+            )}
+
+            {adminTab === "casualVerification" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-5">
+                  <div><h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Casual seller verification</h3><p className="text-sm mt-1" style={{ color: SLATE }}>Permanent identity evidence and daily PDF records. Access is recorded.</p></div>
+                  <button onClick={fetchCasualSellerVerification} className="px-3 py-2 rounded-lg border text-sm">{casualSellerAdminLoading ? "Loading…" : "Refresh"}</button>
+                </div>
+                <div className="grid lg:grid-cols-3 gap-5">
+                  <div className="lg:col-span-2 space-y-3">
+                    {(casualSellerApplications || []).map((application) => (
+                      <div key={application.id} className="p-4 rounded-xl border bg-white flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: "#DDD8CC" }}>
+                        <div><div className="flex items-center gap-2"><strong style={{ color: INK }}>{application.legal_name}</strong><Tag color={application.status === "approved" ? SAGE : application.status === "suspended" ? BERRY : MARIGOLD}>{application.status}</Tag></div><p className="text-xs mt-1" style={{ color: SLATE }}>@{application.username} · {application.reference} · {application.id_type} ending {application.id_number_last4}</p></div>
+                        <button onClick={() => openCasualApplicationEvidence(application)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>Review evidence</button>
+                      </div>
+                    ))}
+                    {!casualSellerApplications.length && <p className="text-sm" style={{ color: SLATE }}>No casual-seller applications yet.</p>}
+                  </div>
+                  <div className="p-4 rounded-xl border bg-white h-fit" style={{ borderColor: "#DDD8CC" }}>
+                    <h4 className="font-semibold mb-3" style={{ color: INK }}>Daily PDF reports</h4>
+                    <div className="space-y-2">{casualSellerReports.map((report) => <button key={report.id} onClick={() => downloadCasualSellerReport(report)} className="w-full text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}><strong>{String(report.report_date).slice(0, 10)}</strong><br />{report.application_count} applications · {report.email_status}</button>)}</div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -19971,6 +20311,32 @@ export default function Stallyard() {
                 {editingArticleId ? "Save changes" : "Publish article"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {casualVerificationOpen && (
+        <CasualSellerVerificationModal
+          onClose={() => setCasualVerificationOpen(false)}
+          authFetch={authFetch}
+          showToast={showToast}
+          onApproved={(result) => {
+            setCasualSellerStatus((current) => ({
+              ...(current || {}), status: result.status, limit: result.limit,
+              application: { reference: result.reference, status: result.status, automatic_checks: result.checks },
+            }));
+            setSessionUserProfile((current) => current ? { ...current, casual_seller_status: result.status, casual_seller_limit: result.limit } : current);
+          }}
+        />
+      )}
+      {selectedCasualApplication && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 overflow-y-auto" style={{ backgroundColor: "rgba(27,36,48,.78)" }} onClick={() => setSelectedCasualApplication(null)}>
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-5 my-6" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 mb-4"><div><h3 className="text-xl" style={{ color: INK }}>{selectedCasualApplication.legal_name}</h3><p className="text-xs" style={{ color: SLATE }}>{selectedCasualApplication.reference} · @{selectedCasualApplication.username}</p></div><button onClick={() => setSelectedCasualApplication(null)}><X size={22} /></button></div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {Object.entries(casualEvidenceUrls).map(([key, url]) => <figure key={key}><img src={url} alt={key.replaceAll("_", " ")} className="w-full aspect-square object-contain rounded-lg border bg-black" /><figcaption className="text-xs mt-1 capitalize" style={{ color: SLATE }}>{key.replaceAll("_", " ")}</figcaption></figure>)}
+            </div>
+            <div className="mt-4 p-3 rounded-lg" style={{ backgroundColor: CANVAS }}><p className="text-sm font-medium mb-2" style={{ color: INK }}>Automatic checks</p><div className="flex flex-wrap gap-2">{Object.entries(selectedCasualApplication.automatic_checks || {}).map(([key, passed]) => <Tag key={key} color={passed ? SAGE : BERRY}>{key}: {passed ? "pass" : "fail"}</Tag>)}</div></div>
+            {selectedCasualApplication.status === "approved" && <button onClick={async () => { const reason = window.prompt("Reason for suspension"); if (!reason) return; const response = await authFetch(`${BACKEND_URL}/admin/casual-seller-applications/${selectedCasualApplication.id}/suspend`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason }) }); if (response.ok) { showToast("Casual seller suspended and active listings paused"); setSelectedCasualApplication(null); fetchCasualSellerVerification(); } else showToast("Couldn't suspend this seller"); }} className="mt-4 px-4 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: BERRY, color: "white" }}>Suspend casual seller</button>}
           </div>
         </div>
       )}
