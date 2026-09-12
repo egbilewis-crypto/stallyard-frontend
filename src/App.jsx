@@ -1823,6 +1823,8 @@ export default function Stallyard() {
   const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
   const [saveCardAtCheckout, setSaveCardAtCheckout] = useState(false);
   const [orders, setOrders] = useState([]);
+  const [buyerOrderSearch, setBuyerOrderSearch] = useState("");
+  const [buyerOrderStatusFilter, setBuyerOrderStatusFilter] = useState("all");
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [homepageAds, setHomepageAds] = useState([
@@ -7473,6 +7475,40 @@ export default function Stallyard() {
       : 0),
     0
   );
+  const filteredBuyerOrders = myOrders.filter((order) => {
+    const query = buyerOrderSearch.trim().toLowerCase();
+    const matchesSearch = !query || [
+      String(order.id),
+      orderNumber(order.id),
+      order.paystackReference || "",
+      ...order.items.flatMap((item) => [
+        item.title || "",
+        item.sellerName || "",
+        item.ownerUsername || "",
+        item.trackingNumber || "",
+        item.carrier || "",
+      ]),
+    ].some((value) => String(value).toLowerCase().includes(query));
+    if (!matchesSearch) return false;
+
+    const items = order.items || [];
+    if (buyerOrderStatusFilter === "all") return true;
+    if (buyerOrderStatusFilter === "active") {
+      return order.paymentStatus === "held" && items.some((item) => !["cancelled", "returned"].includes(item.fulfillmentStatus));
+    }
+    if (buyerOrderStatusFilter === "preparing") {
+      return items.some((item) => ["new", "preparing"].includes(item.fulfillmentStatus || "new"));
+    }
+    if (buyerOrderStatusFilter === "shipped") return items.some((item) => item.fulfillmentStatus === "shipped");
+    if (buyerOrderStatusFilter === "delivered") return items.some((item) => item.fulfillmentStatus === "delivered");
+    if (buyerOrderStatusFilter === "completed") return order.paymentStatus === "released";
+    if (buyerOrderStatusFilter === "returned") {
+      return items.some((item) => item.fulfillmentStatus === "returned" || ["requested", "approved"].includes(item.returnStatus));
+    }
+    if (buyerOrderStatusFilter === "refunded") return order.paymentStatus === "refunded" || order.refundStatus === "processed";
+    if (buyerOrderStatusFilter === "disputed") return order.isDisputed;
+    return true;
+  });
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
 
   // View-only list of how this buyer has actually paid in the past,
@@ -11531,8 +11567,59 @@ export default function Stallyard() {
                     </div>
                   </div>
                 </div>
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                  <label className="flex-1">
+                    <span className="sr-only">Search your orders</span>
+                    <input
+                      type="search"
+                      value={buyerOrderSearch}
+                      onChange={(e) => setBuyerOrderSearch(e.target.value)}
+                      placeholder="Search order, item, seller or tracking number"
+                      className="w-full px-3 py-2 rounded-lg border bg-white outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC", color: INK }}
+                    />
+                  </label>
+                  <label>
+                    <span className="sr-only">Filter orders by status</span>
+                    <select
+                      value={buyerOrderStatusFilter}
+                      onChange={(e) => setBuyerOrderStatusFilter(e.target.value)}
+                      className="w-full sm:w-48 px-3 py-2 rounded-lg border bg-white outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC", color: INK }}
+                    >
+                      <option value="all">All orders</option>
+                      <option value="active">Active</option>
+                      <option value="preparing">Preparing</option>
+                      <option value="shipped">Shipped</option>
+                      <option value="delivered">Delivered</option>
+                      <option value="completed">Completed</option>
+                      <option value="returned">Returned</option>
+                      <option value="refunded">Refunded</option>
+                      <option value="disputed">Disputed</option>
+                    </select>
+                  </label>
+                </div>
+                {(buyerOrderSearch || buyerOrderStatusFilter !== "all") && (
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      {filteredBuyerOrders.length} matching order{filteredBuyerOrders.length === 1 ? "" : "s"}
+                    </p>
+                    <button
+                      onClick={() => { setBuyerOrderSearch(""); setBuyerOrderStatusFilter("all"); }}
+                      className="text-xs font-medium underline"
+                      style={{ color: SLATE }}
+                    >
+                      Clear search and filter
+                    </button>
+                  </div>
+                )}
                 <div className="space-y-4">
-                {myOrders.map((o) => (
+                {filteredBuyerOrders.length === 0 ? (
+                  <div className="p-6 rounded-lg border bg-white text-center" style={{ borderColor: "#DDD8CC" }}>
+                    <p className="text-sm font-medium" style={{ color: INK }}>No matching orders</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Try a different search or status filter.</p>
+                  </div>
+                ) : filteredBuyerOrders.map((o) => (
                   <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="flex items-center justify-between mb-1">
                       <span
