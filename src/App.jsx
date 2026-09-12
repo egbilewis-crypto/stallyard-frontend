@@ -9111,7 +9111,7 @@ export default function Stallyard() {
                         Use the exact name on your bank account
                       </p>
                       <p className="text-xs mt-1" style={{ color: SLATE }}>
-                        After signup, enter your first and last name exactly as your bank has them. Even a small spelling difference can cause Stallyard to reject your bank account during seller payout verification.
+                        After signup, enter your Surname and First Name exactly as your bank has them. Even a small spelling difference can cause Stallyard to reject your bank account during buying/selling/payout verification.
                       </p>
                     </div>
                   )}
