@@ -8,28 +8,9 @@ const BERRY = "#C1443C";
 const SAGE = "#6B8F71";
 const SLATE = "#667085";
 
-const BACKEND_URL =
-  typeof window !== "undefined" && /(^|\.)stallyard\.com$/i.test(window.location.hostname)
-    ? "https://api.stallyard.com"
-    : "https://stallyard-backend-production.up.railway.app";
+const BACKEND_URL = "https://stallyard-backend-production.up.railway.app";
 
-// All Stallyard API requests include credentials so the backend can use a
-// Secure, HttpOnly session cookie. Authentication tokens are never stored in
-// localStorage or exposed to frontend JavaScript.
-const backendFetch = async (url, options = {}) => {
-  const response = await fetch(url, {
-    ...options,
-    credentials: "include",
-  });
-  if (typeof window !== "undefined" && response.status >= 500) {
-    window.dispatchEvent(new CustomEvent("stallyard:server-error", {
-      detail: { status: response.status },
-    }));
-  }
-  return response;
-};
-
-// `window.storage` may not exist in every browser environment. On the real
+// `window.storage` only exists inside Claude's own preview tool. On the real
 // deployed site it doesn't exist, so we back it with the browser's own
 // localStorage instead — same shape (get/set/delete/list), so nothing else
 // in this file has to change.
@@ -60,522 +41,7 @@ if (typeof window !== "undefined" && !window.storage) {
   };
 }
 
-const CATEGORIES = [
-  "Accessories",
-  "Art",
-  "Auto Parts",
-  "Bags & Purses",
-  "Bath & Beauty",
-  "Books",
-  "Clothing",
-  "Collectibles",
-  "Craft Supplies & Tools",
-  "Electronics",
-  "Gifts",
-  "Groceries",
-  "Handmade",
-  "Home",
-  "Jewelry",
-  "Kids & Baby",
-  "Movies & Music",
-  "Office",
-  "Outdoors",
-  "Paper & Party Supplies",
-  "Pet Supplies",
-  "Shoes",
-  "Tools & Equipment",
-  "Toys & Games",
-  "Vintage",
-  "Weddings",
-  "Other",
-];
-
-const SUBCATEGORIES = {
-  "Accessories": [
-    "Belts",
-    "Hats & Caps",
-    "Scarves & Wraps",
-    "Sunglasses",
-    "Eyewear",
-    "Hair Accessories",
-    "Gloves",
-    "Wallets",
-    "Keychains",
-    "Umbrellas",
-    "Watches",
-    "Fashion Accessories",
-    "Other Accessories"
-  ],
-  "Art": [
-    "Paintings",
-    "Drawings & Illustrations",
-    "Prints",
-    "Photography",
-    "Sculpture",
-    "Digital Art",
-    "Wall Art",
-    "African Art",
-    "Mixed Media",
-    "Art Supplies",
-    "Posters",
-    "Other Art"
-  ],
-  "Auto Parts": [
-    "Engine Parts",
-    "Transmission Parts",
-    "Brakes",
-    "Suspension & Steering",
-    "Tires",
-    "Wheels & Rims",
-    "Batteries",
-    "Alternators & Starters",
-    "Filters",
-    "Exhaust Parts",
-    "Cooling System",
-    "Fuel System",
-    "Electrical Parts",
-    "Headlights & Lighting",
-    "Mirrors",
-    "Body Parts",
-    "Bumpers",
-    "Doors & Windows",
-    "Interior Parts",
-    "Car Audio",
-    "GPS & Electronics",
-    "Tools & Equipment",
-    "Motorcycle Parts",
-    "Truck Parts",
-    "Car Care Products",
-    "Other Auto Parts"
-  ],
-  "Bags & Purses": [
-    "Handbags",
-    "Shoulder Bags",
-    "Crossbody Bags",
-    "Tote Bags",
-    "Backpacks",
-    "Clutches",
-    "Wallets",
-    "Travel Bags",
-    "Laptop Bags",
-    "School Bags",
-    "Briefcases",
-    "Luggage",
-    "Cosmetic Bags",
-    "Other Bags"
-  ],
-  "Bath & Beauty": [
-    "Skin Care",
-    "Hair Care",
-    "Makeup",
-    "Fragrances",
-    "Bath Products",
-    "Body Care",
-    "Nail Care",
-    "Shaving & Grooming",
-    "Beauty Tools",
-    "Hair Extensions & Wigs",
-    "Natural Beauty Products",
-    "Men's Grooming",
-    "Other Beauty Products"
-  ],
-  "Books": [
-    "Fiction",
-    "Nonfiction",
-    "Children's Books",
-    "Textbooks",
-    "Academic Books",
-    "Religious Books",
-    "Business Books",
-    "Self-Help",
-    "Cookbooks",
-    "Comics & Graphic Novels",
-    "Magazines",
-    "Dictionaries",
-    "Exam Preparation",
-    "Used Books",
-    "Rare Books",
-    "Other Books"
-  ],
-  "Clothing": [
-    "Men's Clothing",
-    "Women's Clothing",
-    "Boys' Clothing",
-    "Girls' Clothing",
-    "Dresses",
-    "Shirts",
-    "T-Shirts",
-    "Trousers",
-    "Jeans",
-    "Shorts",
-    "Skirts",
-    "Suits",
-    "Jackets & Coats",
-    "Sweaters",
-    "Sportswear",
-    "Underwear",
-    "Sleepwear",
-    "Swimwear",
-    "Traditional Nigerian Clothing",
-    "Maternity Clothing",
-    "Uniforms",
-    "Other Clothing"
-  ],
-  "Collectibles": [
-    "Coins",
-    "Stamps",
-    "Trading Cards",
-    "Sports Memorabilia",
-    "Music Memorabilia",
-    "Movie Memorabilia",
-    "Historical Memorabilia",
-    "Figurines",
-    "Dolls",
-    "Antiques",
-    "Vintage Collectibles",
-    "Autographs",
-    "Advertising Collectibles",
-    "African Collectibles",
-    "Other Collectibles"
-  ],
-  "Craft Supplies & Tools": [
-    "Beads",
-    "Fabric",
-    "Yarn",
-    "Sewing Supplies",
-    "Knitting Supplies",
-    "Crochet Supplies",
-    "Jewelry Making",
-    "Leatherworking",
-    "Woodworking",
-    "Painting Supplies",
-    "Drawing Supplies",
-    "Sculpting Supplies",
-    "Candle Making",
-    "Soap Making",
-    "Floral Supplies",
-    "Craft Tools",
-    "Other Craft Supplies"
-  ],
-  "Electronics": [
-    "Mobile Phones",
-    "Smartphones",
-    "Tablets",
-    "Laptops",
-    "Desktop Computers",
-    "Computer Components",
-    "Computer Accessories",
-    "Monitors",
-    "Televisions",
-    "Projectors",
-    "Cameras",
-    "Camera Accessories",
-    "Video Cameras",
-    "Headphones",
-    "Earbuds",
-    "Speakers",
-    "Home Audio",
-    "Gaming Consoles",
-    "Video Games",
-    "Gaming Controllers",
-    "Gaming Accessories",
-    "Smart Watches",
-    "Wearable Technology",
-    "Chargers & Cables",
-    "Power Banks",
-    "Routers & Networking",
-    "Printers & Scanners",
-    "Storage Devices",
-    "Security Cameras",
-    "Smart Home Devices",
-    "Media Players",
-    "Electronic Accessories",
-    "Other Electronics"
-  ],
-  "Gifts": [
-    "Birthday Gifts",
-    "Wedding Gifts",
-    "Anniversary Gifts",
-    "Graduation Gifts",
-    "Baby Gifts",
-    "Gifts for Him",
-    "Gifts for Her",
-    "Gifts for Kids",
-    "Corporate Gifts",
-    "Personalized Gifts",
-    "Gift Sets",
-    "Gift Cards",
-    "Holiday Gifts",
-    "Other Gifts"
-  ],
-  "Groceries": [
-    "Rice & Grains",
-    "Pasta & Noodles",
-    "Flour & Baking",
-    "Cooking Oil",
-    "Spices & Seasonings",
-    "Canned Foods",
-    "Snacks",
-    "Biscuits & Cookies",
-    "Sweets & Chocolate",
-    "Beverages",
-    "Tea & Coffee",
-    "Breakfast Foods",
-    "Dairy Products",
-    "Frozen Foods",
-    "Fresh Produce",
-    "Meat & Seafood",
-    "Nigerian Food Products",
-    "Health Foods",
-    "Baby Food",
-    "Other Groceries"
-  ],
-  "Handmade": [
-    "Handmade Jewelry",
-    "Handmade Clothing",
-    "Handmade Bags",
-    "Handmade Shoes",
-    "Handmade Furniture",
-    "Handmade Home Decor",
-    "Handmade Art",
-    "Handmade Toys",
-    "Handmade Beauty Products",
-    "Handmade Gifts",
-    "Handmade Accessories",
-    "Traditional Crafts",
-    "Other Handmade Items"
-  ],
-  "Home": [
-    "Furniture",
-    "Living Room Furniture",
-    "Bedroom Furniture",
-    "Dining Furniture",
-    "Office Furniture",
-    "Home Decor",
-    "Rugs & Carpets",
-    "Curtains & Blinds",
-    "Lighting",
-    "Bedding",
-    "Mattresses",
-    "Kitchenware",
-    "Cookware",
-    "Dinnerware",
-    "Small Appliances",
-    "Major Appliances",
-    "Storage & Organization",
-    "Bathroom Accessories",
-    "Cleaning Supplies",
-    "Garden Tools",
-    "Plants",
-    "Pots & Planters",
-    "Outdoor Furniture",
-    "Lawn Equipment",
-    "Grills & Outdoor Cooking",
-    "Home Improvement",
-    "Other Home Items"
-  ],
-  "Jewelry": [
-    "Rings",
-    "Necklaces",
-    "Earrings",
-    "Bracelets",
-    "Anklets",
-    "Chains",
-    "Pendants",
-    "Brooches",
-    "Engagement Rings",
-    "Wedding Rings",
-    "Men's Jewelry",
-    "Women's Jewelry",
-    "Gold Jewelry",
-    "Silver Jewelry",
-    "Beaded Jewelry",
-    "Costume Jewelry",
-    "Traditional Jewelry",
-    "Other Jewelry"
-  ],
-  "Kids & Baby": [
-    "Baby Clothing",
-    "Kids' Clothing",
-    "Baby Shoes",
-    "Kids' Shoes",
-    "Diapers",
-    "Baby Feeding",
-    "Bottles",
-    "Strollers",
-    "Car Seats",
-    "Cribs",
-    "Baby Bedding",
-    "Baby Furniture",
-    "Baby Bath",
-    "Maternity Products",
-    "School Supplies",
-    "Kids' Accessories",
-    "Other Baby & Kids Items"
-  ],
-  "Movies & Music": [
-    "DVDs",
-    "Blu-rays",
-    "CDs",
-    "Vinyl Records",
-    "Music Downloads/Media",
-    "Movie Collectibles",
-    "Music Collectibles",
-    "Musical Instruments",
-    "Guitars",
-    "Keyboards & Pianos",
-    "Drums",
-    "DJ Equipment",
-    "Studio Equipment",
-    "Microphones",
-    "Other Movies & Music"
-  ],
-  "Office": [
-    "Office Furniture",
-    "Printers & Scanners",
-    "Stationery",
-    "Filing & Storage",
-    "Office Electronics",
-    "School & Office Supplies",
-    "Desk Accessories",
-    "Packaging & Mailing",
-    "Other Office Supplies"
-  ],
-  "Outdoors": [
-    "Camping",
-    "Hiking",
-    "Fishing",
-    "Cycling",
-    "Sports Equipment",
-    "Football",
-    "Basketball",
-    "Fitness Equipment",
-    "Gym Equipment",
-    "Running",
-    "Swimming",
-    "Hunting Accessories",
-    "Outdoor Furniture",
-    "Garden Equipment",
-    "Travel Gear",
-    "Other Outdoor Items"
-  ],
-  "Paper & Party Supplies": [
-    "Invitations",
-    "Greeting Cards",
-    "Gift Wrap",
-    "Gift Bags",
-    "Stickers",
-    "Stationery",
-    "Notebooks",
-    "Journals",
-    "Party Decorations",
-    "Balloons",
-    "Cake Decorations",
-    "Party Favors",
-    "Event Supplies",
-    "Other Party Supplies"
-  ],
-  "Pet Supplies": [
-    "Dog Supplies",
-    "Cat Supplies",
-    "Bird Supplies",
-    "Fish & Aquarium Supplies",
-    "Pet Food",
-    "Pet Beds",
-    "Collars & Leashes",
-    "Pet Clothing",
-    "Pet Toys",
-    "Grooming Supplies",
-    "Pet Carriers",
-    "Other Pet Supplies"
-  ],
-  "Shoes": [
-    "Men's Shoes",
-    "Women's Shoes",
-    "Boys' Shoes",
-    "Girls' Shoes",
-    "Sneakers",
-    "Sandals",
-    "Slippers",
-    "Boots",
-    "Heels",
-    "Flats",
-    "Formal Shoes",
-    "Work Shoes",
-    "Sports Shoes",
-    "Traditional Footwear",
-    "Other Shoes"
-  ],
-  "Tools & Equipment": [
-    "Hand Tools",
-    "Power Tools",
-    "Measuring Tools",
-    "Workshop Equipment",
-    "Safety Equipment",
-    "Tool Storage",
-    "Welding Equipment",
-    "Construction Tools",
-    "Agricultural Tools",
-    "Other Tools & Equipment"
-  ],
-  "Toys & Games": [
-    "Action Figures",
-    "Dolls",
-    "Educational Toys",
-    "Building Toys",
-    "Baby Toys",
-    "Outdoor Toys",
-    "Remote-Control Toys",
-    "Board Games",
-    "Card Games",
-    "Puzzles",
-    "Video Games",
-    "Gaming Accessories",
-    "Stuffed Animals",
-    "Other Toys & Games"
-  ],
-  "Vintage": [
-    "Vintage Clothing",
-    "Vintage Jewelry",
-    "Vintage Furniture",
-    "Vintage Home Decor",
-    "Vintage Electronics",
-    "Vintage Books",
-    "Vintage Toys",
-    "Vintage Bags",
-    "Vintage Shoes",
-    "Vintage Collectibles",
-    "Other Vintage Items"
-  ],
-  "Weddings": [
-    "Wedding Dresses",
-    "Bridesmaid Dresses",
-    "Groom & Groomsmen",
-    "Wedding Shoes",
-    "Wedding Jewelry",
-    "Wedding Accessories",
-    "Invitations",
-    "Decorations",
-    "Cake Accessories",
-    "Wedding Favors",
-    "Bridal Shower",
-    "Traditional Wedding Items",
-    "Wedding Gifts",
-    "Other Wedding Supplies"
-  ],
-  "Other": [
-    "Business & Industrial",
-    "Office Supplies",
-    "Medical Supplies",
-    "Agricultural Equipment",
-    "Construction Equipment",
-    "Tools & Machinery",
-    "Renewable Energy",
-    "Solar Equipment",
-    "Safety Equipment",
-    "Miscellaneous"
-  ]
-};
+const CATEGORIES = ["Handmade", "Home", "Vintage", "Electronics", "Clothing", "Books", "Art", "Outdoors", "Auto Parts", "Groceries", "Other"];
 
 const CONDITIONS = ["New", "Used", "Like New", "Good", "Fair", "Refurbished", "For parts / not working"];
 
@@ -644,9 +110,9 @@ const ADMIN_ROLE_ORDER = [
 const ADMIN_ROLE_PERMISSIONS = {
   seller_verification: new Set(["seller_verification"]),
   listing_moderator: new Set(["listing_moderation"]),
-  order_dispute: new Set(["dispute_resolution", "order_access", "order_management"]),
-  finance: new Set(["finance", "order_access"]),
-  customer_support: new Set(["support_tickets", "message_moderation"]),
+  order_dispute: new Set(["dispute_resolution"]),
+  finance: new Set(["finance"]),
+  customer_support: new Set(["support_tickets"]),
 };
 function hasAdminPermission(member, permission) {
   if (!member?.isAdmin) return false;
@@ -667,11 +133,12 @@ const LISTING_MANAGE_TABS = [
 ];
 
 const CURRENCIES = {
+  USD: { symbol: "$", label: "US Dollar (USD)" },
   NGN: { symbol: "₦", label: "Nigerian Naira (NGN)" },
 };
 
 function formatMoney(amount, currency) {
-  const symbol = CURRENCIES.NGN.symbol;
+  const symbol = CURRENCIES[currency]?.symbol || "$";
   const num = Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${symbol}${num}`;
 }
@@ -694,22 +161,6 @@ const CATEGORY_COLOR = {
   Clothing: "#A6567A",
   Books: "#4B5D67",
   Art: "#B8862E",
-  Jewelry: "#9A6A85",
-  Collectibles: "#806B55",
-  "Bags & Purses": "#8B6757",
-  "Craft Supplies & Tools": "#7C6A9A",
-  "Paper & Party Supplies": "#A66F5C",
-  Weddings: "#9A7B87",
-  Accessories: "#657A8A",
-  "Movies & Music": "#625D8A",
-  Office: "#5E7184",
-  "Kids & Baby": "#7E8F72",
-  "Toys & Games": "#8A7650",
-  "Bath & Beauty": "#8A6D83",
-  Shoes: "#6E625A",
-  "Tools & Equipment": "#59636F",
-  "Pet Supplies": "#5F7D70",
-  Gifts: "#9A624D",
   Outdoors: "#3E7A4E",
   "Auto Parts": "#4A4E58",
   Groceries: "#7A9E5C",
@@ -724,22 +175,6 @@ const CATEGORY_ICON = {
   Clothing: "👕",
   Books: "📚",
   Art: "🎨",
-  Jewelry: "💍",
-  Collectibles: "🏺",
-  "Bags & Purses": "👜",
-  "Craft Supplies & Tools": "✂️",
-  "Paper & Party Supplies": "🎉",
-  Weddings: "💒",
-  Accessories: "⌚",
-  "Movies & Music": "🎵",
-  Office: "🗂️",
-  "Kids & Baby": "👶",
-  "Toys & Games": "🧸",
-  "Bath & Beauty": "🧴",
-  Shoes: "👟",
-  "Tools & Equipment": "🛠️",
-  "Pet Supplies": "🐾",
-  Gifts: "🎁",
   Outdoors: "🥾",
   "Auto Parts": "🚗",
   Groceries: "🛒",
@@ -819,14 +254,14 @@ function isValidPhone(phone) {
   return trimmed.startsWith("+") && digits.length >= 8 && digits.length <= 15;
 }
 
-const NIGERIA_COUNTRY_ALIASES = ["nigeria", "ng"];
-function isNigeria(country) {
-  return NIGERIA_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
+const US_COUNTRY_ALIASES = ["united states", "united states of america", "usa", "us", "u.s.", "u.s.a."];
+function isUnitedStates(country) {
+  return US_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
 }
 
-// Stallyard is Nigeria-only. Seller verification is handled through the
-// normal seller-approval flow rather than a country/currency sales threshold.
-const needsLegacySalesThresholdVerification = false;
+// US-based members skip ID verification at signup, but once a seller's
+// cumulative USD sales cross this, they must add ID to keep listing.
+const ID_VERIFICATION_SALES_THRESHOLD = 10000;
 
 function orderNumber(id) {
   const safeId = String(id ?? "");
@@ -859,7 +294,6 @@ function backendListingToFrontend(row, existing) {
     description: row.description || "",
     price: Number(row.price),
     category: row.category,
-    subcategory: row.subcategory || "",
     condition: row.condition,
     shippingFee: Number(row.shipping_fee) || 0,
     emoji: row.emoji || "📦",
@@ -871,8 +305,8 @@ function backendListingToFrontend(row, existing) {
     hiddenImageUrls: row.hidden_image_urls || [],
     flaggedImages: row.flagged_images || [],
     listingType: row.listing_type || "fixed",
-    currency: row.currency || "NGN",
-    status: row.status === "approved" ? "active" : (row.status || "pending"),
+    currency: row.currency || "USD",
+    status: row.status || "pending",
     isFeatured: !!row.is_featured,
     auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).getTime() : null,
     bidHistory: row.bid_history || [],
@@ -884,6 +318,7 @@ function backendListingToFrontend(row, existing) {
     shippingMethods: row.shipping_methods || [],
     returnPolicy: row.return_policy || "",
     vin: row.vin || "",
+    shipsToUsa: !!row.ships_to_usa,
     sellerName: row.seller_name,
     ownerUsername: row.owner_username,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : existing?.createdAt || Date.now(),
@@ -949,7 +384,7 @@ function backendOrderToFrontend(row) {
     buyerUsername: row.buyer_username,
     buyerName: row.buyer_name || row.buyer_username,
     shippingAddress: row.shipping_address || {},
-    currency: row.currency || "NGN",
+    currency: row.currency || "USD",
     subtotal: Number(row.subtotal) || 0,
     shippingTotal: Number(row.shipping_total) || 0,
     total: Number(row.total) || 0,
@@ -964,8 +399,6 @@ function backendOrderToFrontend(row) {
     paymentLast4: row.payment_last4 || null,
     refundStatus: row.refund_status || null,
     paystackRefundId: row.paystack_refund_id || null,
-    refundType: row.refund_type || null,
-    refundAmount: Number(row.refund_amount) || 0,
     refundReason: row.refund_reason || "",
     refundRequestedBy: row.refund_requested_by || null,
     refundRequestedAt: row.refund_requested_at ? new Date(row.refund_requested_at).getTime() : null,
@@ -1034,7 +467,7 @@ function backendUserToMember(user, existing) {
     idCountry: user.id_country || existing?.idCountry || "",
     licensePhotos: user.license_photos || existing?.licensePhotos || [],
     idVerificationExempt:
-      user.id_verification_exempt ?? existing?.idVerificationExempt ?? false,
+      user.id_verification_exempt ?? existing?.idVerificationExempt ?? isUnitedStates(user.country),
     hasAppliedToSell: user.has_applied_to_sell || existing?.hasAppliedToSell || false,
     verificationStatus:
       user.verification_status ||
@@ -1533,51 +966,14 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
   );
 }
 
-function StallyardErrorScreen({ onRetry }) {
-  return (
-    <div
-      className="min-h-screen w-full flex items-center justify-center px-6"
-      style={{ backgroundColor: CANVAS, fontFamily: "'Work Sans', sans-serif" }}
-    >
-      <div className="w-full max-w-md text-center bg-white rounded-2xl px-8 py-10 shadow-sm border" style={{ borderColor: "#E8E1D5" }}>
-        <div
-          className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-5"
-          style={{ backgroundColor: MARIGOLD }}
-          aria-label="Stallyard emblem"
-        >
-          <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "30px", lineHeight: 1 }}>S</span>
-        </div>
-        <div className="text-sm font-semibold tracking-wide mb-2" style={{ color: BERRY }}>STALLYARD</div>
-        <h1 className="text-2xl font-semibold mb-2" style={{ color: INK }}>Something went wrong</h1>
-        <p className="text-sm mb-6" style={{ color: SLATE }}>Please try again in a moment.</p>
-        <button
-          onClick={onRetry}
-          className="px-5 py-2.5 rounded-lg font-semibold"
-          style={{ backgroundColor: MARIGOLD, color: INK }}
-        >
-          Try again
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function Stallyard() {
   useFonts();
-  const [fatalServerError, setFatalServerError] = useState(false);
-  useEffect(() => {
-    const handleServerError = () => setFatalServerError(true);
-    window.addEventListener("stallyard:server-error", handleServerError);
-    return () => window.removeEventListener("stallyard:server-error", handleServerError);
-  }, []);
   const [view, setView] = useState("browse");
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
-  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email" | "new-password"
+  const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email"
   const [adminLoginCode, setAdminLoginCode] = useState("");
   const [adminLoginPendingUserId, setAdminLoginPendingUserId] = useState(null);
-  const [adminTempPasswordChangeToken, setAdminTempPasswordChangeToken] = useState("");
-  const [adminTempNewPasswordForm, setAdminTempNewPasswordForm] = useState({ password: "", confirm: "" });
   const [adminLoginError, setAdminLoginError] = useState("");
   const [adminLoginSubmitting, setAdminLoginSubmitting] = useState(false);
   const [authReturnView, setAuthReturnView] = useState("browse");
@@ -1650,34 +1046,13 @@ export default function Stallyard() {
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
-  const [subcategoryFilter, setSubcategoryFilter] = useState("All");
-  const [categoriesMenuOpen, setCategoriesMenuOpen] = useState(false);
-  const categoriesMenuRef = useRef(null);
   const [conditionFilter, setConditionFilter] = useState("All");
   const [sortBy, setSortBy] = useState("featured");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
-  useEffect(() => {
-    if (!categoriesMenuOpen) return;
-    const handleOutsideClick = (event) => {
-      if (categoriesMenuRef.current && !categoriesMenuRef.current.contains(event.target)) {
-        setCategoriesMenuOpen(false);
-      }
-    };
-    const handleEscape = (event) => {
-      if (event.key === "Escape") setCategoriesMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [categoriesMenuOpen]);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
-  const [sessionUserProfile, setSessionUserProfile] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
   const [pendingPasswordReset, setPendingPasswordReset] = useState(null);
@@ -1703,7 +1078,6 @@ export default function Stallyard() {
   const [adminTotpError, setAdminTotpError] = useState("");
   const [startingAdminTotpSetup, setStartingAdminTotpSetup] = useState(false);
   const [confirmingAdminTotpSetup, setConfirmingAdminTotpSetup] = useState(false);
-  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller | business
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -1713,7 +1087,7 @@ export default function Stallyard() {
     firstName: "",
     lastName: "",
     officeLocation: "",
-    country: "Nigeria",
+    country: "",
     licenseNumber: "",
     idType: "Passport",
     idCountry: "",
@@ -1796,7 +1170,7 @@ export default function Stallyard() {
     city: "",
     state: "",
     zip: "",
-    country: "Nigeria",
+    country: "",
   });
   const [saveShippingAddress, setSaveShippingAddress] = useState(true);
   const [shippingError, setShippingError] = useState("");
@@ -1808,13 +1182,6 @@ export default function Stallyard() {
   const [orders, setOrders] = useState([]);
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
-  const [homepageAds, setHomepageAds] = useState([
-    { slot: 1, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
-    { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
-    { slot: 3, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
-  ]);
-  const [homepageAdUploading, setHomepageAdUploading] = useState(null);
-  const [homepageAdSaving, setHomepageAdSaving] = useState(null);
   const [policies, setPolicies] = useState({
     seller_rules: "", prohibited_items: "", fees: "",
     payment_rules: "", shipping_rules: "", returns_disputes: "",
@@ -1861,11 +1228,6 @@ export default function Stallyard() {
   const [activeAdminOrderId, setActiveAdminOrderId] = useState(null);
   const [adminDisputeSearch, setAdminDisputeSearch] = useState("");
   const [adminDisputeStatusFilter, setAdminDisputeStatusFilter] = useState("all");
-  const [adminNotesTarget, setAdminNotesTarget] = useState(null); // {entityType, entityId, label}
-  const [adminNotesList, setAdminNotesList] = useState([]);
-  const [adminNoteDraft, setAdminNoteDraft] = useState("");
-  const [adminNotesLoading, setAdminNotesLoading] = useState(false);
-  const [adminNoteSaving, setAdminNoteSaving] = useState(false);
   const [paystackChecks, setPaystackChecks] = useState({});
   const [paystackCheckingOrderId, setPaystackCheckingOrderId] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -1899,29 +1261,6 @@ export default function Stallyard() {
   const [savingDisputeCaseId, setSavingDisputeCaseId] = useState(null);
   const [auditLog, setAuditLog] = useState([]);
   const [loadingAuditLog, setLoadingAuditLog] = useState(false);
-  const [auditSearch, setAuditSearch] = useState("");
-  const [auditActionFilter, setAuditActionFilter] = useState("all");
-  const [auditDateFilter, setAuditDateFilter] = useState("all");
-  const [adminStaff, setAdminStaff] = useState([]);
-  const [loadingAdminStaff, setLoadingAdminStaff] = useState(false);
-  const [adminStaffError, setAdminStaffError] = useState("");
-  const [adminStaffSearch, setAdminStaffSearch] = useState("");
-  const [adminStaffFilter, setAdminStaffFilter] = useState("all");
-  const [expandedStaffId, setExpandedStaffId] = useState(null);
-  const [adminPasswordResettingId, setAdminPasswordResettingId] = useState(null);
-  const [adminTempPasswordGeneratingId, setAdminTempPasswordGeneratingId] = useState(null);
-  const [adminTempPasswordResult, setAdminTempPasswordResult] = useState(null);
-  const [systemHealth, setSystemHealth] = useState(null);
-  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
-  const [systemHealthError, setSystemHealthError] = useState("");
-  const [adminReportType, setAdminReportType] = useState("orders");
-  const [adminReportFrom, setAdminReportFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10);
-  });
-  const [adminReportTo, setAdminReportTo] = useState(() => new Date().toISOString().slice(0, 10));
-  const [adminReportData, setAdminReportData] = useState(null);
-  const [adminReportLoading, setAdminReportLoading] = useState(false);
-  const [adminReportError, setAdminReportError] = useState("");
   const [myWarnings, setMyWarnings] = useState([]);
   const [adminWarningsTarget, setAdminWarningsTarget] = useState(null);
   const [adminWarningsList, setAdminWarningsList] = useState([]);
@@ -1955,7 +1294,6 @@ export default function Stallyard() {
     description: "",
     price: "",
     category: "Handmade",
-    subcategory: "",
     condition: "New",
     emoji: "📦",
     fitMake: "",
@@ -1973,6 +1311,7 @@ export default function Stallyard() {
     shippingMethods: [],
     returnPolicy: "",
     vin: "",
+    shipsToUsa: false,
   });
   const [previewOpen, setPreviewOpen] = useState(false);
   const [manageListingsTab, setManageListingsTab] = useState("all");
@@ -2028,7 +1367,7 @@ export default function Stallyard() {
         const localListings = res ? JSON.parse(res.value) : [];
         setListings(localListings);
         try {
-          const listingsRes = await backendFetch(`${BACKEND_URL}/listings`);
+          const listingsRes = await fetch(`${BACKEND_URL}/listings`);
           if (listingsRes.ok) {
             const { listings: rows } = await listingsRes.json();
             const merged = rows.map((row) =>
@@ -2043,28 +1382,13 @@ export default function Stallyard() {
       } catch {
         setListings([]);
       }
-      let bootstrapAuthenticated = false;
+      let bootstrapToken = null;
       try {
-        const sessionRes = await backendFetch(`${BACKEND_URL}/session/me`);
-        if (sessionRes.ok) {
-          const sessionData = await sessionRes.json();
-          bootstrapAuthenticated = true;
-          setAuthToken("cookie-session");
-          if (sessionData.user?.username) {
-            setSessionUserProfile(sessionData.user);
-            setCurrentUser(sessionData.user.username);
-            await window.storage.set("stallyard-session", sessionData.user.username, false);
-          }
-        } else {
-          setAuthToken(null);
-          setSessionUserProfile(null);
-          await window.storage.delete("stallyard-session", false);
-          // Remove any token left behind by pre-cookie versions of Stallyard.
-          await window.storage.delete("stallyard-auth-token", false);
-        }
+        const tokenRes = await window.storage.get("stallyard-auth-token", false);
+        if (tokenRes) setAuthToken(tokenRes.value);
+        bootstrapToken = tokenRes?.value || null;
       } catch {
-        // If the backend cannot be reached, do not trust an old browser token.
-        setAuthToken(null);
+        // no saved token — user will need to log in again for anything protected
       }
       let resolvedMembers = [];
       try {
@@ -2073,7 +1397,9 @@ export default function Stallyard() {
         resolvedMembers = localMembers;
         setMembers(localMembers);
         try {
-          const usersRes = await backendFetch(`${BACKEND_URL}/users`);
+          const usersRes = await fetch(`${BACKEND_URL}/users`, {
+            headers: bootstrapToken ? { Authorization: `Bearer ${bootstrapToken}` } : {},
+          });
           if (usersRes.ok) {
             const { users } = await usersRes.json();
             const merged = users.map((u) =>
@@ -2090,10 +1416,12 @@ export default function Stallyard() {
         setMembers([]);
       }
       setMembersLoaded(true);
-      // Authentication is server-authoritative. The HttpOnly cookie/session
-      // check above decides whether the browser is signed in; a stale local
-      // username can never restore access by itself.
-      if (!bootstrapAuthenticated) setCurrentUser(null);
+      try {
+        const sessionRes = await window.storage.get("stallyard-session", false);
+        if (sessionRes) setCurrentUser(sessionRes.value);
+      } catch {
+        // not logged in yet
+      }
       setSessionChecked(true);
       try {
         const cartRes = await window.storage.get("stallyard-cart", false);
@@ -2121,7 +1449,7 @@ export default function Stallyard() {
       }
       setOrders([]);
       try {
-        const settingsRes = await backendFetch(`${BACKEND_URL}/settings`);
+        const settingsRes = await fetch(`${BACKEND_URL}/settings`);
         if (settingsRes.ok) {
           const raw = await settingsRes.json();
           setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "" });
@@ -2130,26 +1458,7 @@ export default function Stallyard() {
         // keep default settings
       }
       try {
-        const adsRes = await backendFetch(`${BACKEND_URL}/homepage-ads`);
-        if (adsRes.ok) {
-          const raw = await adsRes.json();
-          const returned = new Map((raw.ads || []).map((ad) => [Number(ad.slot), ad]));
-          setHomepageAds([1, 2, 3].map((slot) => {
-            const ad = returned.get(slot) || {};
-            return {
-              slot,
-              imageUrl: ad.image_url || "",
-              mediaType: slot === 1 && ad.media_type === "video" ? "video" : "image",
-              posterUrl: ad.poster_url || "",
-              linkUrl: ad.link_url || "",
-            };
-          }));
-        }
-      } catch {
-        // Keep the three empty promotional slots if the API is temporarily unavailable.
-      }
-      try {
-        const contentRes = await backendFetch(`${BACKEND_URL}/content`);
+        const contentRes = await fetch(`${BACKEND_URL}/content`);
         if (contentRes.ok) {
           const raw = await contentRes.json();
           setContent({
@@ -2175,7 +1484,7 @@ export default function Stallyard() {
         // keep default empty content
       }
       try {
-        const policiesRes = await backendFetch(`${BACKEND_URL}/policies`);
+        const policiesRes = await fetch(`${BACKEND_URL}/policies`);
         if (policiesRes.ok) {
           const { policies: rows } = await policiesRes.json();
           const next = {};
@@ -2190,7 +1499,7 @@ export default function Stallyard() {
       setWithdrawals([]);
       setThreads([]); // loaded fresh once we know who's logged in, see the effect below
       try {
-        const reviewsRes = await backendFetch(`${BACKEND_URL}/reviews`);
+        const reviewsRes = await fetch(`${BACKEND_URL}/reviews`);
         if (reviewsRes.ok) {
           const { reviews: rows } = await reviewsRes.json();
           setReviews(rows.map((r) => backendReviewToFrontend(r, resolvedMembers)));
@@ -2199,7 +1508,7 @@ export default function Stallyard() {
         // couldn't reach backend for reviews — leave empty
       }
       try {
-        const followsRes = await backendFetch(`${BACKEND_URL}/follows`);
+        const followsRes = await fetch(`${BACKEND_URL}/follows`);
         if (followsRes.ok) {
           const { follows: rows } = await followsRes.json();
           setFollows(
@@ -2272,9 +1581,7 @@ export default function Stallyard() {
         const [mineRes, sellingRes, adminRes] = await Promise.all([
           authFetch(`${BACKEND_URL}/orders/mine`),
           authFetch(`${BACKEND_URL}/orders/selling`),
-          isAdmin && hasAdminPermission(members.find((m) => m.username === currentUser), "order_access")
-            ? authFetch(`${BACKEND_URL}/orders`)
-            : Promise.resolve(null),
+          isAdmin ? authFetch(`${BACKEND_URL}/orders`) : Promise.resolve(null),
         ]);
         const byId = new Map();
         for (const res of [mineRes, sellingRes, adminRes]) {
@@ -2463,7 +1770,7 @@ export default function Stallyard() {
     const saved = members.find((m) => m.username === currentUser)?.shippingAddress;
     const isBlank = !shippingForm.street && !shippingForm.city && !shippingForm.zip;
     if (saved && isBlank) {
-      setShippingForm({ ...saved, country: "Nigeria" });
+      setShippingForm(saved);
     } else if (!shippingForm.fullName && currentMember) {
       setShippingForm((f) => ({ ...f, fullName: currentMember.displayName }));
     }
@@ -2578,21 +1885,27 @@ export default function Stallyard() {
     }
   };
 
-  const saveAuthToken = async (authenticated) => {
-    // This is only an in-memory signed-in marker used by existing UI guards.
-    // The real JWT lives exclusively in the backend's HttpOnly cookie.
-    setAuthToken(authenticated ? "cookie-session" : null);
+  const saveAuthToken = async (token) => {
+    setAuthToken(token);
     try {
-      // Delete legacy JWT storage from versions released before Fix #14.
-      await window.storage.delete("stallyard-auth-token", false);
+      if (token) await window.storage.set("stallyard-auth-token", token, false);
+      else await window.storage.delete("stallyard-auth-token", false);
     } catch {
-      // best-effort cleanup only
+      // token save failed silently; user stays logged in for this visit only
     }
   };
 
-  // Protected requests rely on the Secure HttpOnly cookie. No bearer token is
-  // readable by or attached from frontend JavaScript.
-  const authFetch = (url, options = {}) => backendFetch(url, options);
+  // fetch wrapper that attaches the signed-in user's token — use this for any
+  // request that requires being logged in (creating/editing listings, admin
+  // actions, follows). Plain fetch is still fine for public GET endpoints.
+  const authFetch = (url, options = {}) =>
+    fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+    });
 
   const register = async () => {
     setAuthError("");
@@ -2616,7 +1929,7 @@ export default function Stallyard() {
     };
     let sendRes;
     try {
-      sendRes = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
+      sendRes = await fetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: signupDraft.email }),
@@ -2639,7 +1952,7 @@ export default function Stallyard() {
     if (!pendingEmailVerification) return;
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
+      res = await fetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: pendingEmailVerification.signupDraft.email }),
@@ -2662,7 +1975,7 @@ export default function Stallyard() {
     const draft = pendingEmailVerification.signupDraft;
     let checkRes;
     try {
-      checkRes = await backendFetch(`${BACKEND_URL}/email-verify/check`, {
+      checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: draft.email, code: emailCodeInput.trim() }),
@@ -2682,7 +1995,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/signup`, {
+      res = await fetch(`${BACKEND_URL}/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2701,10 +2014,9 @@ export default function Stallyard() {
       setEmailVerifyError(data.error || "Something went wrong creating your account.");
       return;
     }
-    setSessionUserProfile(data.user);
     const newMember = backendUserToMember(data.user);
     await persistMembers([...members, newMember]);
-    await saveAuthToken(true);
+    await saveAuthToken(data.token);
     await setSession(newMember.username);
     setPendingEmailVerification(null);
     setEmailCodeInput("");
@@ -2718,11 +2030,11 @@ export default function Stallyard() {
       firstName: "",
       lastName: "",
       officeLocation: "",
-      country: "Nigeria",
+      country: "",
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
-      accountType: registrationIntent === "business" ? "business" : "personal",
+      accountType: "personal",
       licensePhotos: [],
     });
     showToast(
@@ -2736,7 +2048,7 @@ export default function Stallyard() {
   };
 
   // Stage two: fill in name, phone, country, account type, and (if selling
-  // in Nigeria) ID documents. Can be submitted partially — nothing here
+  // outside the US) ID documents. Can be submitted partially — nothing here
   // is required to keep using the account — and re-opened any time from
   // wherever we surface the "finish your profile" prompt.
   const completeProfile = async () => {
@@ -2749,8 +2061,8 @@ export default function Stallyard() {
       setProfileStageError("Enter your country of residence");
       return;
     }
-    if (!isNigeria(authForm.country)) {
-      setProfileStageError("Stallyard is available in Nigeria only. Enter Nigeria as your country of residence.");
+    if (isUnitedStates(authForm.country)) {
+      setProfileStageError("US sign-ups are coming soon — Stallyard is Nigeria-only for now");
       return;
     }
     if (authForm.phone.trim() && !isValidPhone(authForm.phone)) {
@@ -2762,7 +2074,7 @@ export default function Stallyard() {
       setProfileStageError("Enter your office location");
       return;
     }
-    const skipId = false;
+    const skipId = isUnitedStates(authForm.country);
     let res;
     try {
       res = await authFetch(`${BACKEND_URL}/profile/complete`, {
@@ -2779,7 +2091,7 @@ export default function Stallyard() {
           idCountry: skipId ? "" : authForm.country.trim(),
           licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
           licensePhotos: skipId ? [] : authForm.licensePhotos,
-          idVerificationExempt: false,
+          idVerificationExempt: skipId,
         }),
       });
     } catch {
@@ -2792,7 +2104,6 @@ export default function Stallyard() {
       return;
     }
     const existing = members.find((m) => m.username === currentUser);
-    setSessionUserProfile(data.user);
     const updatedMember = backendUserToMember(data.user, existing);
     await persistMembers(members.map((m) => (m.username === currentUser ? updatedMember : m)));
     setProfileStageOpen(false);
@@ -2804,29 +2115,12 @@ export default function Stallyard() {
     );
   };
 
-  const openRegistration = (intent = "buyer") => {
-    const normalizedIntent = ["buyer", "seller", "business"].includes(intent) ? intent : "buyer";
-    setRegistrationIntent(normalizedIntent);
-    setAuthMode("register");
-    setAuthError("");
-    setPendingEmailVerification(null);
-    setEmailVerifyError("");
-    setAuthReturnView(normalizedIntent === "buyer" ? "browse" : "sell");
-    setAuthForm((prev) => ({
-      ...prev,
-      accountType: normalizedIntent === "business" ? "business" : "personal",
-      country: "Nigeria",
-    }));
-    setView("signup");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const login = async () => {
+    const login = async () => {
     setAuthError("");
     const username = authForm.username.trim().toLowerCase();
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/login`, {
+      res = await fetch(`${BACKEND_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: authForm.password }),
@@ -2857,7 +2151,7 @@ export default function Stallyard() {
     const endpoint = pendingTwoFactor.method === "totp-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}${endpoint}`, {
+      res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: pendingTwoFactor.userId, code: twoFactorCodeInput.trim() }),
@@ -2886,13 +2180,12 @@ export default function Stallyard() {
 
   const completeLogin = async (data, username) => {
     const existing = members.find((m) => m.username === username);
-    setSessionUserProfile(data.user);
     const member = backendUserToMember(data.user, existing);
     const nextMembers = existing
       ? members.map((m) => (m.username === username ? member : m))
       : [...members, member];
     await persistMembers(nextMembers);
-    await saveAuthToken(true);
+    await saveAuthToken(data.token);
     await setSession(username);
     setAuthForm({
       username: "",
@@ -2930,7 +2223,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
+      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username }),
@@ -2952,7 +2245,7 @@ export default function Stallyard() {
     if (!pendingPasswordReset) return;
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
+      res = await fetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: pendingPasswordReset.username }),
@@ -2974,7 +2267,7 @@ export default function Stallyard() {
     if (!pendingPasswordReset) return;
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/password-reset/verify-code`, {
+      res = await fetch(`${BACKEND_URL}/password-reset/verify-code`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: pendingPasswordReset.username, code: resetCodeInput.trim() }),
@@ -3003,7 +2296,7 @@ export default function Stallyard() {
     }
     let res;
     try {
-      res = await backendFetch(`${BACKEND_URL}/password-reset/confirm`, {
+      res = await fetch(`${BACKEND_URL}/password-reset/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3030,11 +2323,6 @@ export default function Stallyard() {
   };
 
   const logout = async () => {
-    try {
-      await backendFetch(`${BACKEND_URL}/logout`, { method: "POST" });
-    } catch {
-      // Clear local UI state even if the network is temporarily unavailable.
-    }
     setAdminUnlockedUntil(null);
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(ADMIN_SESSION_STORAGE_KEY);
@@ -3056,96 +2344,14 @@ export default function Stallyard() {
     showToast("Logged out");
   };
 
-  const publicCurrentMember = members.find((m) => m.username === currentUser) || null;
-  // For the signed-in user's own account, trust the authenticated /session/me
-  // profile instead of the privacy-limited public /users record. This keeps
-  // seller approval/verification state available without exposing it publicly.
-  const currentMember = currentUser && sessionUserProfile?.username === currentUser
-    ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
-    : publicCurrentMember;
-
-  // Keep the admin origin completely separate from the buyer/seller storefront.
-  // The admin host gets its own browser title and can render only the admin view.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    document.title = isAdminHost() ? "Stallyard Admin" : "Stallyard";
-    if (isAdminHost()) {
-      if (currentUser && currentMember?.isAdmin && view !== "admin") setView("admin");
-    } else if (currentMember?.isAdmin) {
-      // Staff identities belong on the dedicated operations console, not the marketplace.
-      window.location.replace(ADMIN_URL);
-    }
-  }, [currentUser, currentMember?.isAdmin, view]);
-
+  const currentMember = members.find((m) => m.username === currentUser) || null;
   useEffect(() => {
     if (!currentMember?.isAdmin) return;
     const isSuperAdmin = !currentMember.adminRole || currentMember.adminRole === "super_admin";
-    const canViewMembers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification");
-    const canViewOrders = isSuperAdmin || hasAdminPermission(currentMember, "order_access");
-    if (
-      (adminTab === "overview" && !isSuperAdmin) ||
-      (adminTab === "members" && !canViewMembers) ||
-      (adminTab === "orders" && !canViewOrders)
-    ) {
-      const fallbackByRole = {
-        seller_verification: "members",
-        listing_moderator: "listings",
-        order_dispute: "orders",
-        finance: "orders",
-        customer_support: "supportTickets",
-      };
-      setAdminTab(fallbackByRole[currentMember.adminRole] || "orders");
+    if (adminTab === "overview" && !isSuperAdmin) {
+      setAdminTab("members");
     }
-  }, [currentMember?.isAdmin, currentMember?.adminRole, adminTab]);
-
-  // The public /listings endpoint intentionally hides drafts/rejected/removed
-  // records. Once a normal marketplace session is restored, refetch with the
-  // token so the signed-in seller still receives their own non-public listings.
-  useEffect(() => {
-    if (!authToken || !currentMember || currentMember.isAdmin || isAdminHost()) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await authFetch(`${BACKEND_URL}/listings`);
-        if (!res.ok) return;
-        const { listings: rows } = await res.json();
-        if (cancelled || !Array.isArray(rows)) return;
-        const merged = rows.map((row) =>
-          backendListingToFrontend(row, listings.find((l) => l.id === row.id))
-        );
-        setListings(merged);
-        await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
-      } catch {
-        // Keep the public/local listing copy if the authenticated refresh fails.
-      }
-    })();
-    return () => { cancelled = true; };
-    // Only rerun when the signed-in identity/token changes, not whenever listings changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authToken, currentMember?.backendId, currentMember?.isAdmin]);
-
-  // Listing moderators need every status plus moderation metadata, so the admin
-  // dashboard uses a dedicated protected endpoint rather than the public feed.
-  useEffect(() => {
-    if (!authToken || !currentMember?.isAdmin || adminTab !== "listings") return;
-    if (!hasAdminPermission(currentMember, "listing_moderation")) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await authFetch(`${BACKEND_URL}/admin/listings`);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          if (!cancelled) showToast(data.error || "Couldn't load moderation listings");
-          return;
-        }
-        if (cancelled || !Array.isArray(data.listings)) return;
-        setListings(data.listings.map((row) => backendListingToFrontend(row)));
-      } catch {
-        if (!cancelled) showToast("Couldn't load moderation listings");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [authToken, currentMember?.isAdmin, currentMember?.adminRole, adminTab, showToast]);
+  }, [currentMember?.isAdmin, currentMember?.adminRole]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !isAdminHost()) return;
@@ -3318,11 +2524,11 @@ export default function Stallyard() {
   const addToCart = (listing) => {
     if (cart.length > 0) {
       const firstItem = listings.find((l) => l.id === cart[0].id);
-      const cartCurrency = firstItem?.currency || "NGN";
-      const itemCurrency = listing.currency || "NGN";
+      const cartCurrency = firstItem?.currency || "USD";
+      const itemCurrency = listing.currency || "USD";
       if (cartCurrency !== itemCurrency) {
         showToast(
-          `Your cart has ${CURRENCIES.NGN.symbol} items — check out or clear your cart before adding ${CURRENCIES.NGN.symbol} items`
+          `Your cart has ${CURRENCIES[cartCurrency]?.symbol || "$"} items — check out or clear your cart before adding ${CURRENCIES[itemCurrency]?.symbol || "$"} items`
         );
         return;
       }
@@ -3346,11 +2552,11 @@ export default function Stallyard() {
   const addToCartAtPrice = (listing, price) => {
     if (cart.length > 0 && !cart.find((c) => c.id === listing.id)) {
       const firstItem = listings.find((l) => l.id === cart[0].id);
-      const cartCurrency = firstItem?.currency || "NGN";
-      const itemCurrency = listing.currency || "NGN";
+      const cartCurrency = firstItem?.currency || "USD";
+      const itemCurrency = listing.currency || "USD";
       if (cartCurrency !== itemCurrency) {
         showToast(
-          `Your cart has ${CURRENCIES.NGN.symbol} items — check out or clear your cart before adding ${CURRENCIES.NGN.symbol} items`
+          `Your cart has ${CURRENCIES[cartCurrency]?.symbol || "$"} items — check out or clear your cart before adding ${CURRENCIES[itemCurrency]?.symbol || "$"} items`
         );
         return;
       }
@@ -3398,7 +2604,7 @@ export default function Stallyard() {
     const amt = Math.round(Number(amount) * 100) / 100;
     const minNext = Math.round((Number(listing.price) + 1) * 100) / 100;
     if (!amt || amt < minNext) {
-      showToast(`Bid must be at least ${formatMoney(minNext, "NGN")}`);
+      showToast(`Bid must be at least $${minNext.toFixed(2)}`);
       return;
     }
     if (listing.auctionEndTime && listing.auctionEndTime <= Date.now()) {
@@ -3421,7 +2627,7 @@ export default function Stallyard() {
       )
     );
     setBidAmount("");
-    showToast(`Bid placed — ${formatMoney(amt, "NGN")}`);
+    showToast(`Bid placed — $${amt.toFixed(2)}`);
   };
 
   const updateCartQty = (id, qty) => {
@@ -3448,7 +2654,7 @@ export default function Stallyard() {
   const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0), 0);
   const cartTax = Math.round(cartSubtotal * (settings.taxRate || 0) * 100) / 100;
   const cartTotal = cartSubtotal + cartShipping + cartTax;
-  const cartCurrency = "NGN";
+  const cartCurrency = cartItems[0]?.currency || "USD";
 
   const persistOrders = async (next) => {
     setOrders(next);
@@ -3929,7 +3135,7 @@ export default function Stallyard() {
     setAdminLoginSubmitting(true);
     setAdminLoginError("");
     try {
-      const res = await backendFetch(`${BACKEND_URL}/admin/login`, {
+      const res = await fetch(`${BACKEND_URL}/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password: adminLoginForm.password }),
@@ -3971,7 +3177,7 @@ export default function Stallyard() {
     setAdminLoginError("");
     const endpoint = adminLoginStep === "code-email" ? "/login/verify-2fa-email" : "/login/verify-2fa";
     try {
-      const res = await backendFetch(`${BACKEND_URL}${endpoint}`, {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId: adminLoginPendingUserId, code: adminLoginCode.trim() }),
@@ -3987,55 +3193,7 @@ export default function Stallyard() {
         showToast("Authenticator code confirmed — check your email for the next code");
         return;
       }
-      if (data.temporaryPasswordChangeRequired) {
-        setAdminTempPasswordChangeToken(data.passwordChangeToken || "");
-        setAdminTempNewPasswordForm({ password: "", confirm: "" });
-        setAdminLoginCode("");
-        setAdminLoginStep("new-password");
-        return;
-      }
       await finishAdminLogin(data, adminLoginForm.username.trim().toLowerCase());
-    } catch {
-      setAdminLoginError("Couldn't reach the server — try again");
-    } finally {
-      setAdminLoginSubmitting(false);
-    }
-  };
-
-  const completeAdminTemporaryPassword = async () => {
-    const password = adminTempNewPasswordForm.password;
-    if (password.length < 8) {
-      setAdminLoginError("New password must be at least 8 characters");
-      return;
-    }
-    if (password !== adminTempNewPasswordForm.confirm) {
-      setAdminLoginError("Passwords don't match");
-      return;
-    }
-    if (!adminTempPasswordChangeToken) {
-      setAdminLoginError("Temporary-password recovery expired — ask the Super Admin for a new temporary password");
-      return;
-    }
-    setAdminLoginSubmitting(true);
-    setAdminLoginError("");
-    try {
-      const res = await backendFetch(`${BACKEND_URL}/admin/temporary-password/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          passwordChangeToken: adminTempPasswordChangeToken,
-          newPassword: password,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setAdminLoginError(data.error || "Couldn't set your new password");
-        return;
-      }
-      setAdminTempPasswordChangeToken("");
-      setAdminTempNewPasswordForm({ password: "", confirm: "" });
-      await finishAdminLogin(data, data.user?.username || adminLoginForm.username.trim().toLowerCase());
-      showToast("Permanent admin password set — you're signed in");
     } catch {
       setAdminLoginError("Couldn't reach the server — try again");
     } finally {
@@ -4055,192 +3213,6 @@ export default function Stallyard() {
       showToast("Couldn't load the audit log — try again");
     } finally {
       setLoadingAuditLog(false);
-    }
-  };
-
-  const fetchAdminStaff = async () => {
-    setLoadingAdminStaff(true);
-    setAdminStaffError("");
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/staff`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setAdminStaffError(data.error || "Couldn't load admin staff");
-        return;
-      }
-      setAdminStaff(Array.isArray(data.staff) ? data.staff : []);
-    } catch {
-      setAdminStaffError("Couldn't reach the server — try again");
-    } finally {
-      setLoadingAdminStaff(false);
-    }
-  };
-
-  const fetchSystemHealth = async () => {
-    setSystemHealthLoading(true);
-    setSystemHealthError("");
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/system-health`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setSystemHealthError(data.error || "Couldn't load system health");
-        return;
-      }
-      setSystemHealth(data);
-    } catch {
-      setSystemHealthError("Couldn't reach the backend — try again");
-    } finally {
-      setSystemHealthLoading(false);
-    }
-  };
-
-  const fetchAdminReport = async (type = adminReportType) => {
-    setAdminReportLoading(true);
-    setAdminReportError("");
-    setAdminReportData(null);
-    try {
-      const params = new URLSearchParams();
-      if (adminReportFrom) params.set("from", adminReportFrom);
-      if (adminReportTo) params.set("to", adminReportTo);
-      const res = await authFetch(`${BACKEND_URL}/admin/reports/${encodeURIComponent(type)}?${params.toString()}`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setAdminReportError(data.error || "Couldn't generate report");
-        return;
-      }
-      setAdminReportData({
-        ...data,
-        columns: Array.isArray(data.columns) ? data.columns : [],
-        rows: Array.isArray(data.rows) ? data.rows : [],
-        summary: data.summary && typeof data.summary === "object" ? data.summary : {},
-      });
-    } catch {
-      setAdminReportError("Couldn't reach the server — try again");
-    } finally {
-      setAdminReportLoading(false);
-    }
-  };
-
-  const downloadAdminReportCsv = () => {
-    const data = adminReportData;
-    if (!data?.rows?.length || !data?.columns?.length) {
-      showToast("Generate a report with data first");
-      return;
-    }
-    const escapeCell = (value) => {
-      if (value === null || value === undefined) return "";
-      const raw = value instanceof Date ? value.toISOString() : String(value);
-      return /[",\n\r]/.test(raw) ? `"${raw.replace(/"/g, '""')}"` : raw;
-    };
-    const lines = [
-      data.columns.map(escapeCell).join(","),
-      ...data.rows.map((row) => data.columns.map((c) => escapeCell(row?.[c])).join(",")),
-    ];
-    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const range = `${data.from || "all"}_${data.to || "now"}`;
-    a.href = url;
-    a.download = `stallyard-${data.type || adminReportType}-${range}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast("CSV downloaded");
-  };
-
-  const revokeAdminStaffSessions = async (staff) => {
-    if (!staff?.id) return;
-    if (staff.username === currentUser) {
-      showToast("Use your own account security controls for your sessions");
-      return;
-    }
-    if (!window.confirm(`Sign ${staff.display_name || staff.username} out of all admin sessions?`)) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/revoke-sessions`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data.error || "Couldn't revoke sessions");
-        return;
-      }
-      showToast("Admin sessions revoked");
-      await fetchAdminStaff();
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    }
-  };
-
-  const generateAdminTemporaryPassword = async (staff) => {
-    if (!staff?.id) return;
-    if (staff.username === currentUser) {
-      showToast("Use your own account security controls to change your password");
-      return;
-    }
-    if (!staff.is_admin) {
-      showToast("Temporary passwords are only for active admin accounts");
-      return;
-    }
-    if (!window.confirm(`Issue a one-time 10-minute temporary password for ${staff.display_name || staff.username}? Their existing sessions will be revoked.`)) return;
-    setAdminTempPasswordGeneratingId(staff.id);
-    setAdminTempPasswordResult(null);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/temporary-password`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data.error || "Couldn't generate a temporary password");
-        return;
-      }
-      const result = {
-        ...data,
-        temporaryPassword: data.temporaryPassword || data.temporary_password || "",
-        username: data.username || staff.username,
-        expiresAt: data.expiresAt || data.expires_at || null,
-      };
-      setAdminTempPasswordResult(result);
-      showToast("Temporary password generated — it expires in 10 minutes");
-      // Native fallback: this makes the password visible even if a CSS/layout
-      // issue prevents the styled modal from painting on a particular browser.
-      if (result.temporaryPassword) {
-        setTimeout(() => {
-          window.prompt(
-            `10-minute temporary password for @${result.username}. Copy it now — it will not be shown again after you close the password box.`,
-            result.temporaryPassword
-          );
-        }, 0);
-      }
-      await fetchAdminStaff();
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setAdminTempPasswordGeneratingId(null);
-    }
-  };
-
-  const sendAdminPasswordReset = async (staff) => {
-    if (!staff?.id) return;
-    if (staff.username === currentUser) {
-      showToast("Use your own account security controls to change your password");
-      return;
-    }
-    if (!staff.is_admin) {
-      showToast("Password reset from Staff Management is only for active admin accounts");
-      return;
-    }
-    if (!window.confirm(`Send a secure password-reset code to ${staff.display_name || staff.username}'s admin email and sign them out of existing sessions?`)) return;
-    setAdminPasswordResettingId(staff.id);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/staff/${staff.id}/reset-password`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data.error || "Couldn't start the password reset");
-        return;
-      }
-      showToast(`Password reset sent to ${data.maskedEmail || "the admin's email"} — existing sessions were revoked`);
-      await fetchAdminStaff();
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setAdminPasswordResettingId(null);
     }
   };
 
@@ -4306,7 +3278,7 @@ export default function Stallyard() {
   const fetchSellerSalesCount = async (username) => {
     if (sellerSalesCounts[username] !== undefined) return;
     try {
-      const res = await backendFetch(`${BACKEND_URL}/sellers/${username}/completed-sales-count`);
+      const res = await fetch(`${BACKEND_URL}/sellers/${username}/completed-sales-count`);
       if (!res.ok) return;
       const { count } = await res.json();
       setSellerSalesCounts((c) => ({ ...c, [username]: count }));
@@ -4402,7 +3374,7 @@ export default function Stallyard() {
         t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
       )
     );
-    showToast(`Offer of ${formatMoney(amt, "NGN")} sent`);
+    showToast(`Offer of $${amt.toFixed(2)} sent`);
   };
 
   const respondToOffer = async (threadId, messageId, status) => {
@@ -4711,56 +3683,6 @@ export default function Stallyard() {
     }
   };
 
-  const openAdminNotes = async (entityType, entityId, label) => {
-    if (!entityId) {
-      showToast("This record is missing its server ID");
-      return;
-    }
-    setAdminNotesTarget({ entityType, entityId, label });
-    setAdminNoteDraft("");
-    setAdminNotesList([]);
-    setAdminNotesLoading(true);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin-notes/${entityType}/${entityId}`);
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || "Couldn't load internal notes");
-        setAdminNotesTarget(null);
-        return;
-      }
-      setAdminNotesList(data.notes || []);
-    } catch {
-      showToast("Couldn't reach the server — try again");
-      setAdminNotesTarget(null);
-    } finally {
-      setAdminNotesLoading(false);
-    }
-  };
-
-  const addAdminNote = async () => {
-    if (!adminNotesTarget || !adminNoteDraft.trim()) return;
-    setAdminNoteSaving(true);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin-notes/${adminNotesTarget.entityType}/${adminNotesTarget.entityId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: adminNoteDraft.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || "Couldn't save internal note");
-        return;
-      }
-      setAdminNotesList((notes) => [data.note, ...notes]);
-      setAdminNoteDraft("");
-      showToast("Internal note saved");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setAdminNoteSaving(false);
-    }
-  };
-
   const fetchAdminTickets = async () => {
     try {
       const res = await authFetch(`${BACKEND_URL}/support-tickets`);
@@ -4826,19 +3748,19 @@ export default function Stallyard() {
   };
 
   const patchOrderOnBackend = async (orderId, action, body) => {
-    if (typeof orderId !== "number") return { legacy: true }; // legacy local-only order, nothing to sync
+    if (typeof orderId !== "number") return true; // legacy local-only order, nothing to sync
     try {
       const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/${action}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: body ? JSON.stringify(body) : undefined,
       });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         showToast(data.error || "Couldn't save that change — try again");
         return false;
       }
-      return data;
+      return true;
     } catch {
       showToast("Couldn't reach the server — try again");
       return false;
@@ -4924,92 +3846,12 @@ export default function Stallyard() {
   };
 
   const releasePayout = async (orderId) => {
-    const sendRelease = async (body) => {
-      try {
-        const res = await authFetch(`${BACKEND_URL}/orders/${orderId}/release`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: body ? JSON.stringify(body) : undefined,
-        });
-        const data = await res.json().catch(() => ({}));
-        return { res, data };
-      } catch {
-        return { res: null, data: { error: "Couldn't reach the server — try again" } };
-      }
-    };
-
-    let result = await sendRelease();
-    if (!result.res) {
-      showToast(result.data.error);
-      return;
-    }
-
-    // Normal finance release is allowed only when the same proof + buyer-token
-    // safeguards used by the seller flow are complete. If they are not, make
-    // the admin consciously enter an emergency override instead of silently
-    // bypassing delivery protection.
-    if (!result.res.ok && result.data.code === "DELIVERY_SAFEGUARDS_REQUIRED") {
-      const problems = Array.isArray(result.data.safeguardProblems)
-        ? result.data.safeguardProblems
-        : [];
-      const warning = [
-        "OVERRIDE DELIVERY SAFEGUARDS?",
-        "",
-        "Normal release is blocked because:",
-        ...(problems.length ? problems.map((p) => `• ${p}`) : ["• Required delivery proof is incomplete"]),
-        "",
-        "An override releases real seller funds without the normal buyer-token and/or delivery-picture proof. Active returns still cannot be overridden.",
-        "",
-        "Continue only for an exceptional case you have independently reviewed.",
-      ].join("\n");
-      if (!window.confirm(warning)) return;
-
-      const overrideReason = window.prompt(
-        "Document why this emergency payment release is justified. This reason is written permanently to the admin audit log (minimum 10 characters)."
-      );
-      if (overrideReason === null) return;
-      if (overrideReason.trim().length < 10) {
-        showToast("Enter a clear override reason of at least 10 characters");
-        return;
-      }
-
-      result = await sendRelease({
-        overrideDeliverySafeguards: true,
-        overrideReason: overrideReason.trim(),
-      });
-    }
-
-    if (!result.res?.ok) {
-      showToast(result.data.error || "Couldn't release that payment");
-      return;
-    }
-
-    const data = result.data;
+    const ok = await patchOrderOnBackend(orderId, "release");
+    if (!ok) return;
     await persistOrders(
-      orders.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              paymentStatus: "released",
-              isDisputed: data.order ? !!data.order.is_disputed : false,
-            }
-          : o
-      )
+      orders.map((o) => (o.id === orderId ? { ...o, paymentStatus: "released" } : o))
     );
-    if (data.resolvedDispute?.id) {
-      setAdminDisputes((cases) =>
-        cases.map((d) =>
-          d.id === data.resolvedDispute.id ? { ...d, ...data.resolvedDispute } : d
-        )
-      );
-    }
-    if (data.deliverySafeguardsOverridden) {
-      showToast("Payment released with an audited delivery-safeguard override");
-    } else if (data.resolvedDispute?.id) {
-      showToast("Seller payment released and dispute resolved together");
-    } else {
-      showToast("Payout marked as released");
-    }
+    showToast("Payout marked as released");
   };
 
   const fetchReconciliation = async () => {
@@ -5130,39 +3972,6 @@ export default function Stallyard() {
     }
   };
 
-  const partialRefundOrder = async (dispute, order, amountRaw, reason) => {
-    const amount = Math.round(Number(amountRaw) * 100) / 100;
-    if (!(amount > 0)) {
-      showToast("Enter a valid partial refund amount");
-      return;
-    }
-    if (!reason?.trim()) {
-      showToast("Enter the negotiated outcome / reason first");
-      return;
-    }
-    if (!window.confirm(`Send a REAL partial refund of ${formatMoney(amount, order.currency)} through Paystack? The remaining seller proceeds will be released only after Paystack confirms the refund.`)) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/refund/partial`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ disputeId: dispute.id, amount, reason: reason.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.error || "Couldn't start the partial refund");
-        return;
-      }
-      const updated = backendOrderToFrontend({ ...data.order, items: order.items || [] });
-      setOrders((all) => all.map((o) => o.id === order.id ? { ...o, ...updated, items: o.items } : o));
-      setDisputeCases((all) => all.map((d) => d.id === dispute.id
-        ? { ...d, status: "in_review", resolution: "partial_refund", resolution_note: reason.trim() }
-        : d));
-      showToast(`Partial refund of ${formatMoney(amount, order.currency)} submitted — waiting for Paystack confirmation`);
-    } catch {
-      showToast("Couldn't reach the server — check Paystack before trying again");
-    }
-  };
-
   const updateItemFulfillment = async (orderId, itemId, status) => {
     const ok = await patchOrderItemOnBackend(itemId, { fulfillmentStatus: status });
     if (!ok) return;
@@ -5263,9 +4072,8 @@ export default function Stallyard() {
     }
   };
 
-  // Buyer-side action: generates a 10-digit code to hand to the seller in
-  // person as proof of delivery, instead of tapping "Confirm receipt"
-  // themselves. Useful for cash-on-delivery or in-person handoffs.
+  // Buyer-side action: retrieves the automatically generated 10-digit code
+  // that the buyer gives the seller only after receiving the item.
   const generateDeliveryToken = async (itemId) => {
     setGeneratingTokenKey(itemId);
     try {
@@ -5630,7 +4438,7 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't do that — try again");
         return;
       }
-      if (data.token) await saveAuthToken(true);
+      if (data.token) await saveAuthToken(data.token);
       showToast("Signed out of all other devices");
     } catch {
       showToast("Couldn't reach the server — try again");
@@ -5693,7 +4501,7 @@ export default function Stallyard() {
         showToast(data.error || "Couldn't change your password — try again");
         return;
       }
-      if (data.token) await saveAuthToken(true);
+      if (data.token) await saveAuthToken(data.token);
       setChangePasswordForm({ current: "", next: "", confirm: "" });
       showToast("Password changed — you've been signed out of other devices");
     } catch {
@@ -5779,7 +4587,7 @@ export default function Stallyard() {
       return;
     }
     try {
-      const res = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
+      const res = await fetch(`${BACKEND_URL}/email-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: currentMember.email }),
@@ -5804,7 +4612,7 @@ export default function Stallyard() {
     }
     setVerifyingAccountEmail(true);
     try {
-      const checkRes = await backendFetch(`${BACKEND_URL}/email-verify/check`, {
+      const checkRes = await fetch(`${BACKEND_URL}/email-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: currentMember.email, code: accountEmailCodeInput.trim() }),
@@ -5838,7 +4646,7 @@ export default function Stallyard() {
       return;
     }
     try {
-      const res = await backendFetch(`${BACKEND_URL}/phone-verify/send`, {
+      const res = await fetch(`${BACKEND_URL}/phone-verify/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: accountPhoneInput.trim() }),
@@ -5863,7 +4671,7 @@ export default function Stallyard() {
     }
     setVerifyingAccountPhone(true);
     try {
-      const checkRes = await backendFetch(`${BACKEND_URL}/phone-verify/check`, {
+      const checkRes = await fetch(`${BACKEND_URL}/phone-verify/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }),
@@ -5951,7 +4759,7 @@ export default function Stallyard() {
       return;
     }
     if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
+      setShippingError("Fill in your name, street, city, ZIP, and country to ship this order.");
       return;
     }
     setShippingError("");
@@ -5998,7 +4806,7 @@ export default function Stallyard() {
   const verifyCheckout = async (reference) => {
     setCheckoutVerifying(true);
     try {
-      const res = await authFetch(`${BACKEND_URL}/checkout/verify/${reference}`, { method: "POST" });
+      const res = await authFetch(`${BACKEND_URL}/checkout/verify/${reference}`);
       const data = await res.json();
       if (!res.ok) {
         setCheckoutVerifyError(data.error || "We couldn't confirm this payment — contact support if you were charged.");
@@ -6022,7 +4830,7 @@ export default function Stallyard() {
   const payWithSavedCard = async (cardId) => {
     if (cartItems.length === 0) return;
     if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
+      setShippingError("Fill in your name, street, city, ZIP, and country to ship this order.");
       return;
     }
     setShippingError("");
@@ -6094,7 +4902,7 @@ export default function Stallyard() {
   const [addressError, setAddressError] = useState("");
 
   const startNewAddress = () => {
-    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "Nigeria" });
+    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "" });
     setAddressError("");
   };
 
@@ -6106,14 +4914,14 @@ export default function Stallyard() {
       city: a.city || "",
       state: a.state || "",
       zip: a.zip || "",
-      country: "Nigeria",
+      country: a.country || "",
     });
     setAddressError("");
   };
 
   const saveAddressDraft = async () => {
     if (!addressDraft.street.trim() || !addressDraft.city.trim() || !addressDraft.country.trim()) {
-      setAddressError("Street and city are required for a Nigerian delivery address.");
+      setAddressError("Street, city, and country are required.");
       return;
     }
     setAddressSaving(true);
@@ -6194,6 +5002,7 @@ export default function Stallyard() {
       shippingMethods: [],
       returnPolicy: "",
       vin: "",
+      shipsToUsa: false,
     });
     setEditingId(null);
     setPreviewOpen(false);
@@ -6436,119 +5245,6 @@ export default function Stallyard() {
     }
   };
 
-
-  const handleHomepageAdImageSelect = async (e, slot) => {
-    const file = (e.target.files || [])[0];
-    e.target.value = "";
-    if (!file) return;
-    setHomepageAdUploading(slot);
-    try {
-      const dataUrl = await resizeImageFile(file, 1800, 0.84);
-      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "homepage-ads" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url } : ad));
-      showToast(`Ad ${slot} image uploaded — click Save ad to publish it`);
-    } catch (err) {
-      showToast(err.message || "Couldn't upload that ad image");
-    } finally {
-      setHomepageAdUploading(null);
-    }
-  };
-
-  const handleHomepageAdVideoSelect = async (e, slot) => {
-    const file = (e.target.files || [])[0];
-    e.target.value = "";
-    if (!file || slot !== 1) return;
-    if (!["video/mp4", "video/webm"].includes(file.type)) {
-      showToast("Use an MP4 or WebM video");
-      return;
-    }
-    if (file.size > 40 * 1024 * 1024) {
-      showToast("Video is too large — maximum size is 40 MB");
-      return;
-    }
-    setHomepageAdUploading(slot);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/homepage-ads/upload-video`, {
-        method: "POST",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Video upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? {
-        ...ad,
-        imageUrl: data.url,
-        mediaType: "video",
-      } : ad));
-      showToast("Ad 1 video uploaded — click Save ad to publish it");
-    } catch (err) {
-      showToast(err.message || "Couldn't upload that ad video");
-    } finally {
-      setHomepageAdUploading(null);
-    }
-  };
-
-  const handleHomepageAdPosterSelect = async (e, slot) => {
-    const file = (e.target.files || [])[0];
-    e.target.value = "";
-    if (!file || slot !== 1) return;
-    setHomepageAdUploading(slot);
-    try {
-      const dataUrl = await resizeImageFile(file, 1800, 0.84);
-      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "homepage-ads/posters" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Poster upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, posterUrl: data.url } : ad));
-      showToast("Video poster uploaded — click Save ad to publish it");
-    } catch (err) {
-      showToast(err.message || "Couldn't upload that poster image");
-    } finally {
-      setHomepageAdUploading(null);
-    }
-  };
-
-  const saveHomepageAd = async (slot) => {
-    const ad = homepageAds.find((item) => item.slot === slot);
-    if (!ad) return;
-    setHomepageAdSaving(slot);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/homepage-ads/${slot}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageUrl: ad.imageUrl || "",
-          mediaType: ad.slot === 1 ? (ad.mediaType || "image") : "image",
-          posterUrl: ad.slot === 1 ? (ad.posterUrl || "") : "",
-          linkUrl: ad.linkUrl || "",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Couldn't save ad");
-      setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
-        slot,
-        imageUrl: data.ad?.image_url || "",
-        mediaType: slot === 1 && data.ad?.media_type === "video" ? "video" : "image",
-        posterUrl: data.ad?.poster_url || "",
-        linkUrl: data.ad?.link_url || "",
-      } : item));
-      showToast(`Homepage ad ${slot} saved`);
-    } catch (err) {
-      showToast(err.message || "Couldn't save homepage ad");
-    } finally {
-      setHomepageAdSaving(null);
-    }
-  };
-
   const handleAuthImageSelect = async (e) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
@@ -6581,7 +5277,7 @@ export default function Stallyard() {
       return;
     }
     if (needsIdVerification) {
-      showToast("Complete seller verification before publishing");
+      showToast(`You've crossed $${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales — add ID verification to keep selling`);
       setIdVerifyOpen(true);
       return;
     }
@@ -6594,16 +5290,12 @@ export default function Stallyard() {
       showToast("Give it a price before publishing");
       return;
     }
-    if (!isDraft && !form.subcategory) {
-      showToast("Choose a subcategory before publishing");
-      return;
-    }
     if (!isDraft && form.images.length < MIN_LISTING_PHOTOS) {
       showToast(`Add at least ${MIN_LISTING_PHOTOS} photos before publishing`);
       return;
     }
-    if (form.listingType === "auction" && false) {
-      showToast("Auctions are not available for this listing");
+    if (form.listingType === "auction" && isUnitedStates(currentMember?.country)) {
+      showToast("Auctions aren't available for US sellers yet");
       return;
     }
     if (editingId) {
@@ -6622,7 +5314,7 @@ export default function Stallyard() {
         // Once a seller is approved, everything they list — including
         // auctions — goes live immediately without a separate review queue.
         const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
-        statusPatch = { status: autoApproved ? "active" : "pending" };
+        statusPatch = { status: autoApproved ? "approved" : "pending" };
       }
       const patch = {
         ...form,
@@ -6658,7 +5350,7 @@ export default function Stallyard() {
       // Once a seller is approved, everything they list — including
       // auctions — goes live immediately without a separate review queue.
       const autoApproved = currentMember?.isApproved || currentMember?.isAdmin;
-      const status = isDraft ? "draft" : autoApproved ? "active" : "pending";
+      const status = isDraft ? "draft" : autoApproved ? "approved" : "pending";
       const auctionEndTime = isAuction
         ? Date.now() + Number(form.auctionDurationDays) * 24 * 60 * 60 * 1000
         : null;
@@ -6673,7 +5365,6 @@ export default function Stallyard() {
             description: form.description,
             price: form.price ? Number(form.price) : 0,
             category: form.category,
-            subcategory: form.subcategory,
             condition: form.condition,
             shippingFee: Number(form.shippingFee) || 0,
             emoji: form.emoji,
@@ -6692,6 +5383,7 @@ export default function Stallyard() {
             shippingMethods: form.shippingMethods,
             returnPolicy: form.returnPolicy,
             vin: form.vin,
+            shipsToUsa: form.shipsToUsa,
           }),
         });
       } catch {
@@ -6728,7 +5420,6 @@ export default function Stallyard() {
       description: listing.description,
       price: String(listing.price),
       category: listing.category,
-      subcategory: listing.subcategory || "",
       condition: listing.condition || "New",
       emoji: listing.emoji,
       fitMake: listing.fitMake || "",
@@ -6737,7 +5428,7 @@ export default function Stallyard() {
       images: listing.images || [],
       listingType: listing.listingType || "fixed",
       auctionDurationDays: "3",
-      currency: listing.currency || "NGN",
+      currency: listing.currency || "USD",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
       quantity: listing.quantity != null ? String(listing.quantity) : "",
       sku: listing.sku || "",
@@ -6746,6 +5437,7 @@ export default function Stallyard() {
       shippingMethods: listing.shippingMethods || [],
       returnPolicy: listing.returnPolicy || "",
       vin: listing.vin || "",
+      shipsToUsa: !!listing.shipsToUsa,
     });
     setEditingId(listing.id);
     setAdminEditContext(fromAdmin);
@@ -6782,8 +5474,8 @@ export default function Stallyard() {
   };
 
   const resumeListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing is live again");
   };
 
@@ -6794,8 +5486,8 @@ export default function Stallyard() {
   };
 
   const markListingInStock = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Marked back in stock");
   };
 
@@ -6861,8 +5553,8 @@ export default function Stallyard() {
   };
 
   const adminApproveListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing approved");
   };
 
@@ -6922,8 +5614,8 @@ export default function Stallyard() {
   };
 
   const adminRestoreListing = async (id) => {
-    if (!(await patchListingOnBackend(id, { status: "active" }))) return;
-    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "active" } : l)));
+    if (!(await patchListingOnBackend(id, { status: "approved" }))) return;
+    await persistListings(listings.map((l) => (l.id === id ? { ...l, status: "approved" } : l)));
     showToast("Listing restored");
   };
 
@@ -6971,30 +5663,28 @@ export default function Stallyard() {
     showToast("Member removed");
   };
 
-  const adminSetRole = async (username, role, reason = "") => {
+  const adminSetRole = async (username, role) => {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/admin-role`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ role, reason }),
+          body: JSON.stringify({ role }),
         });
-        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          showToast(data.error || "Couldn't update that role — try again");
-          return false;
+          showToast("Couldn't update that role — try again");
+          return;
         }
       } catch {
         showToast("Couldn't reach the server — try again");
-        return false;
+        return;
       }
     }
     await persistMembers(
       members.map((m) => (m.username === username ? { ...m, isAdmin: role !== null, adminRole: role } : m))
     );
     showToast(role ? `Role set to ${ADMIN_ROLE_LABELS[role] || role}` : "Admin access revoked");
-    return true;
   };
 
   const adminToggleSuspend = async (username) => {
@@ -7180,6 +5870,14 @@ export default function Stallyard() {
     showToast(isFollowing ? "Unfollowed" : "Following");
   };
 
+  const noAdminExists = members.length > 0 && !members.some((m) => m.isAdmin);
+
+  const claimAdmin = async () => {
+    if (!currentUser) return;
+    await persistMembers(members.map((m) => (m.username === currentUser ? { ...m, isAdmin: true } : m)));
+    showToast("You're now the marketplace admin");
+  };
+
   const myListings = listings.filter((l) => l.ownerUsername === currentUser);
   const filteredMyListings =
     manageListingsTab === "all" ? myListings : myListings.filter((l) => l.status === manageListingsTab);
@@ -7284,7 +5982,7 @@ export default function Stallyard() {
     ...mySales.map((o) => {
       const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
       const total = myItems.reduce((s, i) => s + Number(i.price) * (i.qty || 1), 0);
-      return { id: `sale-${o.id}`, message: `New sale from ${o.buyerName} — ${formatMoney(total, "NGN")}`, at: o.createdAt };
+      return { id: `sale-${o.id}`, message: `New sale from ${o.buyerName} — $${total.toFixed(2)}`, at: o.createdAt };
     }),
     ...mySales
       .filter((o) => o.isDisputed)
@@ -7294,7 +5992,7 @@ export default function Stallyard() {
       .map((i) => ({ id: `return-${i.id}`, message: `Return requested — ${i.title}`, at: i.returnRequestedAt || Date.now() })),
     ...myWithdrawals
       .filter((w) => w.status === "paid")
-      .map((w) => ({ id: `payout-${w.id}`, message: `Payout of ${formatMoney(Number(w.amount), "NGN")} completed`, at: w.requestedAt })),
+      .map((w) => ({ id: `payout-${w.id}`, message: `Payout of $${Number(w.amount).toFixed(2)} completed`, at: w.requestedAt })),
   ]
     .sort((a, b) => b.at - a.at)
     .slice(0, 5);
@@ -7391,7 +6089,20 @@ export default function Stallyard() {
     return { avg, count: rs.length };
   };
 
-  const needsIdVerification = needsLegacySalesThresholdVerification;
+  // Only counts USD-denominated sales — this threshold is a USD figure, and
+  // there's no live exchange rate here to convert other currencies into it.
+  const getSellerTotalSalesUSD = (username) =>
+    orders.reduce((sum, o) => {
+      if ((o.currency || "USD") !== "USD") return sum;
+      const mine = o.items.filter((i) => i.ownerUsername === username);
+      return sum + mine.reduce((s, i) => s + i.price * i.qty, 0);
+    }, 0);
+
+  const needsIdVerification =
+    !!currentMember &&
+    currentMember.idVerificationExempt &&
+    !currentMember.idCountry &&
+    getSellerTotalSalesUSD(currentUser) >= ID_VERIFICATION_SALES_THRESHOLD;
 
   // eBay-style reputation: 4-5 stars count as positive, 3 as neutral, 1-2 as negative.
   const getSellerReputation = (username) => {
@@ -7413,16 +6124,15 @@ export default function Stallyard() {
   const filtered = listings
     .filter((l) => {
       const matchesCategory = categoryFilter === "All" || l.category === categoryFilter;
-      const matchesSubcategory = subcategoryFilter === "All" || l.subcategory === subcategoryFilter;
       const matchesCondition = conditionFilter === "All" || (l.condition || "New") === conditionFilter;
       const q = search.trim().toLowerCase();
       const matchesSearch =
         !q || l.title.toLowerCase().includes(q) || l.description.toLowerCase().includes(q);
-      const isVisible = l.status === "active";
+      const isVisible = l.status === "approved";
       const min = priceMin !== "" ? Number(priceMin) : -Infinity;
       const max = priceMax !== "" ? Number(priceMax) : Infinity;
       const matchesPrice = Number(l.price) >= min && Number(l.price) <= max;
-      return matchesCategory && matchesSubcategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
+      return matchesCategory && matchesCondition && matchesSearch && isVisible && matchesPrice;
     })
     .sort((a, b) => {
       if (sortBy === "price-asc") return Number(a.price) - Number(b.price);
@@ -7437,13 +6147,13 @@ export default function Stallyard() {
       return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
     });
 
-  const visibleListings = listings.filter((l) => l.status === "active");
+  const visibleListings = listings.filter((l) => l.status === "approved");
   const featuredPicks = visibleListings.filter((l) => l.isFeatured).slice(0, 10);
   const newArrivals = visibleListings
     .slice()
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     .slice(0, 10);
-  const isHomeState = !search.trim() && categoryFilter === "All" && subcategoryFilter === "All" && !priceMin && !priceMax && conditionFilter === "All";
+  const isHomeState = !search.trim() && categoryFilter === "All" && !priceMin && !priceMax && conditionFilter === "All";
 
   const NavButton = ({ id, icon: Icon, label, badge, onClick }) => (
     <button
@@ -7466,10 +6176,6 @@ export default function Stallyard() {
       )}
     </button>
   );
-
-  if (fatalServerError) {
-    return <StallyardErrorScreen onRetry={() => window.location.reload()} />;
-  }
 
   if (adminLoginMode) {
     return (
@@ -7529,44 +6235,6 @@ export default function Stallyard() {
                   {adminLoginSubmitting ? "Checking..." : "Continue"}
                 </button>
               </>
-            ) : adminLoginStep === "new-password" ? (
-              <>
-                <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
-                  Set a new password
-                </h2>
-                <p className="text-sm mb-4" style={{ color: SLATE }}>
-                  Your 10-minute temporary password was accepted and all three security checks passed. Choose a new permanent admin password to finish signing in.
-                </p>
-                <input
-                  type="password"
-                  value={adminTempNewPasswordForm.password}
-                  onChange={(e) => setAdminTempNewPasswordForm((f) => ({ ...f, password: e.target.value }))}
-                  placeholder="New password"
-                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
-                  style={{ borderColor: "#DDD8CC" }}
-                  autoFocus
-                />
-                <input
-                  type="password"
-                  value={adminTempNewPasswordForm.confirm}
-                  onChange={(e) => setAdminTempNewPasswordForm((f) => ({ ...f, confirm: e.target.value }))}
-                  onKeyDown={(e) => e.key === "Enter" && completeAdminTemporaryPassword()}
-                  placeholder="Confirm new password"
-                  className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
-                  style={{ borderColor: "#DDD8CC" }}
-                />
-                {adminLoginError && (
-                  <p className="text-sm mb-2" style={{ color: BERRY }}>{adminLoginError}</p>
-                )}
-                <button
-                  onClick={completeAdminTemporaryPassword}
-                  disabled={adminLoginSubmitting}
-                  className="w-full py-2.5 rounded-lg font-medium mt-1 disabled:opacity-50"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  {adminLoginSubmitting ? "Saving..." : "Set password & sign in"}
-                </button>
-              </>
             ) : (
               <>
                 <h2 className="text-lg font-semibold mb-1" style={{ color: INK }}>
@@ -7605,8 +6273,6 @@ export default function Stallyard() {
                     setAdminLoginStep("credentials");
                     setAdminLoginCode("");
                     setAdminLoginError("");
-                    setAdminTempPasswordChangeToken("");
-                    setAdminTempNewPasswordForm({ password: "", confirm: "" });
                   }}
                   className="text-xs font-medium underline mt-3"
                   style={{ color: SLATE }}
@@ -7617,11 +6283,15 @@ export default function Stallyard() {
             )}
           </div>
           <button
-            onClick={() => window.location.assign("https://stallyard.com")}
+            onClick={() => {
+              setAdminLoginMode(false);
+              window.history.replaceState({}, "", "/");
+              setView("browse");
+            }}
             className="text-xs font-medium underline mt-4 block mx-auto"
             style={{ color: "#8A93A3" }}
           >
-            ← Go to public marketplace
+            ← Back to Stallyard
           </button>
         </div>
       </div>
@@ -7876,7 +6546,7 @@ export default function Stallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                       />
                     )}
-                    {true && (
+                    {!isUnitedStates(authForm.country) && (
                       <select
                         value={authForm.idType}
                         onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
@@ -7890,12 +6560,12 @@ export default function Stallyard() {
                         <option>Permanent Voter's Card</option>
                       </select>
                     )}
-                    {false && (
+                    {isUnitedStates(authForm.country) && (
                       <p className="text-xs" style={{ color: SLATE }}>
                         ID verification isn't required for US-based members.
                       </p>
                     )}
-                    {true && showBusinessFields && (
+                    {!isUnitedStates(authForm.country) && showBusinessFields && (
                       <input
                         value={authForm.licenseNumber}
                         onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
@@ -7904,7 +6574,7 @@ export default function Stallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                       />
                     )}
-                    {true && (
+                    {!isUnitedStates(authForm.country) && (
                       <div>
                         <p className="text-xs mb-2" style={{ color: SLATE }}>
                           License photos (optional, up to 5)
@@ -8209,289 +6879,105 @@ export default function Stallyard() {
 
   return (
     <div className="min-h-screen w-full" style={{ backgroundColor: CANVAS, fontFamily: "'Work Sans', sans-serif" }}>
-      {adminTempPasswordResult && (
-        <div className="fixed inset-0 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.70)", zIndex: 99999 }}>
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl border p-5" style={{ borderColor: MARIGOLD }}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="text-xl font-semibold" style={{ color: INK }}>10-minute temporary admin password</div>
-                <p className="text-sm mt-1" style={{ color: SLATE }}>
-                  For <strong>@{adminTempPasswordResult.username}</strong>. Copy it now.
-                </p>
-              </div>
-              <button onClick={() => setAdminTempPasswordResult(null)} className="w-9 h-9 rounded-full border flex items-center justify-center shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }} aria-label="Close temporary password">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="mt-5 p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
-              <div className="text-xs font-medium mb-2" style={{ color: SLATE }}>TEMPORARY PASSWORD</div>
-              <code className="block text-xl sm:text-2xl font-semibold break-all select-all" style={{ color: INK }}>
-                {adminTempPasswordResult.temporaryPassword || "Password was not returned — generate a new one"}
-              </code>
-            </div>
-            {adminTempPasswordResult.expiresAt && (
-              <p className="text-sm mt-3" style={{ color: SLATE }}>
-                Expires at {new Date(adminTempPasswordResult.expiresAt).toLocaleTimeString()}.
-              </p>
-            )}
-            <div className="flex gap-2 mt-5 flex-wrap">
-              <button onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(adminTempPasswordResult.temporaryPassword || "");
-                  showToast("Temporary password copied");
-                } catch {
-                  window.prompt("Copy the temporary password", adminTempPasswordResult.temporaryPassword || "");
-                }
-              }} className="px-4 py-2.5 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>
-                Copy password
-              </button>
-              <button onClick={() => setAdminTempPasswordResult(null)} className="px-4 py-2.5 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
-                I saved it — close
-              </button>
-            </div>
-            <p className="text-xs mt-4" style={{ color: BERRY }}>
-              This password is valid for 10 minutes and will only be shown during this recovery action.
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
-      {isAdminHost() ? (
-        <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
-          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-            <button
-              onClick={() => { setSelected(null); setView("admin"); }}
-              className="flex items-center gap-2"
-              aria-label="Admin dashboard"
+      <header style={{ backgroundColor: INK }} className="sticky top-0 z-20">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4 flex-wrap">
+          <button
+            onClick={() => {
+              setSelected(null);
+              setView("browse");
+              if (isAdminHost()) return;
+            }}
+            className="flex items-center gap-2"
+            aria-label="Go to home"
+          >
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+              style={{ backgroundColor: MARIGOLD }}
             >
-              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: MARIGOLD }}>
-                <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "16px" }}>S</span>
-              </div>
-              <h1 className="text-2xl tracking-wide" style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}>
-                Stallyard Admin
-              </h1>
-            </button>
-            <div className="flex items-center gap-2">
-              {currentMember?.isAdmin && (
-                <span className="hidden sm:inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: "#2A3442", color: "#C9CCD3" }}>
-                  <Shield size={16} />
-                  {ADMIN_ROLE_LABELS[currentMember.adminRole || "super_admin"] || "Admin"}
+              <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "16px" }}>S</span>
+            </div>
+            <h1
+              className="text-2xl tracking-wide"
+              style={{ fontFamily: "'DM Serif Display', serif", color: MARIGOLD }}
+            >
+              Stallyard
+            </h1>
+          </button>
+          <nav className="flex items-center gap-1">
+            <NavButton id="browse" icon={LayoutGrid} label="Browse" />
+            <NavButton id="sell" icon={Plus} label="Sell" />
+            <NavButton id="dashboard" icon={Store} label="My Stall" />
+            {currentUser && <NavButton id="buyerHome" icon={PackageOpen} label="Dashboard" />}
+            {currentUser && <NavButton id="watchlist" icon={Heart} label="Watchlist" />}
+            {currentUser && <NavButton id="wallet" icon={Wallet} label="Wallet" />}
+            {currentUser && <NavButton id="messages" icon={MessageCircle} label="Messages" badge={unreadThreadsCount} />}
+            <NavButton id="orders" icon={Receipt} label="Orders" />
+            <NavButton id="help" icon={HelpCircle} label="Help" />
+            {currentMember?.isAdmin && (
+              <NavButton id="admin" icon={Shield} label="Admin" onClick={openAdminPanel} />
+            )}
+            {currentUser && (
+              <button
+                onClick={() => setNotifPanelOpen((o) => !o)}
+                className="relative p-2 rounded-lg"
+                style={{ color: "#C9CCD3" }}
+                aria-label="Notifications"
+              >
+                <Bell size={18} />
+                {notifications.some((n) => !n.read) && (
+                  <span
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                    style={{ backgroundColor: BERRY, color: "white" }}
+                  >
+                    {notifications.filter((n) => !n.read).length}
+                  </span>
+                )}
+              </button>
+            )}
+            <button
+              onClick={() => setCartOpen(true)}
+              className="relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
+              style={{ color: "#C9CCD3" }}
+              aria-label="Open cart"
+            >
+              <ShoppingBag size={18} />
+              {cartCount > 0 && (
+                <span
+                  className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold flex items-center justify-center"
+                  style={{ backgroundColor: BERRY, color: "white" }}
+                >
+                  {cartCount}
                 </span>
               )}
-              {currentUser && (
-                <>
-                  <span className="text-sm hidden sm:inline" style={{ color: "#C9CCD3" }}>{currentMember?.displayName}</span>
-                  <button onClick={logout} aria-label="Log out" className="p-2 rounded-lg" style={{ color: "#C9CCD3" }}>
-                    <LogOut size={16} />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
-      ) : (
-        <header className="sticky top-0 z-20 bg-white border-b" style={{ borderColor: "#E5E0D6" }}>
-          {/* Utility bar */}
-          <div className="border-b" style={{ borderColor: "#EEEAE1" }}>
-            <div className="max-w-[1500px] mx-auto px-4 h-8 flex items-center justify-between text-xs" style={{ color: INK }}>
-              <div className="flex items-center gap-4 min-w-0">
-                {!currentUser ? (
-                  <span className="whitespace-nowrap">
-                    Hi!{' '}
-                    <button
-                      onClick={() => { setAuthMode("login"); setAuthError(""); setAuthReturnView(view); setView("signup"); }}
-                      className="underline font-medium"
-                      style={{ color: "#2457A6" }}
-                    >
-                      Sign in
-                    </button>
-                    {' '}or{' '}
-                    <button
-                      onClick={() => { setAuthMode("register"); setAuthError(""); setAuthReturnView(view); setView("signup"); }}
-                      className="underline font-medium"
-                      style={{ color: "#2457A6" }}
-                    >
-                      register
-                    </button>
-                  </span>
-                ) : (
-                  <span className="whitespace-nowrap">Hi, {currentMember?.displayName || currentUser}</span>
-                )}
-                <button onClick={() => { setView("browse"); setSortBy("featured"); }} className="hidden sm:inline hover:underline">Deals</button>
-                <button onClick={() => { setView("browse"); setSortBy("newest"); }} className="hidden md:inline hover:underline">New arrivals</button>
-                <button onClick={() => setView("help")} className="hidden sm:inline hover:underline">Help & Contact</button>
-              </div>
-
-              <div className="flex items-center gap-3 sm:gap-5 whitespace-nowrap">
-                <button onClick={() => setView("sell")} className="hover:underline">Sell</button>
-                <button
-                  onClick={() => currentUser ? setView("watchlist") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("watchlist"), setView("signup"))}
-                  className="hidden sm:inline hover:underline"
-                >
-                  Watchlist
-                </button>
-                <button
-                  onClick={() => currentUser ? setView("buyerHome") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("buyerHome"), setView("signup"))}
-                  className="hidden sm:inline hover:underline"
-                >
-                  My Stallyard
-                </button>
-                {currentUser && (
-                  <button onClick={() => setNotifPanelOpen((o) => !o)} className="relative p-1" aria-label="Notifications">
-                    <Bell size={18} />
-                    {notifications.some((n) => !n.read) && (
-                      <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] text-white flex items-center justify-center" style={{ backgroundColor: BERRY }}>
-                        {notifications.filter((n) => !n.read).length}
-                      </span>
-                    )}
-                  </button>
-                )}
-                <button onClick={() => setCartOpen(true)} className="relative p-1" aria-label="Open cart">
-                  <ShoppingBag size={19} />
-                  {cartCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full text-[9px] text-white flex items-center justify-center" style={{ backgroundColor: BERRY }}>
-                      {cartCount}
-                    </span>
-                  )}
-                </button>
-                {currentUser && (
-                  <button onClick={logout} className="hidden lg:inline hover:underline">Log out</button>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Main search row */}
-          <div className="max-w-[1500px] mx-auto px-4 py-3 flex items-center gap-3">
-            <button
-              onClick={() => { setSelected(null); setCategoryFilter("All"); setSearch(""); setView("browse"); }}
-              className="flex items-center gap-2 shrink-0"
-              aria-label="Go to Stallyard home"
-            >
-              <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: MARIGOLD }}>
-                <span style={{ fontFamily: "'DM Serif Display', serif", color: INK, fontSize: "20px" }}>S</span>
-              </div>
-              <span className="hidden sm:block text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Stallyard</span>
             </button>
-
-            <div className="relative shrink-0" ref={categoriesMenuRef}>
-              <button
-                type="button"
-                onClick={() => setCategoriesMenuOpen((open) => !open)}
-                className="hidden md:flex items-center gap-2 px-2 py-2 text-xs leading-tight text-left"
-                style={{ color: SLATE }}
-                aria-haspopup="menu"
-                aria-expanded={categoriesMenuOpen}
-              >
-                <span>Shop by<br />category</span>
-                <span aria-hidden="true">⌄</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setCategoriesMenuOpen((open) => !open)}
-                className="md:hidden p-2 rounded-full border"
-                style={{ borderColor: "#DDD8CC", color: INK }}
-                aria-label="Open categories"
-              >
-                <LayoutGrid size={18} />
-              </button>
-
-              {categoriesMenuOpen && (
-                <div
-                  className="absolute left-0 top-full mt-2 w-[330px] max-w-[88vw] bg-white rounded-xl shadow-2xl border overflow-hidden"
-                  style={{ borderColor: "#DDD8CC", zIndex: 80 }}
-                  role="menu"
-                  aria-label="Marketplace categories"
-                >
-                  <div className="max-h-[560px] overflow-y-auto py-2">
-                    <button
-                      type="button"
-                      onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setCategoriesMenuOpen(false); }}
-                      className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
-                      style={{ color: INK, backgroundColor: categoryFilter === "All" ? "#F6F3EC" : "white" }}
-                      role="menuitem"
-                    >
-                      <span className="font-medium">All Categories</span>
-                      {categoryFilter === "All" && <span style={{ color: MARIGOLD }}>●</span>}
-                    </button>
-                    {CATEGORIES.map((category) => (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setView("browse"); setSelected(null); setCategoriesMenuOpen(false); }}
-                        className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
-                        style={{ color: INK, backgroundColor: categoryFilter === category ? "#F6F3EC" : "white" }}
-                        role="menuitem"
-                      >
-                        <span>{category}</span>
-                        {categoryFilter === category && <span style={{ color: MARIGOLD }}>●</span>}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 min-w-0 flex items-stretch border-2 rounded-full overflow-hidden bg-white" style={{ borderColor: INK }}>
-              <div className="relative flex-1 min-w-0">
-                <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: SLATE }} />
-                <input
-                  value={search}
-                  onChange={(e) => { setSearch(e.target.value); if (view !== "browse") setView("browse"); }}
-                  onFocus={() => setCategoriesMenuOpen(false)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { setView("browse"); setSelected(null); } }}
-                  placeholder="Search for anything"
-                  className="w-full pl-11 pr-3 py-2.5 outline-none text-sm bg-white"
-                  style={{ color: INK }}
-                  aria-label="Search marketplace"
-                />
-              </div>
-              <select
-                value={categoryFilter}
-                onChange={(e) => { setCategoryFilter(e.target.value); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
-                className="hidden lg:block max-w-[185px] px-4 border-l outline-none bg-white text-sm"
-                style={{ borderColor: "#DDD8CC", color: SLATE }}
-                aria-label="Search category"
-              >
-                <option value="All">All Categories</option>
-                {CATEGORIES.map((category) => <option key={category} value={category}>{category}</option>)}
-              </select>
-            </div>
-
-            <button
-              onClick={() => { setView("browse"); setSelected(null); }}
-              className="shrink-0 px-5 sm:px-8 py-2.5 rounded-full text-sm font-semibold"
-              style={{ backgroundColor: MARIGOLD, color: INK }}
-            >
-              Search
-            </button>
-          </div>
-
-          {/* Quick category strip */}
-          <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
-            <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-7 overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
-              <button
-                onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
-                className="px-3 py-1 rounded-full font-medium shrink-0"
-                style={{ backgroundColor: categoryFilter === "All" ? "#F4F1EA" : "transparent" }}
-              >
-                All
-              </button>
-              {CATEGORIES.slice(0, 12).map((category) => (
-                <button
-                  key={category}
-                  onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
-                  className="hover:underline shrink-0"
-                  style={{ fontWeight: categoryFilter === category ? 700 : 400 }}
-                >
-                  {category}
+            {currentUser ? (
+              <div className="flex items-center gap-2 ml-1 pl-2" style={{ borderLeft: "1px solid #3A4351" }}>
+                <span className="text-sm hidden sm:inline" style={{ color: "#C9CCD3" }}>
+                  {currentMember?.displayName}
+                </span>
+                <button onClick={logout} aria-label="Log out" className="p-2 rounded-lg" style={{ color: "#C9CCD3" }}>
+                  <LogOut size={16} />
                 </button>
-              ))}
-            </div>
-          </div>
-        </header>
-      )}
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setAuthMode("register");
+                  setAuthError("");
+                  setAuthReturnView(view);
+                  setView("signup");
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ml-1"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                <User size={16} />
+                Log in
+              </button>
+            )}
+          </nav>
+        </div>
+      </header>
 
       {notifPanelOpen && currentUser && (
         <div
@@ -8609,298 +7095,82 @@ export default function Stallyard() {
               </div>
             )
           )}
-        {view === "categories" && (
-          <section className="max-w-6xl mx-auto">
-            <div className="mb-8">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Shop Stallyard</p>
-              <h1 className="text-3xl sm:text-4xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Categories</h1>
-              <p className="mt-2 text-sm max-w-2xl" style={{ color: SLATE }}>Browse by main category, then choose a subcategory to see active listings across Stallyard.</p>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {CATEGORIES.map((category) => (
-                <div key={category} className="rounded-2xl border bg-white p-5" style={{ borderColor: "#DDD8CC" }}>
-                  <button
-                    type="button"
-                    onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setSearch(""); setView("browse"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                    className="w-full flex items-center gap-3 text-left group"
-                  >
-                    <span className="w-11 h-11 rounded-full flex items-center justify-center text-xl shrink-0" style={{ backgroundColor: "#F5F1E8" }} aria-hidden="true">{CATEGORY_ICON[category] || "📦"}</span>
-                    <span className="font-semibold text-lg group-hover:underline" style={{ color: INK }}>{category}</span>
-                  </button>
-                  <div className="mt-4 flex flex-wrap gap-x-3 gap-y-2">
-                    {(SUBCATEGORIES[category] || []).map((subcategory) => (
-                      <button
-                        key={subcategory}
-                        type="button"
-                        onClick={() => {
-                          setCategoryFilter(category);
-                          setSubcategoryFilter(subcategory);
-                          setSearch("");
-                          setSelected(null);
-                          setView("browse");
-                          window.scrollTo({ top: 0, behavior: "smooth" });
-                        }}
-                        className="text-sm text-left hover:underline"
-                        style={{ color: SLATE }}
-                      >
-                        {subcategory}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+        {membersLoaded && noAdminExists && currentUser && !currentMember?.isAdmin && (
+          <div
+            className="mb-6 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
+            style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
+          >
+            <p className="text-sm" style={{ color: INK }}>
+              This marketplace doesn't have an admin yet.
+            </p>
+            <button
+              onClick={claimAdmin}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium"
+              style={{ backgroundColor: INK, color: "white" }}
+            >
+              Claim admin access
+            </button>
+          </div>
         )}
-
-        {view === "how-it-works" && (
-          <section className="max-w-5xl mx-auto">
-            <div className="text-center mb-10">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Simple. Secure. Built for Nigeria.</p>
-              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>How Stallyard works</h1>
-              <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Buy and sell across Nigeria with secure Paystack payments, a buyer delivery token, and proof of delivery before seller funds are released.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
-              {[
-                { number: "1", title: "Find an item", text: "Browse active Stallyard listings, search by keyword, or shop by category and subcategory." },
-                { number: "2", title: "Pay securely", text: "Complete checkout in Nigerian naira through Paystack. Stallyard does not support cash on delivery." },
-                { number: "3", title: "Receive your order", text: "The buyer receives a unique 10-digit delivery token after payment. Keep the token private until the item is physically delivered." },
-                { number: "4", title: "Confirm delivery", text: "At delivery, the buyer gives the token to the seller. The seller enters the token and uploads a delivery photo. If the token is valid, proof is present, and there is no active dispute or return, the seller payment is released." },
-              ].map((step) => (
-                <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
-                  <div className="flex items-start gap-4">
-                    <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 font-bold text-lg" style={{ backgroundColor: MARIGOLD, color: INK }}>{step.number}</div>
-                    <div>
-                      <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{step.title}</h2>
-                      <p className="text-sm leading-6" style={{ color: SLATE }}>{step.text}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-2xl border p-6 sm:p-8 mb-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
-              <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>Important things to know</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-sm leading-6" style={{ color: SLATE }}>
-                <div className="flex gap-3"><span aria-hidden="true">🇳🇬</span><span><strong style={{ color: INK }}>Nigeria only:</strong> Stallyard is for buyers and sellers in Nigeria and marketplace payments are in naira.</span></div>
-                <div className="flex gap-3"><span aria-hidden="true">✓</span><span><strong style={{ color: INK }}>Verified sellers:</strong> sellers must complete Stallyard verification before they can list items.</span></div>
-                <div className="flex gap-3"><span aria-hidden="true">🔒</span><span><strong style={{ color: INK }}>No cash on delivery:</strong> payments are processed electronically through Paystack.</span></div>
-                <div className="flex gap-3"><span aria-hidden="true">⚖️</span><span><strong style={{ color: INK }}>Disputes and returns:</strong> an active dispute or return blocks seller payment release while the issue is reviewed.</span></div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
-              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Ready to use Stallyard?</h2>
-              <p className="mt-2 text-sm" style={{ color: "#C9CCD3" }}>Browse active listings or create an account to get started.</p>
-              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setSearch(""); setSelected(null); setView("browse"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg font-semibold"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  Browse listings
-                </button>
-                {!currentUser && (
-                  <button
-                    type="button"
-                    onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                    className="w-full sm:w-auto px-5 py-2.5 rounded-lg border font-semibold"
-                    style={{ borderColor: "#667085", color: "#FFFFFF" }}
-                  >
-                    Create an account
-                  </button>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {view === "create-account" && (
-          <section className="max-w-6xl mx-auto">
-            <div className="text-center mb-10">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Join Stallyard</p>
-              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Create your Stallyard account</h1>
-              <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Choose the account path that fits what you want to do. Stallyard is a Nigeria-only marketplace and marketplace payments are in naira.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
-              {[
-                {
-                  intent: "buyer",
-                  icon: "🛍️",
-                  title: "Create a buyer account",
-                  text: "Shop active listings, save items, place orders, track delivery and use your private delivery token at handoff.",
-                  button: "Create buyer account",
-                },
-                {
-                  intent: "seller",
-                  icon: "🏷️",
-                  title: "Create a seller account",
-                  text: "Create a personal account, complete seller verification, then list products and receive payouts after valid delivery confirmation.",
-                  button: "Create seller account",
-                },
-                {
-                  intent: "business",
-                  icon: "🏢",
-                  title: "Create a business account",
-                  text: "Register your business/stall profile, complete the required verification, and sell under your business identity on Stallyard.",
-                  button: "Create business account",
-                },
-              ].map((option) => (
-                <div key={option.intent} className="rounded-2xl border bg-white p-6 flex flex-col" style={{ borderColor: "#DDD8CC" }}>
-                  <div className="w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">{option.icon}</div>
-                  <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{option.title}</h2>
-                  <p className="text-sm leading-6 mb-6 flex-1" style={{ color: SLATE }}>{option.text}</p>
-                  <button
-                    type="button"
-                    onClick={() => openRegistration(option.intent)}
-                    className="w-full px-4 py-2.5 rounded-lg font-semibold text-sm"
-                    style={{ backgroundColor: MARIGOLD, color: INK }}
-                  >
-                    {option.button}
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-2xl border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
-              <div className="p-6 sm:p-8 border-b" style={{ borderColor: "#EEE9DE", backgroundColor: "#FFF9EE" }}>
-                <h2 className="text-2xl sm:text-3xl font-semibold" style={{ color: INK }}>What you’ll need to sign up</h2>
-                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Basic account creation is quick. Seller and business accounts require additional verification before listings can go live.</p>
-              </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
-                <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
-                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Buyer account</h3>
-                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Username and a strong password</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Working email address and email verification</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>First and last name</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Nigerian phone number and Nigeria residence details for account/checkout use</span></li>
-                  </ul>
-                </div>
-
-                <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
-                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Seller verification</h3>
-                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Everything needed for a buyer account</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Valid government-issued ID</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Verified phone number and Nigerian address/profile details</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>One bank statement to support seller verification and account-tenure review</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Seller approval is required before publishing listings</span></li>
-                  </ul>
-                </div>
-
-                <div className="p-6 sm:p-7">
-                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Business account</h3>
-                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business or stall name</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business/office location in Nigeria</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Representative’s name, phone number and government-issued ID</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Bank statement and seller-verification information before selling</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Payout bank details are added securely for seller withdrawals/payouts</span></li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-8 rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4" style={{ backgroundColor: INK }}>
-              <div>
-                <h2 className="text-xl sm:text-2xl font-semibold text-white">Already have a Stallyard account?</h2>
-                <p className="mt-1 text-sm" style={{ color: "#C9CCD3" }}>Sign in and continue where you left off.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setAuthMode("login"); setAuthError(""); setAuthReturnView("browse"); setView("signin"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="px-5 py-2.5 rounded-lg font-semibold shrink-0"
-                style={{ backgroundColor: MARIGOLD, color: INK }}
-              >
-                Sign in
-              </button>
-            </div>
-          </section>
-        )}
-
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] lg:grid-rows-2 gap-4">
-                {homepageAds.map((ad) => {
-                  const isPrimary = ad.slot === 1;
-                  const card = (
-                    <div
-                      className={`relative overflow-hidden rounded-2xl border bg-white ${isPrimary ? "lg:row-span-2" : ""}`}
-                      style={{
-                        borderColor: "#DDD8CC",
-                        minHeight: isPrimary ? "360px" : "172px",
-                      }}
-                    >
-                      {ad.imageUrl ? (
-                        isPrimary && ad.mediaType === "video" ? (
-                          <video
-                            src={ad.imageUrl}
-                            poster={ad.posterUrl || undefined}
-                            autoPlay
-                            muted
-                            loop
-                            playsInline
-                            preload="metadata"
-                            aria-label="Stallyard featured video promotion"
-                            className="absolute inset-0 w-full h-full object-cover"
-                          />
-                        ) : (
-                          <img
-                            src={ad.imageUrl}
-                            alt={`Stallyard featured promotion ${ad.slot}`}
-                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
-                          />
-                        )
-                      ) : (
-                        <div
-                          className="absolute inset-0 flex items-center justify-center"
-                          style={{ background: ad.slot === 1 ? "#EFE7D6" : ad.slot === 2 ? "#E7EFE8" : "#F4E5E2" }}
-                        >
-                          <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                  return ad.linkUrl ? (
-                    <a
-                      key={ad.slot}
-                      href={ad.linkUrl}
-                      className={isPrimary ? "lg:row-span-2 block" : "block"}
-                      aria-label={`Open featured promotion ${ad.slot}`}
-                    >
-                      {card}
-                    </a>
-                  ) : (
-                    <div key={ad.slot} className={isPrimary ? "lg:row-span-2" : ""}>{card}</div>
-                  );
-                })}
+              <div className="text-center py-10 mb-8 rounded-2xl" style={{ backgroundColor: "#EFE7D6" }}>
+                <h2
+                  className="text-3xl sm:text-4xl mb-2 px-4"
+                  style={{ fontFamily: "'DM Serif Display', serif", color: INK }}
+                >
+                  Find something good today
+                </h2>
+                <p className="text-sm mb-6" style={{ color: SLATE }}>
+                  Handmade, vintage, and everyday finds from real sellers.
+                </p>
+                <div className="relative max-w-xl mx-auto px-4">
+                  <Search
+                    size={20}
+                    className="absolute left-8 top-1/2 -translate-y-1/2"
+                    style={{ color: SLATE }}
+                  />
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search the stalls..."
+                    className="w-full pl-12 pr-4 py-3.5 rounded-full border outline-none text-base shadow-sm"
+                    style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}
+                  />
+                </div>
               </div>
             )}
 
-            {categoryFilter !== "All" && (
-              <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3" style={{ borderColor: "#DDD8CC" }}>
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-2xl" aria-hidden="true">{CATEGORY_ICON[categoryFilter] || "📦"}</span>
-                  <div className="min-w-0">
-                    <p className="text-xs" style={{ color: SLATE }}>Browsing category</p>
-                    <p className="font-semibold truncate" style={{ color: INK }}>{categoryFilter}</p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCategoryFilter("All")}
-                  className="text-sm font-medium underline shrink-0"
-                  style={{ color: SLATE }}
-                >
-                  View all
-                </button>
+            <div className="mb-10 -mx-1 overflow-x-auto">
+              <div className="flex gap-4 px-1 pb-2" style={{ minWidth: "max-content" }}>
+                {CATEGORIES.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCategoryFilter(categoryFilter === c ? "All" : c)}
+                    className="flex flex-col items-center gap-2 shrink-0"
+                    style={{ width: "84px" }}
+                  >
+                    <div
+                      className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-transform"
+                      style={{
+                        backgroundColor: categoryFilter === c ? CATEGORY_COLOR[c] : "white",
+                        border: `2px solid ${categoryFilter === c ? CATEGORY_COLOR[c] : "#DDD8CC"}`,
+                        transform: categoryFilter === c ? "scale(1.05)" : "scale(1)",
+                      }}
+                    >
+                      {CATEGORY_ICON[c]}
+                    </div>
+                    <span
+                      className="text-xs text-center leading-tight"
+                      style={{ color: categoryFilter === c ? INK : SLATE, fontWeight: categoryFilter === c ? 600 : 500 }}
+                    >
+                      {c}
+                    </span>
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
 
             {isHomeState && featuredPicks.length > 0 && (
               <div className="mb-10">
@@ -9013,7 +7283,7 @@ export default function Stallyard() {
                     min="0"
                     value={priceMin}
                     onChange={(e) => setPriceMin(e.target.value)}
-                    placeholder="₦0"
+                    placeholder="$0"
                     className="w-24 px-2 py-1.5 rounded-lg border outline-none text-sm"
                     style={{ borderColor: "#DDD8CC" }}
                   />
@@ -9066,20 +7336,6 @@ export default function Stallyard() {
               </div>
             )}
 
-            {categoryFilter !== "All" && (SUBCATEGORIES[categoryFilter] || []).length > 0 && (
-              <div className="mb-4">
-                <label className="block text-xs font-semibold mb-1" style={{ color: SLATE }}>Subcategory</label>
-                <select
-                  value={subcategoryFilter}
-                  onChange={(e) => setSubcategoryFilter(e.target.value)}
-                  className="w-full sm:w-auto px-3 py-2 rounded-lg border bg-white text-sm"
-                  style={{ borderColor: "#DDD8CC", color: INK }}
-                >
-                  <option value="All">All {categoryFilter}</option>
-                  {(SUBCATEGORIES[categoryFilter] || []).map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-            )}
             {categoryFilter !== "All" && (
               <button
                 onClick={() => setCategoryFilter("All")}
@@ -9131,181 +7387,6 @@ export default function Stallyard() {
           </>
         )}
 
-        {view === "shipping-delivery" && (
-          <section className="max-w-6xl mx-auto">
-            <div className="text-center mb-10">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Shipping & delivery</p>
-              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>From seller to buyer, safely</h1>
-              <p className="mt-4 text-sm sm:text-base max-w-3xl mx-auto leading-7" style={{ color: SLATE }}>
-                Stallyard is a Nigeria-only marketplace. Sellers arrange delivery, buyers keep their delivery token private until the item is physically received, and seller funds stay protected until the delivery checks are complete.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
-              {[
-                { number: "1", title: "Seller prepares the order", text: "After a paid order appears, the seller prepares the item for delivery and adds carrier or tracking information when available." },
-                { number: "2", title: "Buyer follows the order", text: "The buyer can check the order status in Stallyard. The private 10-digit delivery token must not be shared while the item is still in transit." },
-                { number: "3", title: "Buyer receives the item", text: "Only after the item is physically delivered should the buyer give the delivery token to the seller." },
-                { number: "4", title: "Seller confirms delivery", text: "The seller enters the buyer's token and uploads a delivery photo. If the token is valid, proof is present, and there is no active dispute or return, the seller payment can be released." },
-              ].map((step) => (
-                <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
-                  <div className="flex items-start gap-4">
-                    <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 font-bold text-lg" style={{ backgroundColor: MARIGOLD, color: INK }}>{step.number}</div>
-                    <div>
-                      <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>{step.title}</h2>
-                      <p className="text-sm leading-6" style={{ color: SLATE }}>{step.text}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
-              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
-                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>For buyers</h2>
-                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Keep your 10-digit delivery token private until the item is actually in your possession.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Inspect the delivered item before handing the token to the seller.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Use your Stallyard order page to follow order and delivery status.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>If an item is late, missing, damaged, or significantly not as described, use Stallyard's support/dispute process instead of giving the token early.</span></li>
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
-                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>For sellers</h2>
-                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Package the item securely and keep delivery/tracking information accurate when available.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Never ask the buyer for the delivery token before the item is physically delivered.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Enter the token only at delivery and upload a clear delivery photo as proof.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Do not mark an item delivered before actual delivery. An active dispute or return keeps the payment locked.</span></li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border p-6 sm:p-8 mb-8" style={{ borderColor: "#E7C8C5", backgroundColor: "#FFF7F6" }}>
-              <h2 className="text-2xl font-semibold mb-4" style={{ color: INK }}>If something goes wrong</h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm leading-6" style={{ color: SLATE }}>
-                <div><strong style={{ color: INK }}>Late or missing delivery:</strong> check the order status and tracking information first, then contact support if the delivery cannot be resolved.</div>
-                <div><strong style={{ color: INK }}>Damaged or wrong item:</strong> do not give the delivery token simply to complete the transaction. Use the return/dispute process where applicable.</div>
-                <div><strong style={{ color: INK }}>Active dispute or return:</strong> seller payment remains locked while the case is being reviewed.</div>
-                <div><strong style={{ color: INK }}>No cash on delivery:</strong> marketplace payments are processed electronically through Paystack.</div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
-              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Need to check an order?</h2>
-              <p className="mt-2 text-sm" style={{ color: "#C9CCD3" }}>Open your Stallyard orders to review delivery status, or contact support if you need help.</p>
-              <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!currentUser) {
-                      setAuthMode("login");
-                      setAuthError("");
-                      setAuthReturnView("orders");
-                      setView("signin");
-                    } else {
-                      setView("orders");
-                    }
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg font-semibold"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  Track your orders
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setView("help"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-lg border font-semibold"
-                  style={{ borderColor: "#667085", color: "#FFFFFF" }}
-                >
-                  Contact support
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {view === "become-seller" && (
-          <section className="max-w-6xl mx-auto">
-            <div className="text-center mb-10">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Sell on Stallyard</p>
-              <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Become a Stallyard seller</h1>
-              <p className="mt-4 text-sm sm:text-base max-w-3xl mx-auto leading-7" style={{ color: SLATE }}>
-                Reach buyers across Nigeria, list your products, and get paid after a secure delivery handoff. Seller verification is required before any listing can go live.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-10">
-              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
-                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">✓</div>
-                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Get verified first</h2>
-                <p className="text-sm leading-6" style={{ color: SLATE }}>Stallyard reviews seller information before selling is enabled. This helps protect buyers and the marketplace.</p>
-              </div>
-              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
-                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">5%</div>
-                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Simple selling fee</h2>
-                <p className="text-sm leading-6" style={{ color: SLATE }}>Stallyard charges a 5% commission on completed sales. Marketplace payments are processed in Nigerian naira.</p>
-              </div>
-              <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
-                <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">₦</div>
-                <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Get paid after delivery</h2>
-                <p className="text-sm leading-6" style={{ color: SLATE }}>At delivery, the buyer gives you their private token. You enter it and upload the delivery photo. If there is no active dispute or return, your payment can be released.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
-              <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
-                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>What you’ll need</h2>
-                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A Stallyard account with your name and email</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A verified Nigerian phone number</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your address in Nigeria</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A valid government-issued ID</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>One bank statement showing your account information and account history</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your Nigerian payout bank details</span></li>
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border p-6 sm:p-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
-                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>How selling works</h2>
-                <ol className="space-y-4 text-sm leading-6" style={{ color: SLATE }}>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>1.</span><span>Create your Stallyard account and submit seller verification.</span></li>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>2.</span><span>After approval, create your listing with photos, price, category and subcategory.</span></li>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>3.</span><span>The buyer pays electronically through Paystack. Stallyard does not use cash on delivery.</span></li>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>4.</span><span>Deliver the item, enter the buyer’s delivery token and upload the delivery photo.</span></li>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>5.</span><span>If the delivery checks pass and there is no active dispute or return, the seller payment is released.</span></li>
-                </ol>
-              </div>
-            </div>
-
-            <div className="rounded-2xl p-7 sm:p-9 text-center" style={{ backgroundColor: INK }}>
-              <h2 className="text-2xl sm:text-3xl font-semibold text-white">Ready to start selling?</h2>
-              <p className="mt-2 text-sm max-w-2xl mx-auto" style={{ color: "#C9CCD3" }}>
-                Seller verification must be approved before your first listing can go live.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!currentUser) {
-                    openRegistration("seller");
-                    return;
-                  }
-                  setSelected(null);
-                  setView("sell");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className="mt-6 px-6 py-3 rounded-lg font-semibold"
-                style={{ backgroundColor: MARIGOLD, color: INK }}
-              >
-                {currentUser ? (currentMember?.isApproved === false ? "Start seller verification" : "Create a listing") : "Start seller registration"}
-              </button>
-              <p className="text-xs mt-4" style={{ color: "#8A93A3" }}>Nigeria-only marketplace · Payments in naira · 5% commission on completed sales</p>
-            </div>
-          </section>
-        )}
-
         {view === "sell" && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
@@ -9346,7 +7427,7 @@ export default function Stallyard() {
               !currentMember?.hasAppliedToSell && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm mb-2" style={{ color: INK }}>
-                  Selling on Stallyard requires seller verification and admin approval. Apply for a seller account to get started.
+                  Selling outside the US requires admin approval. Apply for a seller account to get started.
                 </p>
                 <div className="mb-3">
                   <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
@@ -9422,7 +7503,7 @@ export default function Stallyard() {
             {currentUser && needsIdVerification && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm mb-2" style={{ color: INK }}>
-                  Complete seller verification before publishing or editing listings.
+                  You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales. Add ID verification to keep publishing and editing listings.
                 </p>
                 <button
                   onClick={() => setIdVerifyOpen(true)}
@@ -9468,7 +7549,7 @@ export default function Stallyard() {
                 <div className="flex gap-2">
                   {[
                     { id: "fixed", label: "Fixed price" },
-                    ...(false ? [] : [{ id: "auction", label: "Auction" }]),
+                    ...(isUnitedStates(currentMember?.country) ? [] : [{ id: "auction", label: "Auction" }]),
                   ].map((opt) => (
                     <button
                       key={opt.id}
@@ -9526,7 +7607,6 @@ export default function Stallyard() {
                       setForm({
                         ...form,
                         category: e.target.value,
-                        subcategory: "",
                         emoji:
                           e.target.value === "Auto Parts" && form.emoji === "📦"
                             ? "🔧"
@@ -9545,22 +7625,6 @@ export default function Stallyard() {
                     ))}
                   </select>
                 </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Subcategory
-                </label>
-                <select
-                  value={form.subcategory}
-                  onChange={(e) => setForm({ ...form, subcategory: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
-                  style={{ borderColor: "#DDD8CC" }}
-                >
-                  <option value="">Choose a subcategory</option>
-                  {(SUBCATEGORIES[form.category] || []).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
               </div>
               <div className="flex gap-3 flex-wrap">
                 <div className="flex-1 min-w-[100px]">
@@ -9608,7 +7672,7 @@ export default function Stallyard() {
                   Shipping fee
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
+                  <span style={{ color: SLATE }}>{CURRENCIES[form.currency]?.symbol || "$"}</span>
                   <input
                     type="number"
                     min="0"
@@ -9945,14 +8009,9 @@ export default function Stallyard() {
         {view === "dashboard" && (
           <div>
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-              <div>
-                <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-                  Seller dashboard
-                </h2>
-                <p className="text-sm mt-1" style={{ color: SLATE }}>
-                  Manage your listings, orders, deliveries, payouts, messages, and seller performance.
-                </p>
-              </div>
+              <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                My Stall
+              </h2>
               {currentUser && currentMember?.isApproved !== false && (
                 <button
                   onClick={() => {
@@ -9963,32 +8022,10 @@ export default function Stallyard() {
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
                   <Plus size={16} />
-                  Create a listing
+                  List new item
                 </button>
               )}
             </div>
-            {currentUser && currentMember?.isApproved !== false && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
-                {[
-                  { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Money", action: () => setView("wallet") },
-                  { label: "Messages", action: () => setView("messages") },
-                  { label: "My Stall", action: () => openStorefront(currentUser) },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={item.action}
-                    className="px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium bg-white text-left sm:text-center"
-                    style={{ borderColor: "#DDD8CC", color: INK }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
             {currentUser &&
               currentMember?.isApproved === false &&
               (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
@@ -9998,7 +8035,7 @@ export default function Stallyard() {
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
               >
                 <p className="text-sm" style={{ color: INK }}>
-                  Selling on Stallyard requires seller verification and admin approval.
+                  Selling outside the US requires admin approval.
                 </p>
                 <button
                   onClick={applyToSell}
@@ -10044,7 +8081,7 @@ export default function Stallyard() {
                 style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
               >
                 <p className="text-sm" style={{ color: INK }}>
-                  Complete seller verification before listing items.
+                  You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales — add ID verification to keep listing.
                 </p>
                 <button
                   onClick={() => setIdVerifyOpen(true)}
@@ -10067,10 +8104,10 @@ export default function Stallyard() {
                   </p>
                 ) : currentMember?.idVerificationExempt ? (
                   <p className="text-xs mt-1" style={{ color: SLATE }}>
-                    ID verification exemption on file
+                    ID verification not required (US resident)
                   </p>
                 ) : null}
-                <h3 id="seller-overview" className="text-sm font-semibold mb-3 mt-4 scroll-mt-24" style={{ color: INK }}>
+                <h3 className="text-sm font-semibold mb-3 mt-4" style={{ color: INK }}>
                   Overview
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
@@ -10085,16 +8122,19 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
                       {(() => {
-                        // Stallyard is Nigeria-only, so marketplace values are NGN.
+                        // A seller can list in more than one currency, so
+                        // this sums per-currency rather than mixing an NGN
+                        // listing's price into a USD listing's price under
+                        // one $ sign.
                         const byCurrency = {};
                         myListings.forEach((l) => {
-                          const cur = l.currency || "NGN";
+                          const cur = l.currency || "USD";
                           byCurrency[cur] = (byCurrency[cur] || 0) + Number(l.price || 0);
                         });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "NGN");
+                          : formatMoney(0, "USD");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -10104,18 +8144,20 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
                       {(() => {
-                        // Stallyard is Nigeria-only, so marketplace values are NGN.
+                        // Same reasoning as inventory value above — sum
+                        // per-currency rather than blending sales made in
+                        // different currencies into one number.
                         const byCurrency = {};
                         mySoldItems
                           .filter((i) => i.fulfillmentStatus !== "cancelled")
                           .forEach((i) => {
-                            const cur = i.currency || "NGN";
+                            const cur = i.currency || "USD";
                             byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
                           });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "NGN");
+                          : formatMoney(0, "USD");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -10262,7 +8304,7 @@ export default function Stallyard() {
                         className="text-xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}
                       >
-                        {formatMoney(walletNetAvailable, "NGN")}
+                        ${walletNetAvailable.toFixed(2)}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
                         available
@@ -10273,7 +8315,7 @@ export default function Stallyard() {
                         className="text-xl font-semibold"
                         style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
                       >
-                        {formatMoney(walletHeld, "NGN")}
+                        ${walletHeld.toFixed(2)}
                       </div>
                       <div className="text-xs" style={{ color: SLATE }}>
                         on hold
@@ -10292,7 +8334,7 @@ export default function Stallyard() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span style={{ color: SLATE }}>₦</span>
+                    <span style={{ color: SLATE }}>$</span>
                     <input
                       type="number"
                       min="0"
@@ -10334,7 +8376,7 @@ export default function Stallyard() {
                         .map((w) => (
                           <div key={w.id} className="flex items-center justify-between text-sm">
                             <span style={{ color: INK }}>
-                              {formatMoney(Number(w.amount), "NGN")} to your bank
+                              ${Number(w.amount).toFixed(2)} to your bank
                             </span>
                             <span className="text-xs" style={{ color: SLATE }}>
                               Requested {new Date(w.requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
@@ -10420,7 +8462,7 @@ export default function Stallyard() {
                   </div>
                 </div>
 
-                <div id="seller-listings" className="flex items-center gap-2 mb-3 overflow-x-auto scroll-mt-24">
+                <div className="flex items-center gap-2 mb-3 overflow-x-auto">
                   {LISTING_MANAGE_TABS.map((t) => {
                     const count =
                       t.key === "all" ? myListings.length : myListings.filter((l) => l.status === t.key).length;
@@ -10507,7 +8549,7 @@ export default function Stallyard() {
                             >
                               {quickEditId === l.id ? "Close" : "Quick edit"}
                             </button>
-                            {l.status === "active" && (
+                            {l.status === "approved" && (
                               <button
                                 onClick={() => pauseListing(l.id)}
                                 className="text-xs font-medium underline"
@@ -10525,7 +8567,7 @@ export default function Stallyard() {
                                 Resume
                               </button>
                             )}
-                            {l.status === "active" && (
+                            {l.status === "approved" && (
                               <button
                                 onClick={() => markListingSoldOut(l.id)}
                                 className="text-xs font-medium underline"
@@ -10611,8 +8653,8 @@ export default function Stallyard() {
                   </div>
                 )}
 
-                <h3 id="seller-sales" className="text-lg font-semibold mt-10 mb-3 scroll-mt-24" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
-                  Orders & delivery
+                <h3 className="text-lg font-semibold mt-10 mb-3" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+                  Sales
                 </h3>
                 {mySales.length > 0 && (
                   <div className="flex items-center gap-2 mb-3 overflow-x-auto">
@@ -10814,7 +8856,7 @@ export default function Stallyard() {
                                           className="inline-block px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer"
                                           style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
                                         >
-                                          {uploadingPodKey === trackKey ? "Uploading…" : "Add photo (optional)"}
+                                          {uploadingPodKey === trackKey ? "Uploading…" : "Add required delivery photo"}
                                           <input
                                             type="file"
                                             accept="image/*"
@@ -11178,7 +9220,7 @@ export default function Stallyard() {
                               {otherName}
                             </div>
                             <div className="text-xs truncate" style={{ color: SLATE }}>
-                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text) : ""}
+                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: $${lastMsg.amount.toFixed(2)}` : lastMsg.text) : ""}
                             </div>
                           </div>
                         </button>
@@ -11289,18 +9331,19 @@ export default function Stallyard() {
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
                       {(() => {
-                        // Stallyard is Nigeria-only, so purchase totals are NGN.
+                        // Sum per-currency rather than blending a USD
+                        // purchase and an NGN purchase into one number.
                         const byCurrency = {};
                         myPurchasedItems
                           .filter((i) => i.fulfillmentStatus !== "cancelled")
                           .forEach((i) => {
-                            const cur = i.currency || "NGN";
+                            const cur = i.currency || "USD";
                             byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
                           });
                         const entries = Object.entries(byCurrency);
                         return entries.length
                           ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "NGN");
+                          : formatMoney(0, "USD");
                       })()}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
@@ -11874,7 +9917,7 @@ export default function Stallyard() {
                 );
               }
               const sellerListings = listings.filter(
-                (l) => l.ownerUsername === viewingSeller && l.status === "active"
+                (l) => l.ownerUsername === viewingSeller && l.status === "approved"
               );
               const sellerRating = getSellerRating(viewingSeller);
               const reputation = getSellerReputation(viewingSeller);
@@ -12714,17 +10757,19 @@ export default function Stallyard() {
                         <input
                           value={addressDraft.zip}
                           onChange={(e) => setAddressDraft({ ...addressDraft, zip: e.target.value })}
-                          placeholder="Postal code"
+                          placeholder="ZIP"
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <input
-                          value="Nigeria"
-                          readOnly
-                          aria-label="Country"
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-gray-50"
-                          style={{ borderColor: "#DDD8CC", color: INK }}
-                        />
+                        <select
+                          value={addressDraft.country}
+                          onChange={(e) => setAddressDraft({ ...addressDraft, country: e.target.value })}
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                          style={{ borderColor: "#DDD8CC", color: addressDraft.country ? INK : SLATE }}
+                        >
+                          <option value="">Country</option>
+                          <option value="Nigeria">Nigeria</option>
+                        </select>
                       </div>
                       {addressError && (
                         <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
@@ -13223,7 +11268,7 @@ export default function Stallyard() {
                             <div className="text-xs truncate" style={{ color: SLATE }}>
                               {t.listingTitle}
                               {lastMsg
-                                ? ` — ${lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text}`
+                                ? ` — ${lastMsg.type === "offer" ? `Offer: $${lastMsg.amount.toFixed(2)}` : lastMsg.text}`
                                 : ""}
                             </div>
                           </div>
@@ -13895,9 +11940,8 @@ export default function Stallyard() {
               {[
                 { id: "overview", label: "Overview", requireSuperAdmin: true },
                 { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
-                { id: "members", label: `Members (${members.length})`, permission: "seller_verification" },
-                { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
-                { id: "orders", label: `Orders (${orders.length})`, permission: "order_access" },
+                { id: "members", label: `Members (${members.length})` },
+                { id: "orders", label: `Orders (${orders.length})` },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
                   id: "reports",
@@ -13921,7 +11965,6 @@ export default function Stallyard() {
                 },
                 { id: "settings", label: "Settings", permission: "finance_or_content" },
                 { id: "content", label: "Content", requireSuperAdmin: true },
-                { id: "homepageAds", label: "Homepage ads", requireSuperAdmin: true },
                 { id: "reconciliation", label: "Reconciliation", permission: "finance" },
                 { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
                 { id: "buyerRisk", label: "Buyer risk", requireSuperAdmin: true },
@@ -13935,8 +11978,6 @@ export default function Stallyard() {
                   label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
                   permission: "finance",
                 },
-                { id: "reportsExport", label: "Reports & exports", permission: "finance_or_seller" },
-                { id: "systemHealth", label: "System health", requireSuperAdmin: true },
                 { id: "auditLog", label: "Audit log", requireSuperAdmin: true },
               ]
                 .filter((t) => {
@@ -13945,11 +11986,8 @@ export default function Stallyard() {
                   if (t.permission === "finance_or_content") {
                     return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "content_management");
                   }
-                  if (t.permission === "finance_or_seller") {
-                    return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "seller_verification");
-                  }
                   if (t.permission) return hasAdminPermission(currentMember, t.permission);
-                  return true; // no permission listed = every admin role can view
+                  return true; // no permission listed = every admin role can view (accounts/orders)
                 })
                 .map((t) => (
                 <button
@@ -13957,11 +11995,9 @@ export default function Stallyard() {
                   onClick={() => {
                     setAdminTab(t.id);
                     if (t.id === "auditLog") fetchAuditLog();
-                    if (t.id === "staff") fetchAdminStaff();
                     if (t.id === "reconciliation") fetchReconciliation();
                     if (t.id === "sellerPerformance") fetchSellerPerformance();
                     if (t.id === "buyerRisk") fetchBuyerRisk();
-                    if (t.id === "systemHealth") fetchSystemHealth();
                   }}
                   className="px-3 py-1.5 rounded-full text-sm font-medium border"
                   style={{
@@ -13975,170 +12011,6 @@ export default function Stallyard() {
               ))}
             </div>
 
-
-            {adminTab === "homepageAds" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
-              <div>
-                <div className="mb-5">
-                  <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-                    Homepage ads
-                  </h3>
-                  <p className="text-sm mt-1" style={{ color: SLATE }}>
-                    Control the three clickable promotions shown at the top of the Stallyard homepage. Ad 1 can be an image or a short autoplay video; Ads 2 and 3 stay lightweight images.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                  {homepageAds.map((ad) => (
-                    <div key={ad.slot} className="rounded-xl border bg-white p-4" style={{ borderColor: "#DDD8CC" }}>
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <div>
-                          <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
-                          <p className="text-xs" style={{ color: SLATE }}>
-                            {ad.slot === 1 ? "Large feature — image or video" : "Small feature — image"}
-                          </p>
-                        </div>
-                        {ad.imageUrl && (
-                          <button
-                            type="button"
-                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
-                            className="text-xs underline"
-                            style={{ color: BERRY }}
-                          >
-                            Remove media
-                          </button>
-                        )}
-                      </div>
-
-                      {ad.slot === 1 && (
-                        <div className="grid grid-cols-2 gap-2 mb-3">
-                          {["image", "video"].map((type) => (
-                            <button
-                              key={type}
-                              type="button"
-                              onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === 1 ? {
-                                ...item,
-                                mediaType: type,
-                                imageUrl: item.mediaType === type ? item.imageUrl : "",
-                              } : item))}
-                              className="px-3 py-2 rounded-lg border text-sm font-medium"
-                              style={{
-                                borderColor: ad.mediaType === type ? MARIGOLD : "#DDD8CC",
-                                backgroundColor: ad.mediaType === type ? "#FBF0DC" : "white",
-                                color: INK,
-                              }}
-                            >
-                              {type === "image" ? "Image" : "Video"}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "16 / 9" : "16 / 9" }}>
-                        {ad.imageUrl ? (
-                          ad.slot === 1 && ad.mediaType === "video" ? (
-                            <video
-                              src={ad.imageUrl}
-                              poster={ad.posterUrl || undefined}
-                              muted
-                              loop
-                              playsInline
-                              controls
-                              preload="metadata"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
-                          )
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
-                            <ImageIcon size={32} />
-                          </div>
-                        )}
-                      </div>
-
-                      {ad.slot === 1 && ad.mediaType === "video" ? (
-                        <>
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Video</label>
-                          <label
-                            className="mb-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change video" : "Choose video"}
-                            <input
-                              type="file"
-                              accept="video/mp4,video/webm"
-                              className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdVideoSelect(e, ad.slot)}
-                            />
-                          </label>
-                          <p className="text-xs mb-3" style={{ color: SLATE }}>MP4 or WebM, ideally 10–20 seconds, maximum 40 MB. It will autoplay muted and loop.</p>
-
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Poster image (optional)</label>
-                          {ad.posterUrl && (
-                            <div className="mb-2 rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
-                              <img src={ad.posterUrl} alt="Ad 1 video poster" className="w-full h-24 object-cover" />
-                            </div>
-                          )}
-                          <label
-                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            <ImageIcon size={16} />
-                            {ad.posterUrl ? "Change poster" : "Choose poster image"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdPosterSelect(e, ad.slot)}
-                            />
-                          </label>
-                        </>
-                      ) : (
-                        <>
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
-                          <label
-                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            <ImageIcon size={16} />
-                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
-                            />
-                          </label>
-                        </>
-                      )}
-
-                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
-                      <input
-                        value={ad.linkUrl}
-                        onChange={(e) => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, linkUrl: e.target.value } : item))}
-                        placeholder="https://example.com or /category/..."
-                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-
-                      <button
-                        type="button"
-                        onClick={() => saveHomepageAd(ad.slot)}
-                        disabled={homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
-                        className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-                        style={{ backgroundColor: MARIGOLD, color: INK }}
-                      >
-                        {homepageAdSaving === ad.slot ? "Saving…" : "Save ad"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {adminTab === "overview" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div>
                 <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
@@ -14146,17 +12018,21 @@ export default function Stallyard() {
                 </h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
                   {(() => {
-                    // Stallyard is Nigeria-only, so marketplace values are NGN.
+                    // Orders can be placed in more than one currency (USD,
+                    // NGN, etc), so these get summed per-currency rather
+                    // than mixed into one number under a single symbol —
+                    // adding a $1,000 order to a ₦1,000 order isn't $2,000
+                    // or ₦2,000, it's two separate totals.
                     const salesByCurrency = {};
                     const commissionByCurrency = {};
                     orders.forEach((o) => {
-                      const cur = o.currency || "NGN";
+                      const cur = o.currency || "USD";
                       salesByCurrency[cur] = (salesByCurrency[cur] || 0) + (o.total || 0);
                       commissionByCurrency[cur] = (commissionByCurrency[cur] || 0) + (o.commissionAmount || 0);
                     });
                     const formatByCurrency = (byCurrency) => {
                       const entries = Object.entries(byCurrency);
-                      if (entries.length === 0) return formatMoney(0, "NGN");
+                      if (entries.length === 0) return formatMoney(0, "USD");
                       return entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ");
                     };
                     return [
@@ -14173,7 +12049,7 @@ export default function Stallyard() {
                       { label: "Total users", value: members.length, color: INK, tab: "members" },
                       {
                         label: "Approved listings",
-                        value: listings.filter((l) => l.status === "active").length,
+                        value: listings.filter((l) => l.status === "approved").length,
                         color: INK,
                         tab: "listings",
                       },
@@ -14377,7 +12253,7 @@ export default function Stallyard() {
                     style={{ borderColor: "#DDD8CC", color: INK }} />
                   <select value={adminListingStatusFilter} onChange={(e) => setAdminListingStatusFilter(e.target.value)}
                     className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="active">Active</option>
+                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Active</option>
                     <option value="draft">Draft</option><option value="paused">Paused</option><option value="sold">Sold</option>
                     <option value="rejected">Rejected</option><option value="removed">Taken down</option>
                   </select>
@@ -14475,13 +12351,6 @@ export default function Stallyard() {
                         style={{ color: SLATE }}
                       >
                         {l.isFeatured ? "Unfeature" : "Feature"}
-                      </button>
-                      <button
-                        onClick={() => openAdminNotes("listing", l.id, `Listing: ${l.title}`)}
-                        className="text-xs font-medium underline"
-                        style={{ color: SLATE }}
-                      >
-                        Internal notes
                       </button>
                       <button
                         onClick={() => startEdit(l, true)}
@@ -14607,7 +12476,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "members" && hasAdminPermission(currentMember, "seller_verification") && (
+            {adminTab === "members" && (
               <div>
                 {hasAdminPermission(currentMember, "user_management") && (
                   <button
@@ -14704,15 +12573,6 @@ export default function Stallyard() {
                             style={{ color: INK }}
                           >
                             {docsOpen ? "Hide documents" : `View documents${m.licensePhotos?.length ? ` (${m.licensePhotos.length} photo${m.licensePhotos.length > 1 ? "s" : ""})` : ""}`}
-                          </button>
-                        )}
-                        {(hasAdminPermission(currentMember, "user_management") || hasAdminPermission(currentMember, "seller_verification")) && (
-                          <button
-                            onClick={() => openAdminNotes("member", m.backendId, `Member: ${m.displayName} (@${m.username})`)}
-                            className="text-xs font-medium underline mt-1 ml-3"
-                            style={{ color: SLATE }}
-                          >
-                            Internal notes
                           </button>
                         )}
                       </div>
@@ -14865,179 +12725,6 @@ export default function Stallyard() {
                 </div>
               </div>
             )}
-
-            {adminTab === "staff" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
-              const q = adminStaffSearch.trim().toLowerCase();
-              const filtered = adminStaff.filter((s) => {
-                const active = !!s.is_admin;
-                const role = active ? (s.admin_role || "super_admin") : "revoked";
-                if (adminStaffFilter === "active" && !active) return false;
-                if (adminStaffFilter === "revoked" && active) return false;
-                if (adminStaffFilter === "no2fa" && !!s.two_factor_enabled) return false;
-                if (adminStaffFilter === "suspended" && !s.is_suspended) return false;
-                if (adminStaffFilter !== "all" && !["active", "revoked", "no2fa", "suspended"].includes(adminStaffFilter) && role !== adminStaffFilter) return false;
-                if (!q) return true;
-                return [s.display_name, s.username, s.email, role, ADMIN_ROLE_LABELS[role]].filter(Boolean).join(" ").toLowerCase().includes(q);
-              });
-              const activeCount = adminStaff.filter((s) => s.is_admin).length;
-              const mfaMissing = adminStaff.filter((s) => s.is_admin && !s.two_factor_enabled).length;
-              return (
-                <div>
-                  <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
-                    <div>
-                      <h3 className="text-lg font-semibold" style={{ color: INK }}>Admin / Staff Accounts</h3>
-                      <p className="text-sm mt-1" style={{ color: SLATE }}>
-                        Manage privileged staff access, roles, multi-factor status and active sessions. Super Admin can issue a 10-minute recovery password; role changes invalidate existing sessions automatically.
-                      </p>
-                    </div>
-                    <button onClick={fetchAdminStaff} className="px-3 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
-                      {loadingAdminStaff ? "Refreshing…" : "Refresh"}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-                    {[
-                      ["Active staff", activeCount],
-                      ["Former/revoked", Math.max(0, adminStaff.length - activeCount)],
-                      ["2FA attention", mfaMissing],
-                      ["Super Admins", adminStaff.filter((s) => s.is_admin && (!s.admin_role || s.admin_role === "super_admin")).length],
-                    ].map(([label, value]) => (
-                      <div key={label} className="p-3 bg-white border rounded-xl" style={{ borderColor: "#DDD8CC" }}>
-                        <div className="text-xs" style={{ color: SLATE }}>{label}</div>
-                        <div className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="flex gap-2 flex-wrap mb-4">
-                    <input
-                      value={adminStaffSearch}
-                      onChange={(e) => setAdminStaffSearch(e.target.value)}
-                      placeholder="Search staff name, username, email or role"
-                      className="px-3 py-2 rounded-lg border outline-none text-sm flex-1 min-w-[220px]"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
-                    <select value={adminStaffFilter} onChange={(e) => setAdminStaffFilter(e.target.value)} className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
-                      <option value="all">All staff</option>
-                      <option value="active">Active</option>
-                      <option value="revoked">Revoked</option>
-                      <option value="no2fa">2FA attention</option>
-                      <option value="suspended">Suspended</option>
-                      {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
-                    </select>
-                  </div>
-
-                  {adminStaffError && (
-                    <div className="p-3 rounded-lg border mb-4 text-sm" style={{ borderColor: BERRY, color: BERRY, backgroundColor: BERRY + "08" }}>
-                      {adminStaffError}
-                    </div>
-                  )}
-
-                  {!loadingAdminStaff && !adminStaffError && adminStaff.length === 0 && (
-                    <div className="p-5 rounded-xl border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: SLATE }}>
-                      No staff records loaded yet. Click Refresh.
-                    </div>
-                  )}
-
-                  <div className="space-y-3">
-                    {filtered.map((staff) => {
-                      const active = !!staff.is_admin;
-                      const role = active ? (staff.admin_role || "super_admin") : null;
-                      const isSelf = staff.username === currentUser;
-                      const expanded = expandedStaffId === staff.id;
-                      return (
-                        <div key={staff.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
-                          <div className="flex items-start justify-between gap-3 flex-wrap">
-                            <div className="min-w-0">
-                              <div className="font-semibold flex items-center gap-2 flex-wrap" style={{ color: INK }}>
-                                {staff.display_name || staff.username}
-                                {active ? <Tag color={SAGE}>Active staff</Tag> : <Tag color={SLATE}>Access revoked</Tag>}
-                                {staff.is_suspended && <Tag color={BERRY}>Suspended</Tag>}
-                                {active && staff.two_factor_enabled ? <Tag color={SAGE}>2FA on</Tag> : active ? <Tag color={BERRY}>2FA attention</Tag> : null}
-                                {isSelf && <Tag color={MARIGOLD}>You</Tag>}
-                              </div>
-                              <div className="text-xs mt-1" style={{ color: SLATE }}>@{staff.username} · {staff.email || "no email"}</div>
-                              <div className="text-xs mt-1" style={{ color: SLATE }}>
-                                Role: <strong>{active ? (ADMIN_ROLE_LABELS[role] || role) : "None"}</strong>
-                                {staff.last_login_at ? ` · Last login ${new Date(staff.last_login_at).toLocaleString()}` : " · No recorded login"}
-                              </div>
-                              <div className="text-xs mt-1" style={{ color: SLATE }}>
-                                {staff.last_action_at ? `Last admin action ${new Date(staff.last_action_at).toLocaleString()}` : "No recorded admin actions"}
-                                {` · ${Number(staff.action_count || 0)} logged action${Number(staff.action_count || 0) === 1 ? "" : "s"}`}
-                              </div>
-                            </div>
-
-                            {!isSelf && (
-                              <div className="flex gap-2 flex-wrap items-end">
-                                <div>
-                                  <label className="block text-[11px] mb-1" style={{ color: SLATE }}>Role</label>
-                                  <select
-                                    value={role || ""}
-                                    onChange={async (e) => {
-                                      const nextRole = e.target.value || null;
-                                      const reason = window.prompt("Optional reason for this role/access change:", "") || "";
-                                      const ok = await adminSetRole(staff.username, nextRole, reason);
-                                      if (ok) await fetchAdminStaff();
-                                    }}
-                                    className="px-2 py-1.5 rounded-lg border bg-white text-xs"
-                                    style={{ borderColor: "#DDD8CC" }}
-                                  >
-                                    <option value="">No admin access</option>
-                                    {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
-                                  </select>
-                                </div>
-                                {active && (
-                                  <>
-                                    <button
-                                      onClick={() => generateAdminTemporaryPassword(staff)}
-                                      disabled={adminTempPasswordGeneratingId === staff.id}
-                                      className="px-3 py-2 rounded-lg border text-xs font-medium disabled:opacity-50"
-                                      style={{ borderColor: MARIGOLD, color: INK }}
-                                    >
-                                      {adminTempPasswordGeneratingId === staff.id ? "Generating…" : "10-min password"}
-                                    </button>
-                                    <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
-                                      Revoke sessions
-                                    </button>
-                                  </>
-                                )}
-                                <button
-                                  onClick={async () => { await adminToggleSuspend(staff.username); await fetchAdminStaff(); }}
-                                  className="px-3 py-2 rounded-lg border text-xs font-medium"
-                                  style={{ borderColor: staff.is_suspended ? SAGE : BERRY, color: staff.is_suspended ? SAGE : BERRY }}
-                                >
-                                  {staff.is_suspended ? "Unsuspend" : "Suspend"}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-
-                          <button onClick={() => setExpandedStaffId(expanded ? null : staff.id)} className="text-xs underline mt-3" style={{ color: SLATE }}>
-                            {expanded ? "Hide role history" : "View role history"}
-                          </button>
-                          {expanded && (
-                            <div className="mt-3 pt-3 space-y-2" style={{ borderTop: "1px solid #EEE9DE" }}>
-                              {(staff.role_history || []).length === 0 ? (
-                                <p className="text-xs" style={{ color: SLATE }}>No role changes recorded since Staff Management was enabled.</p>
-                              ) : (staff.role_history || []).map((h) => (
-                                <div key={h.id} className="text-xs p-2 rounded-lg" style={{ backgroundColor: CANVAS, color: SLATE }}>
-                                  <strong style={{ color: INK }}>{h.old_role ? (ADMIN_ROLE_LABELS[h.old_role] || h.old_role) : "No admin access"}</strong>
-                                  {" → "}
-                                  <strong style={{ color: INK }}>{h.new_role ? (ADMIN_ROLE_LABELS[h.new_role] || h.new_role) : "No admin access"}</strong>
-                                  {` · ${new Date(h.created_at).toLocaleString()}`}
-                                  {h.changed_by_username ? ` · by @${h.changed_by_username}` : ""}
-                                  {h.reason ? <div className="mt-1">Reason: {h.reason}</div> : null}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
 
             {adminTab === "sellerPerformance" && hasAdminPermission(currentMember, "seller_verification") && (
               <div>
@@ -15311,7 +12998,7 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "orders" && hasAdminPermission(currentMember, "order_access") && (() => {
+            {adminTab === "orders" && (() => {
               const activeOrder = activeAdminOrderId != null
                 ? orders.find((o) => Number(o.id) === Number(activeAdminOrderId))
                 : null;
@@ -15480,8 +13167,6 @@ export default function Stallyard() {
                         <h4 className="font-semibold mb-2" style={{ color: INK }}>Refund</h4>
                         <div className="text-sm space-y-1" style={{ color: SLATE }}>
                           <div><strong style={{ color: INK }}>Status:</strong> {activeOrder.refundStatus || (activeOrder.paymentStatus === "refunded" ? "processed" : "No refund")}</div>
-                          {activeOrder.refundType && <div><strong style={{ color: INK }}>Type:</strong> {activeOrder.refundType === "partial" ? "Partial refund" : "Full refund"}</div>}
-                          {activeOrder.refundAmount > 0 && <div><strong style={{ color: INK }}>Amount:</strong> {formatMoney(activeOrder.refundAmount, activeOrder.currency)}</div>}
                           {activeOrder.refundReason && <div><strong style={{ color: INK }}>Reason:</strong> {activeOrder.refundReason}</div>}
                           {activeOrder.paystackRefundId && <div><strong style={{ color: INK }}>Paystack refund ID:</strong> {activeOrder.paystackRefundId}</div>}
                           {activeOrder.refundRequestedAt && <div><strong style={{ color: INK }}>Requested:</strong> {new Date(activeOrder.refundRequestedAt).toLocaleString()}</div>}
@@ -15586,10 +13271,7 @@ export default function Stallyard() {
                           <div className="text-xs" style={{ color: SLATE }}>
                             Commission {formatMoney(Number(o.commissionAmount || 0), o.currency)} · Seller payable {formatMoney(Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0), o.currency)}
                           </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <button type="button" onClick={() => openAdminNotes("order", o.id, `Order ${orderNumber(o.id)}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
-                            <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
-                          </div>
+                          <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
                         </div>
                       </div>
                     ))}
@@ -16367,7 +14049,7 @@ export default function Stallyard() {
                   <div>
                     <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Dispute cases</h3>
                     <p className="text-xs" style={{ color: SLATE }}>
-                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. The dispute payment lock now stays on until the chosen financial outcome is actually completed. Paystack refunds resolve only after Paystack confirms processing; seller-release cases resolve in the same transaction as the release.
+                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. Resolving a case removes the dispute payment lock; refunds and manual releases remain separate money actions.
                     </p>
                   </div>
                   <div className="flex gap-2 text-xs">
@@ -16442,9 +14124,6 @@ export default function Stallyard() {
                       </button>
                       {expanded && (
                         <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
-                          <div className="flex justify-end mt-3">
-                            <button type="button" onClick={() => openAdminNotes("dispute", d.id, `Dispute case #${d.id}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
-                          </div>
                           <div className="grid md:grid-cols-2 gap-3 mt-4">
                             <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
                               <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Buyer statement</div>
@@ -16499,14 +14178,7 @@ export default function Stallyard() {
                               >
                                 <option value="open">Open</option>
                                 <option value="in_review">In review</option>
-                                <option
-                                  value="resolved"
-                                  disabled={
-                                    (resolutionValue === "buyer_refund" && o?.paymentStatus !== "refunded") ||
-                                    (resolutionValue === "seller_release" && o?.paymentStatus !== "released") ||
-                                    (resolutionValue === "partial_refund" && !(o?.refundType === "partial" && o?.refundStatus === "processed" && o?.paymentStatus === "released"))
-                                  }
-                                >Resolved</option>
+                                <option value="resolved">Resolved</option>
                               </select>
                             </label>
                             <label className="text-xs font-medium" style={{ color: INK }}>
@@ -16560,47 +14232,8 @@ export default function Stallyard() {
                             {o && ["held", "released"].includes(o.paymentStatus) && resolutionValue === "buyer_refund" && (
                               <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Send Paystack refund</button>
                             )}
-                            {o && o.paymentStatus === "refund_pending" && resolutionValue === "buyer_refund" && (
-                              <span className="text-xs" style={{ color: MARIGOLD }}>Waiting for Paystack to confirm the refund. The dispute remains locked.</span>
-                            )}
-                            {resolutionValue === "partial_refund" && o && (
-                              <div className="w-full p-3 rounded-lg border" style={{ borderColor: "#E8D7B5", backgroundColor: "#FFF9EE" }}>
-                                <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Partial refund through Paystack</div>
-                                <div className="flex gap-2 flex-wrap items-end">
-                                  <label className="text-xs">
-                                    Refund amount ({CURRENCIES[o.currency]?.symbol || "₦"})
-                                    <input
-                                      type="number" min="0.01" step="0.01"
-                                      value={(disputeAdminDrafts[d.id] || {}).partialRefundAmount || ""}
-                                      onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), partialRefundAmount: e.target.value } }))}
-                                      className="mt-1 w-40 px-3 py-2 rounded-lg border bg-white outline-none"
-                                      style={{ borderColor: "#DDD8CC" }}
-                                      placeholder="0.00"
-                                    />
-                                  </label>
-                                  {hasAdminPermission(currentMember, "finance") ? (
-                                    <button
-                                      onClick={() => partialRefundOrder(d, o, (disputeAdminDrafts[d.id] || {}).partialRefundAmount, resolutionNoteValue)}
-                                      disabled={o.paymentStatus === "refund_pending"}
-                                      className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
-                                      style={{ backgroundColor: BERRY, color: "white" }}
-                                    >
-                                      {o.paymentStatus === "refund_pending" ? "Refund pending…" : "Send partial refund"}
-                                    </button>
-                                  ) : (
-                                    <span className="text-xs" style={{ color: SLATE }}>A Finance Admin or Super Admin must send the money after the dispute decision is recorded.</span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] mt-2" style={{ color: SLATE }}>For safety, partial refunds are currently supported only on single-seller orders. The dispute stays locked until Paystack confirms the refund; then the remaining seller proceeds are released automatically.</p>
-                                {o.refundType === "partial" && o.refundAmount > 0 && (
-                                  <p className="text-xs mt-2" style={{ color: o.refundStatus === "processed" ? SAGE : MARIGOLD }}>
-                                    Partial refund: {formatMoney(o.refundAmount, o.currency)} · {o.refundStatus || "pending"}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue !== "resolved" && (
-                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment & resolve case</button>
+                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue === "resolved" && (
+                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment</button>
                             )}
                             {d.resolved_at && <span className="text-xs" style={{ color: SLATE }}>Resolved {new Date(d.resolved_at).toLocaleString()}{d.resolved_by_name ? ` by ${d.resolved_by_name}` : ""}</span>}
                           </div>
@@ -16778,504 +14411,103 @@ export default function Stallyard() {
               </div>
             )}
 
-            {adminTab === "reportsExport" && (() => {
-              const isSuperAdmin = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
-              const canFinance = isSuperAdmin || hasAdminPermission(currentMember, "finance");
-              const canSellers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification") || canFinance;
-              const reportOptions = [
-                ...(canFinance ? [
-                  ["orders", "Orders"], ["sales", "Sales"], ["commissions", "Commissions"],
-                  ["payouts", "Seller payouts"], ["refunds", "Refunds"], ["taxes", "Taxes"],
-                ] : []),
-                ...(canSellers ? [["sellers", "Sellers"]] : []),
-              ];
-              const effectiveReportType = reportOptions.some(([value]) => value === adminReportType) ? adminReportType : (reportOptions[0]?.[0] || "sellers");
-              const summary = adminReportData?.summary || {};
-              const currencies = summary.currencies && typeof summary.currencies === "object" ? Object.entries(summary.currencies) : [];
-              return (
-                <div className="space-y-5">
-                  <div>
-                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Reports & exports</h3>
-                    <p className="text-sm mt-1" style={{ color: SLATE }}>
-                      Generate operational and financial reports from Stallyard's database, preview the results, and download them as CSV for accounting or recordkeeping.
-                    </p>
-                  </div>
-
-                  <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
-                    <div className="grid md:grid-cols-4 gap-3 items-end">
-                      <label className="text-sm" style={{ color: INK }}>
-                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>Report</span>
-                        <select value={effectiveReportType} onChange={(e) => { setAdminReportType(e.target.value); setAdminReportData(null); setAdminReportError(""); }}
-                          className="w-full border rounded-lg px-3 py-2 bg-white" style={{ borderColor: "#DDD8CC" }}>
-                          {reportOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                        </select>
-                      </label>
-                      <label className="text-sm" style={{ color: INK }}>
-                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>From</span>
-                        <input type="date" value={adminReportFrom} onChange={(e) => setAdminReportFrom(e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
-                      </label>
-                      <label className="text-sm" style={{ color: INK }}>
-                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>To</span>
-                        <input type="date" value={adminReportTo} onChange={(e) => setAdminReportTo(e.target.value)}
-                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
-                      </label>
-                      <button onClick={() => fetchAdminReport(effectiveReportType)} disabled={adminReportLoading}
-                        className="px-4 py-2 rounded-lg font-medium disabled:opacity-50"
-                        style={{ backgroundColor: INK, color: "white" }}>
-                        {adminReportLoading ? "Generating…" : "Generate report"}
-                      </button>
-                    </div>
-                    <div className="flex gap-2 mt-3 flex-wrap">
-                      {[
-                        ["7 days", 7], ["30 days", 30], ["90 days", 90],
-                      ].map(([label, days]) => (
-                        <button key={label} onClick={() => {
-                          const to = new Date(); const from = new Date(); from.setDate(from.getDate() - days);
-                          setAdminReportFrom(from.toISOString().slice(0, 10)); setAdminReportTo(to.toISOString().slice(0, 10));
-                        }} className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>{label}</button>
-                      ))}
-                      <button onClick={() => { setAdminReportFrom(""); setAdminReportTo(""); }}
-                        className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>All time</button>
-                    </div>
-                  </div>
-
-                  {adminReportError && (
-                    <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
-                      {adminReportError}
-                    </div>
-                  )}
-
-                  {adminReportData && (
-                    <>
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                        <div>
-                          <div className="font-semibold" style={{ color: INK }}>{(adminReportData.type || adminReportType).replace(/_/g, " ")} report</div>
-                          <div className="text-xs" style={{ color: SLATE }}>
-                            {adminReportData.rows.length.toLocaleString()} row{adminReportData.rows.length === 1 ? "" : "s"} · generated {adminReportData.generatedAt ? new Date(adminReportData.generatedAt).toLocaleString() : "now"}
-                          </div>
-                        </div>
-                        <button onClick={downloadAdminReportCsv} disabled={!adminReportData.rows.length}
-                          className="px-4 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
-                          style={{ borderColor: SAGE, color: SAGE }}>Download CSV</button>
-                      </div>
-
-                      {currencies.length > 0 && (
-                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                          {currencies.map(([currency, c]) => (
-                            <div key={currency} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
-                              <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>{currency}</div>
-                              <div className="text-lg font-semibold mt-1" style={{ color: INK }}>{formatMoney(c.gross || 0, currency)} gross</div>
-                              <div className="text-xs mt-1" style={{ color: SLATE }}>{c.orders || 0} orders · {formatMoney(c.commission || 0, currency)} commission · {formatMoney(c.tax || 0, currency)} tax</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {adminReportData.type === "payouts" && (
-                        <div className="grid sm:grid-cols-3 gap-3">
-                          {[['Paid', summary.paid, SAGE], ['Processing', summary.processing, MARIGOLD], ['Failed', summary.failed, BERRY]].map(([label, value, color]) => (
-                            <div key={label} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
-                              <div className="text-xs" style={{ color: SLATE }}>{label}</div><div className="text-xl font-semibold mt-1" style={{ color }}>{formatMoney(value || 0, "NGN")}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
-                        {adminReportData.rows.length === 0 ? (
-                          <div className="p-6 text-center text-sm" style={{ color: SLATE }}>No records matched this report and date range.</div>
-                        ) : (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs min-w-[900px]">
-                              <thead style={{ backgroundColor: CANVAS }}><tr>{adminReportData.columns.map((c) => <th key={c} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: INK }}>{c.replace(/_/g, " ")}</th>)}</tr></thead>
-                              <tbody>
-                                {adminReportData.rows.slice(0, 100).map((row, idx) => (
-                                  <tr key={idx} className="border-t" style={{ borderColor: "#EEE9DE" }}>
-                                    {adminReportData.columns.map((c) => {
-                                      const value = row?.[c];
-                                      const display = typeof value === "boolean" ? (value ? "Yes" : "No") : (value === null || value === undefined || value === "" ? "—" : String(value));
-                                      return <td key={c} className="px-3 py-2 whitespace-nowrap max-w-[260px] overflow-hidden text-ellipsis" style={{ color: SLATE }}>{display}</td>;
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                        {adminReportData.rows.length > 100 && <div className="px-4 py-3 border-t text-xs" style={{ borderColor: "#EEE9DE", color: SLATE }}>Preview shows first 100 rows. The CSV download contains all {adminReportData.rows.length.toLocaleString()} rows.</div>}
-                      </div>
-
-                      <p className="text-xs" style={{ color: SLATE }}>
-                        CSV files open in Excel, Google Sheets, and most accounting tools. Report generation is recorded in the admin audit log.
-                      </p>
-                    </>
-                  )}
-                </div>
-              );
-            })()}
-
-            {adminTab === "systemHealth" && (!currentMember.adminRole || currentMember.adminRole === "super_admin") && (
-              <div className="space-y-5">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>System health</h3>
-                    <p className="text-sm mt-1" style={{ color: SLATE }}>
-                      Live checks for Stallyard's critical infrastructure. These checks do not send emails, charge cards, or consume moderation requests.
-                    </p>
-                  </div>
-                  <button onClick={fetchSystemHealth} disabled={systemHealthLoading}
-                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
-                    style={{ borderColor: "#DDD8CC", color: INK }}>
-                    {systemHealthLoading ? "Checking…" : "Run health check"}
-                  </button>
-                </div>
-
-                {systemHealthError && (
-                  <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
-                    {systemHealthError}
-                  </div>
-                )}
-
-                {systemHealth && (() => {
-                  const services = Array.isArray(systemHealth.services) ? systemHealth.services : [];
-                  const statusStyle = (status) => status === "healthy"
-                    ? { bg: SAGE + "18", border: SAGE + "55", color: SAGE, label: "Healthy" }
-                    : status === "configured"
-                    ? { bg: MARIGOLD + "18", border: MARIGOLD + "55", color: "#8A6D3B", label: "Configured" }
-                    : status === "not_configured"
-                    ? { bg: "#66708512", border: "#66708544", color: SLATE, label: "Not configured" }
-                    : { bg: BERRY + "0D", border: BERRY + "55", color: BERRY, label: "Needs attention" };
-                  const healthyCount = services.filter((s) => s.status === "healthy").length;
-                  const problemCount = services.filter((s) => s.status === "unhealthy").length;
-                  return (
-                    <>
-                      <div className="grid sm:grid-cols-3 gap-3">
-                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
-                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Overall</div>
-                          <div className="text-2xl font-semibold mt-1" style={{ color: problemCount ? BERRY : SAGE }}>
-                            {problemCount ? "Needs attention" : "Operational"}
-                          </div>
-                        </div>
-                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
-                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Live checks healthy</div>
-                          <div className="text-2xl font-semibold mt-1" style={{ color: INK }}>{healthyCount}</div>
-                        </div>
-                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
-                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Last checked</div>
-                          <div className="text-sm font-medium mt-2" style={{ color: INK }}>
-                            {systemHealth.checkedAt ? new Date(systemHealth.checkedAt).toLocaleString() : "—"}
-                          </div>
+            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <p className="text-xs mb-4" style={{ color: SLATE }}>
+                  Every admin role change, most recent first. Currently the only action tracked here — a good
+                  foundation to log more admin actions later without needing another migration.
+                </p>
+                {loadingAuditLog ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Loading...
+                  </p>
+                ) : auditLog.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No audit log entries yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {auditLog.map((entry) => (
+                      <div key={entry.id} className="p-3 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
+                        <div style={{ color: INK }}>{entry.details}</div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {entry.display_name || entry.username || "Unknown admin"} ·{" "}
+                          {new Date(entry.created_at).toLocaleString()}
                         </div>
                       </div>
-
-                      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        {services.map((service) => {
-                          const s = statusStyle(service.status);
-                          return (
-                            <div key={service.key} className="rounded-xl border p-4" style={{ borderColor: s.border, backgroundColor: s.bg }}>
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <div className="font-semibold" style={{ color: INK }}>{service.name}</div>
-                                  <div className="text-xs mt-0.5" style={{ color: SLATE }}>{service.purpose}</div>
-                                </div>
-                                <span className="text-[11px] font-semibold px-2 py-1 rounded-full whitespace-nowrap"
-                                  style={{ backgroundColor: "white", color: s.color }}>{s.label}</span>
-                              </div>
-                              <p className="text-sm mt-3" style={{ color: service.status === "unhealthy" ? BERRY : INK }}>
-                                {service.message || "No details"}
-                              </p>
-                              <div className="flex justify-between gap-3 mt-3 text-xs" style={{ color: SLATE }}>
-                                <span>{service.liveCheck ? "Live check" : "Configuration check"}</span>
-                                {service.latencyMs != null && <span>{service.latencyMs} ms</span>}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
-                        <h4 className="font-semibold" style={{ color: INK }}>How to read this page</h4>
-                        <p className="text-sm mt-2" style={{ color: SLATE }}>
-                          <strong>Healthy</strong> means Stallyard successfully contacted the service. <strong>Configured</strong> means credentials are present, but the check intentionally avoids making a billable or user-facing API request. <strong>Needs attention</strong> means a live check failed. No secret keys are returned to the browser.
-                        </p>
-                      </div>
-                    </>
-                  );
-                })()}
-
-                {!systemHealth && !systemHealthLoading && !systemHealthError && (
-                  <div className="bg-white rounded-xl border p-6 text-center" style={{ borderColor: "#DDD8CC", color: SLATE }}>
-                    Run a health check to see the current status of Stallyard's services.
+                    ))}
                   </div>
                 )}
               </div>
             )}
 
-            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
-              const now = Date.now();
-              const cutoff = auditDateFilter === "24h" ? now - 24 * 60 * 60 * 1000
-                : auditDateFilter === "7d" ? now - 7 * 24 * 60 * 60 * 1000
-                : auditDateFilter === "30d" ? now - 30 * 24 * 60 * 60 * 1000
-                : 0;
-              const q = auditSearch.trim().toLowerCase();
-              const actions = [...new Set(auditLog.map((entry) => entry.action).filter(Boolean))].sort();
-              const filtered = auditLog.filter((entry) => {
-                if (auditActionFilter !== "all" && entry.action !== auditActionFilter) return false;
-                if (cutoff && new Date(entry.created_at).getTime() < cutoff) return false;
-                if (!q) return true;
-                return [entry.action, entry.details, entry.display_name, entry.username]
-                  .filter(Boolean)
-                  .some((value) => String(value).toLowerCase().includes(q));
-              });
-              return (
-              <div>
-                <div className="flex items-start justify-between gap-3 mb-4">
-                  <div>
-                    <h3 className="font-semibold" style={{ color: INK }}>Admin audit log</h3>
-                    <p className="text-xs mt-1" style={{ color: SLATE }}>
-                      Sensitive admin actions are recorded here so you can see who changed what and when. Entries are append-only from the dashboard.
-                    </p>
-                  </div>
-                  <button onClick={fetchAuditLog} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>Refresh</button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
-                  <input
-                    value={auditSearch}
-                    onChange={(e) => setAuditSearch(e.target.value)}
-                    placeholder="Search admin, action, or details"
-                    className="px-3 py-2 rounded-lg border text-sm bg-white"
-                    style={{ borderColor: "#DDD8CC", color: INK }}
-                  />
-                  <select value={auditActionFilter} onChange={(e) => setAuditActionFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    <option value="all">All actions</option>
-                    {actions.map((action) => <option key={action} value={action}>{action.replaceAll("_", " ")}</option>)}
-                  </select>
-                  <select value={auditDateFilter} onChange={(e) => setAuditDateFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    <option value="all">All dates</option>
-                    <option value="24h">Last 24 hours</option>
-                    <option value="7d">Last 7 days</option>
-                    <option value="30d">Last 30 days</option>
-                  </select>
-                </div>
-                {loadingAuditLog ? (
-                  <p className="text-sm" style={{ color: SLATE }}>Loading...</p>
-                ) : auditLog.length === 0 ? (
-                  <p className="text-sm" style={{ color: SLATE }}>No audit log entries yet.</p>
-                ) : filtered.length === 0 ? (
-                  <p className="text-sm" style={{ color: SLATE }}>No audit entries match those filters.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {filtered.map((entry) => (
-                      <div key={entry.id} className="p-3 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div style={{ color: INK }}>{entry.details}</div>
-                          <span className="text-[10px] px-2 py-1 rounded-full whitespace-nowrap" style={{ backgroundColor: "#F1EEE6", color: SLATE }}>
-                            {(entry.action || "admin_action").replaceAll("_", " ")}
-                          </span>
-                        </div>
-                        <div className="text-xs mt-1" style={{ color: SLATE }}>
-                          {entry.display_name || entry.username || "Unknown admin"} · {new Date(entry.created_at).toLocaleString()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              );
-            })()}
-
             {adminTab === "supportTickets" && hasAdminPermission(currentMember, "support_tickets") && (
-              <div className="space-y-4">
-                {activeTicketId ? (() => {
-                  const ticket = adminTickets.find((t) => t.id === activeTicketId) || null;
-                  return (
-                    <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
-                      <button
-                        onClick={() => { setActiveTicketId(null); setTicketMessages([]); }}
-                        className="text-sm font-medium underline mb-4"
-                        style={{ color: SLATE }}
-                      >
-                        ← Back to support tickets
-                      </button>
-                      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
-                        <div>
-                          <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>{ticket?.subject || "Support ticket"}</h3>
-                          {ticket && <p className="text-xs mt-1" style={{ color: SLATE }}>From {ticket.display_name || ticket.username} · {new Date(ticket.updated_at).toLocaleString()}</p>}
-                        </div>
-                        {ticket && (
-                          <select
-                            value={ticket.status}
-                            onChange={(e) => adminUpdateTicketStatus(ticket.id, e.target.value)}
-                            className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
-                            style={{ borderColor: "#DDD8CC" }}
-                          >
-                            <option value="open">Open</option>
-                            <option value="in_progress">In progress</option>
-                            <option value="resolved">Resolved</option>
-                          </select>
-                        )}
-                      </div>
-                      {loadingTicketMessages ? (
-                        <p className="text-sm" style={{ color: SLATE }}>Loading…</p>
-                      ) : (
-                        <div className="space-y-3 mb-4 max-h-[50vh] overflow-y-auto">
-                          {ticketMessages.map((m) => {
-                            const fromAdmin = m.is_admin;
-                            return (
-                              <div key={m.id} className={`flex ${fromAdmin ? "justify-start" : "justify-end"}`}>
-                                <div className="max-w-[80%] px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: fromAdmin ? "#F1EFE7" : INK, color: fromAdmin ? INK : "white" }}>
-                                  <div className="text-xs font-medium mb-1" style={{ color: fromAdmin ? SLATE : "#C9CCD3" }}>{m.display_name || m.username}</div>
-                                  {m.body}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={newTicketMessageInput}
-                          onChange={(e) => setNewTicketMessageInput(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && sendTicketMessage()}
-                          placeholder="Write an admin reply…"
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
-                        <button onClick={sendTicketMessage} disabled={sendingTicketMessage} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
-                          Send
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })() : (
-                  <>
-                    {adminTickets.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No support tickets.</p>}
-                    {adminTickets.slice().sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).map((t) => (
-                      <div key={t.id} className="flex items-center gap-2">
-                        <button
-                          onClick={() => openTicketThread(t.id)}
-                          className="flex-1 text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
-                          style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
-                        >
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium truncate" style={{ color: INK }}>{t.subject}</div>
-                            <div className="text-xs" style={{ color: SLATE }}>{t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}</div>
-                          </div>
-                          <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>{TICKET_STATUS_LABEL[t.status] || t.status}</Tag>
-                        </button>
-                        <button type="button" onClick={() => openAdminNotes("support_ticket", t.id, `Support ticket #${t.id}: ${t.subject}`)} className="px-3 py-2 rounded-lg text-xs font-medium border bg-white shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }}>Notes</button>
-                      </div>
-                    ))}
-                  </>
+              <div className="space-y-3">
+                {adminTickets.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No support tickets.
+                  </p>
                 )}
+                {adminTickets
+                  .slice()
+                  .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+                  .map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        openTicketThread(t.id);
+                        setView("help");
+                      }}
+                      className="w-full text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
+                      style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium truncate" style={{ color: INK }}>
+                          {t.subject}
+                        </div>
+                        <div className="text-xs" style={{ color: SLATE }}>
+                          {t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>
+                        {TICKET_STATUS_LABEL[t.status] || t.status}
+                      </Tag>
+                    </button>
+                  ))}
               </div>
             )}
           </div>
         )}
       </main>
 
-      {adminNotesTarget && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.58)" }}>
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl overflow-hidden">
-            <div className="p-5 border-b flex items-start justify-between gap-3" style={{ borderColor: "#EFEBE0" }}>
-              <div>
-                <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Private admin notes</h3>
-                <p className="text-xs mt-1" style={{ color: SLATE }}>{adminNotesTarget.label}</p>
-                <p className="text-xs mt-1" style={{ color: BERRY }}>Visible only to authorized Stallyard admins. Users never see these notes.</p>
-              </div>
-              <button type="button" onClick={() => setAdminNotesTarget(null)} aria-label="Close internal notes"><X size={20} style={{ color: SLATE }} /></button>
-            </div>
-            <div className="p-5 max-h-[55vh] overflow-y-auto">
-              {adminNotesLoading ? (
-                <p className="text-sm" style={{ color: SLATE }}>Loading notes…</p>
-              ) : adminNotesList.length === 0 ? (
-                <p className="text-sm" style={{ color: SLATE }}>No internal notes yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {adminNotesList.map((note) => (
-                    <div key={note.id} className="p-3 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
-                      <p className="text-sm whitespace-pre-wrap" style={{ color: INK }}>{note.body}</p>
-                      <p className="text-xs mt-2" style={{ color: SLATE }}>
-                        {note.admin_display_name || note.admin_username || "Admin"} · {new Date(note.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="p-5 border-t" style={{ borderColor: "#EFEBE0" }}>
-              <textarea
-                value={adminNoteDraft}
-                onChange={(e) => setAdminNoteDraft(e.target.value)}
-                maxLength={4000}
-                rows={3}
-                placeholder="Add a private note for other admins…"
-                className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
-                style={{ borderColor: "#DDD8CC", color: INK }}
-              />
-              <div className="flex items-center justify-between gap-3 mt-2">
-                <span className="text-xs" style={{ color: SLATE }}>{adminNoteDraft.length}/4000 · Notes are append-only for accountability.</span>
-                <button type="button" onClick={addAdminNote} disabled={adminNoteSaving || !adminNoteDraft.trim()} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
-                  {adminNoteSaving ? "Saving…" : "Add note"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isAdminHost() ? (
-        <footer style={{ backgroundColor: INK }} className="mt-12">
-          <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <p className="text-xs font-semibold" style={{ color: "#C9CCD3" }}>Stallyard Admin · Restricted staff system</p>
-              <p className="text-[11px] mt-1" style={{ color: "#8A93A3" }}>Authorized staff access only. Administrative actions may be recorded in the audit log.</p>
-            </div>
-            {currentUser && (
-              <button onClick={logout} className="text-xs font-medium underline" style={{ color: "#C9CCD3" }}>Sign out</button>
-            )}
-          </div>
-        </footer>
-      ) : (
-        <footer style={{ backgroundColor: INK }} className="mt-16">
+      <footer style={{ backgroundColor: INK }} className="mt-16">
         <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 sm:grid-cols-4 gap-8">
           <div>
             <h3 className="text-xs font-semibold mb-3 tracking-wide" style={{ color: "#8A93A3" }}>
               Shop
             </h3>
             <div className="flex flex-col gap-2">
-              <button
-                onClick={() => {
-                  setCategoryFilter("All");
-                  setSubcategoryFilter("All");
-                  setSearch("");
-                  setSelected(null);
-                  setView("browse");
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-                className="text-sm text-left"
-                style={{ color: "#E5E7EB" }}
-              >
+              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Browse listings
               </button>
-              <button
-                onClick={() => { setSelected(null); setView("categories"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="text-sm text-left"
-                style={{ color: "#E5E7EB" }}
-              >
+              <button onClick={() => setView("browse")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Categories
               </button>
-              <button onClick={() => { setSelected(null); setView("how-it-works"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 How it works
               </button>
-              <button
-                onClick={() => { setSelected(null); setView("create-account"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="text-sm text-left"
-                style={{ color: "#E5E7EB" }}
-              >
-                Create an account
-              </button>
+              {!currentUser && (
+                <button
+                  onClick={() => {
+                    setAuthMode("register");
+                    setView("signup");
+                  }}
+                  className="text-sm text-left"
+                  style={{ color: "#E5E7EB" }}
+                >
+                  Create an account
+                </button>
+              )}
             </div>
           </div>
 
@@ -17284,14 +14516,13 @@ export default function Stallyard() {
               Sell
             </h3>
             <div className="flex flex-col gap-2">
-              <button onClick={() => { setSelected(null); setView("become-seller"); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+              <button onClick={() => setView("sell")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Become a seller
               </button>
-              <button
-                onClick={() => { setSelected(null); setView("shipping-delivery"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                className="text-sm text-left"
-                style={{ color: "#E5E7EB" }}
-              >
+              <button onClick={() => setView("dashboard")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Seller dashboard
+              </button>
+              <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Shipping & delivery
               </button>
               <button onClick={() => setView("wallet")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
@@ -17345,9 +14576,7 @@ export default function Stallyard() {
             © {new Date().getFullYear()} Stallyard. Payments processed securely through Paystack.
           </p>
         </div>
-        </footer>
-
-      )}
+      </footer>
 
       {/* Detail modal */}
       {selected && (() => {
@@ -17598,7 +14827,7 @@ export default function Stallyard() {
                   )
                 ) : (
                   <div className="flex items-center gap-2 mb-3">
-                    <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
+                    <span style={{ color: SLATE }}>{CURRENCIES[liveSelected.currency]?.symbol || "$"}</span>
                     <input
                       type="number"
                       min={Number(liveSelected.price) + 1}
@@ -17881,7 +15110,7 @@ export default function Stallyard() {
                                 city: a.city,
                                 state: a.state,
                                 zip: a.zip,
-                                country: "Nigeria",
+                                country: a.country,
                               })
                             }
                             className="text-xs px-2 py-1 rounded-full border"
@@ -17918,7 +15147,7 @@ export default function Stallyard() {
                         <input
                           value={shippingForm.state}
                           onChange={(e) => setShippingForm({ ...shippingForm, state: e.target.value })}
-                          placeholder="State"
+                          placeholder="State/Province"
                           className="w-28 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
@@ -17927,17 +15156,19 @@ export default function Stallyard() {
                         <input
                           value={shippingForm.zip}
                           onChange={(e) => setShippingForm({ ...shippingForm, zip: e.target.value })}
-                          placeholder="Postal code"
+                          placeholder="ZIP / postal code"
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
-                        <input
-                          value="Nigeria"
-                          readOnly
-                          aria-label="Country"
-                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-gray-50"
-                          style={{ borderColor: "#DDD8CC", color: INK }}
-                        />
+                        <select
+                          value={shippingForm.country}
+                          onChange={(e) => setShippingForm({ ...shippingForm, country: e.target.value })}
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-white"
+                          style={{ borderColor: "#DDD8CC", color: shippingForm.country ? INK : SLATE }}
+                        >
+                          <option value="">Country</option>
+                          <option value="Nigeria">Nigeria</option>
+                        </select>
                       </div>
                       <label className="flex items-center gap-2 text-xs pt-1" style={{ color: SLATE }}>
                         <input
@@ -18194,7 +15425,7 @@ export default function Stallyard() {
               Add ID verification
             </h3>
             <p className="text-sm mb-4" style={{ color: SLATE }}>
-              Stallyard requires approved seller verification to keep selling.
+              You've crossed ${ID_VERIFICATION_SALES_THRESHOLD.toLocaleString()} in sales, so Stallyard now needs ID on file to keep you selling.
             </p>
             <div className="space-y-3">
               <div className="flex gap-3">
@@ -18220,7 +15451,7 @@ export default function Stallyard() {
                   <input
                     value={idVerifyForm.idCountry}
                     onChange={(e) => setIdVerifyForm({ ...idVerifyForm, idCountry: e.target.value })}
-                    placeholder="Nigeria"
+                    placeholder="e.g. United States"
                     className="w-full px-3 py-2 rounded-lg border outline-none"
                     style={{ borderColor: "#DDD8CC" }}
                   />
@@ -18341,11 +15572,11 @@ export default function Stallyard() {
               className="text-xl font-semibold mb-2"
               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
             >
-              {CURRENCIES.NGN.symbol}
+              {CURRENCIES[form.currency]?.symbol || "$"}
               {form.price ? Number(form.price).toFixed(2) : "0.00"}
             </div>
             <div className="text-sm mb-3" style={{ color: SLATE }}>
-              {form.category}{form.subcategory ? ` › ${form.subcategory}` : ""} · {form.condition}
+              {form.category} · {form.condition}
               {form.quantity && ` · Qty: ${form.quantity}`}
             </div>
             {form.description && (
