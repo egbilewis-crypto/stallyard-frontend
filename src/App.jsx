@@ -7437,18 +7437,31 @@ export default function Stallyard() {
   // orders, used for the buyer dashboard's status breakdown — mirrors
   // mySoldItems above, just from the buyer's side instead of the seller's.
   const myPurchasedItems = myOrders.flatMap((o) =>
-    o.items.map((i) => ({ ...i, orderId: o.id, orderCreatedAt: o.createdAt, isDisputed: o.isDisputed }))
+    o.items.map((i) => ({ ...i, orderId: o.id, orderCreatedAt: o.createdAt, isDisputed: o.isDisputed, paymentStatus: o.paymentStatus }))
   );
   const buyerActiveOrdersCount = myOrders.filter((o) =>
-    o.items.some((i) => i.fulfillmentStatus !== "delivered" && i.fulfillmentStatus !== "cancelled")
+    o.paymentStatus === "held" &&
+    o.items.some((i) => !["cancelled", "returned"].includes(i.fulfillmentStatus))
   ).length;
-  const buyerOrdersWaitingToShip = myPurchasedItems.filter((i) => (i.fulfillmentStatus || "new") === "new").length;
-  const buyerOrdersInTransit = myPurchasedItems.filter((i) => i.fulfillmentStatus === "shipped").length;
-  const buyerCompletedCount = myPurchasedItems.filter((i) => i.fulfillmentStatus === "delivered").length;
-  const buyerActiveReturnsDisputes = myPurchasedItems.filter(
-    (i) => i.returnStatus === "requested" || i.isDisputed
+  const buyerOrdersWaitingToShip = myPurchasedItems.filter((i) =>
+    i.paymentStatus === "held" && ["new", "preparing"].includes(i.fulfillmentStatus || "new")
+  ).length;
+  const buyerOrdersInTransit = myPurchasedItems.filter((i) =>
+    i.paymentStatus === "held" && i.fulfillmentStatus === "shipped"
+  ).length;
+  const buyerCompletedCount = myPurchasedItems.filter((i) =>
+    i.paymentStatus === "released" && !["cancelled", "returned"].includes(i.fulfillmentStatus)
+  ).length;
+  const buyerOpenDisputesCount = myOrders.filter((o) => o.isDisputed).length;
+  const buyerActiveReturnsDisputes = myOrders.filter((o) =>
+    o.isDisputed || o.items.some((i) => ["requested", "approved"].includes(i.returnStatus))
   ).length;
   const buyerPendingReturnsCount = myPurchasedItems.filter((i) => i.returnStatus === "requested").length;
+  const buyerTotalSpent = myOrders.reduce((sum, order) => {
+    if (order.paymentStatus === "refunded") return sum;
+    const processedRefund = order.refundStatus === "processed" ? Number(order.refundAmount || 0) : 0;
+    return sum + Math.max(0, Number(order.total || 0) - processedRefund);
+  }, 0);
   const buyerTokensReadyCount = myOrders.reduce(
     (count, order) => count + (order.paymentStatus === "held" && !order.isDisputed
       ? order.items.filter((item) =>
@@ -11206,9 +11219,9 @@ export default function Stallyard() {
               >
                 <div
                   className="text-2xl font-semibold"
-                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerActiveReturnsDisputes ? BERRY : INK }}
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerOpenDisputesCount ? BERRY : INK }}
                 >
-                  {buyerActiveReturnsDisputes}
+                  {buyerOpenDisputesCount}
                 </div>
                 <div className="text-xs" style={{ color: SLATE }}>
                   open disputes
@@ -11477,20 +11490,7 @@ export default function Stallyard() {
                   </div>
                   <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
-                      {(() => {
-                        // Stallyard is Nigeria-only, so purchase totals are NGN.
-                        const byCurrency = {};
-                        myPurchasedItems
-                          .filter((i) => i.fulfillmentStatus !== "cancelled")
-                          .forEach((i) => {
-                            const cur = i.currency || "NGN";
-                            byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
-                          });
-                        const entries = Object.entries(byCurrency);
-                        return entries.length
-                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
-                          : formatMoney(0, "NGN");
-                      })()}
+                      {formatMoney(buyerTotalSpent, "NGN")}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
                       total spent ({myOrders.length} order{myOrders.length === 1 ? "" : "s"})
