@@ -5250,12 +5250,12 @@ export default function Stallyard() {
     showToast("Proof of delivery saved");
   };
 
-  // Buyer confirms the item was received, inspected, and accepted. Only then
-  // does the backend create/reveal the private 10-digit delivery token. This
+  // Optional receipt confirmation records that the buyer received and accepted
+  // the item. The private token is already visible after successful payment. This
   // confirmation does NOT release seller funds by itself.
   const confirmReceipt = async (orderId, itemId) => {
     const accepted = window.confirm(
-      "Confirm only after you have received this item, inspected it, and are fully satisfied. Stallyard will then issue your private 10-digit delivery token. Continue?"
+      "Confirm only after you have received this item, inspected it, and are fully satisfied. Continue?"
     );
     if (!accepted) return;
     try {
@@ -5280,14 +5280,14 @@ export default function Stallyard() {
               }
         )
       );
-      showToast("Delivery confirmed — your private delivery token is now ready");
+      showToast("Receipt confirmed");
     } catch {
       showToast("Couldn't reach the server — try again");
     }
   };
 
-  // Recovery/display action for a token that has already been issued after
-  // buyer confirmation. The backend will refuse to create one before then.
+  // Recovery/display action for a token created and revealed to the buyer
+  // immediately after successful payment.
   const generateDeliveryToken = async (itemId) => {
     setGeneratingTokenKey(itemId);
     try {
@@ -8763,8 +8763,8 @@ export default function Stallyard() {
               {[
                 { number: "1", title: "Find an item", text: "Browse active Stallyard listings, search by keyword, or shop by category and subcategory." },
                 { number: "2", title: "Pay securely", text: "Complete checkout in Nigerian naira through Paystack. Stallyard does not support cash on delivery." },
-                { number: "3", title: "Receive and inspect your order", text: "Track your order in Stallyard. After you receive the item, inspect it and confirm delivery. Stallyard then reveals your private 10-digit delivery token." },
-                { number: "4", title: "Share the token after confirmation", text: "After the buyer confirms delivery, Stallyard issues the private 10-digit token. The buyer gives it to the seller, who uploads delivery proof and enters the token. If there is no active dispute or return, the seller payment is released." },
+                { number: "3", title: "Receive and inspect your order", text: "Your private 10-digit delivery token is visible in your order details immediately after payment. Keep it private until you receive and inspect the item." },
+                { number: "4", title: "Share the token at handoff", text: "Give the token to the seller only after you accept the item. The seller uploads delivery proof and enters the token. If there is no active dispute or return, the seller payment is released." },
               ].map((step) => (
                 <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
                   <div className="flex items-start gap-4">
@@ -8829,7 +8829,7 @@ export default function Stallyard() {
                   intent: "buyer",
                   icon: "🛍️",
                   title: "Create a buyer account",
-                  text: "Shop active listings, save items, place orders, track delivery, then confirm receipt to receive your private delivery token for handoff.",
+                  text: "Shop active listings, save items, place orders, and receive your private delivery token immediately after successful payment.",
                   button: "Create buyer account",
                 },
                 {
@@ -9235,16 +9235,16 @@ export default function Stallyard() {
               <p className="text-xs font-semibold uppercase tracking-[0.18em] mb-2" style={{ color: MARIGOLD }}>Shipping & delivery</p>
               <h1 className="text-3xl sm:text-5xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>From seller to buyer, safely</h1>
               <p className="mt-4 text-sm sm:text-base max-w-3xl mx-auto leading-7" style={{ color: SLATE }}>
-                Stallyard is a Nigeria-only marketplace. Sellers arrange delivery, buyers track their order in Stallyard, and the 10-digit delivery token is issued only after the buyer confirms that the item was received, inspected, and accepted.
+                Stallyard is a Nigeria-only marketplace. Sellers arrange delivery, buyers track their order in Stallyard, and the buyer can see a private 10-digit delivery token immediately after successful payment.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
               {[
                 { number: "1", title: "Seller prepares the order", text: "After a paid order appears, the seller prepares the item for delivery and adds carrier or tracking information when available." },
-                { number: "2", title: "Track your order", text: "Track your order status in Stallyard. The delivery token is not issued while the item is still in transit." },
-                { number: "3", title: "Confirm delivery", text: "After receiving the item, inspect it carefully. When you are fully satisfied with your order, confirm delivery in Stallyard. Stallyard will then issue your private 10-digit delivery token." },
-                { number: "4", title: "Seller completes delivery", text: "After the buyer confirms delivery, Stallyard issues the token. The buyer gives it to the seller, who uploads delivery proof and enters the token. If the token is valid and there is no active dispute or return, the seller payment can be released." },
+                { number: "2", title: "Get your private token", text: "Your 10-digit delivery token appears in your order details immediately after successful payment. Keep it private while the item is in transit." },
+                { number: "3", title: "Receive and inspect", text: "Inspect the item carefully at delivery. Give the token to the seller only when you have received the correct item and are satisfied." },
+                { number: "4", title: "Seller completes delivery", text: "The seller uploads the delivery photo and enters the buyer's token. If the token is valid and there is no active dispute or return, the seller payment can be released immediately." },
               ].map((step) => (
                 <div key={step.number} className="rounded-2xl border bg-white p-6 sm:p-7" style={{ borderColor: "#DDD8CC" }}>
                   <div className="flex items-start gap-4">
@@ -9273,7 +9273,7 @@ export default function Stallyard() {
                 <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>For sellers</h2>
                 <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Package the item securely and keep delivery/tracking information accurate when available.</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Never ask the buyer for a delivery token before the buyer has received, inspected, and confirmed the order in Stallyard.</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Never ask the buyer for a delivery token before the buyer has received, inspected, and accepted the item.</span></li>
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Enter the token only at delivery and upload a clear delivery photo as proof.</span></li>
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Do not mark an item delivered before actual delivery. An active dispute or return keeps the payment locked.</span></li>
                 </ul>
@@ -9349,7 +9349,7 @@ export default function Stallyard() {
               <div className="rounded-2xl border bg-white p-6" style={{ borderColor: "#DDD8CC" }}>
                 <div className="w-11 h-11 rounded-full flex items-center justify-center text-xl mb-4" style={{ backgroundColor: "#FFF4D8" }} aria-hidden="true">₦</div>
                 <h2 className="text-xl font-semibold mb-2" style={{ color: INK }}>Get paid after delivery</h2>
-                <p className="text-sm leading-6" style={{ color: SLATE }}>After the buyer receives and inspects the item, they confirm delivery in Stallyard and receive their private 10-digit token. The buyer gives you that token; you upload delivery proof and enter the token. If there is no active dispute or return, your payment can be released.</p>
+                <p className="text-sm leading-6" style={{ color: SLATE }}>The buyer receives a private 10-digit token immediately after payment. After the buyer receives, inspects, and accepts the item, they give you that token; you upload delivery proof and enter the token. If there is no active dispute or return, your payment can be released.</p>
               </div>
             </div>
 
@@ -9372,7 +9372,7 @@ export default function Stallyard() {
                   <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>1.</span><span>Create your Stallyard account and submit seller verification.</span></li>
                   <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>2.</span><span>After approval, create your listing with photos, price, category and subcategory.</span></li>
                   <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>3.</span><span>The buyer pays electronically through Paystack. Stallyard does not use cash on delivery.</span></li>
-                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>4.</span><span>Deliver the item. After the buyer confirms delivery and gives you the token, upload the delivery photo and enter the buyer’s delivery token.</span></li>
+                  <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>4.</span><span>Deliver the item. After the buyer receives, inspects, and accepts it, collect the token, upload the delivery photo, and enter the buyer’s delivery token.</span></li>
                   <li className="flex gap-3"><span className="font-bold" style={{ color: INK }}>5.</span><span>If the delivery checks pass and there is no active dispute or return, the seller payment is released.</span></li>
                 </ol>
               </div>
@@ -10939,13 +10939,13 @@ export default function Stallyard() {
                                       <div className="mt-2">
                                         <Tag color={SAGE}>Delivery completed — payment released</Tag>
                                       </div>
-                                    ) : i.buyerConfirmedAt ? (
+                                    ) : (
                                       <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
                                         <div className="text-xs font-medium mb-1" style={{ color: INK }}>
                                           Buyer's delivery code
                                         </div>
                                         <div className="text-xs mb-2" style={{ color: SLATE }}>
-                                          Buyer confirmed delivery. Ask the buyer for the 10-digit token, upload the delivery photo, then enter the token below.
+                                          At handoff, ask the buyer for the 10-digit token, upload the delivery photo, then enter the token below.
                                         </div>
                                         <div className="flex items-center gap-2 flex-wrap">
                                           <input
@@ -10974,13 +10974,7 @@ export default function Stallyard() {
                                           </button>
                                         </div>
                                         <p className="text-xs mt-1" style={{ color: SLATE }}>
-                                          Upload the delivery picture first, then enter the 10-digit token the buyer gives you after confirming delivery. Both are required to release payment.
-                                        </p>
-                                      </div>
-                                    ) : (
-                                      <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
-                                        <p className="text-xs" style={{ color: SLATE }}>
-                                          Waiting for the buyer to receive, inspect, and confirm the item. The delivery token is issued only after buyer confirmation.
+                                          Upload the delivery picture first, then enter the 10-digit token the buyer gives you after receiving and inspecting the item. Both are required to release payment.
                                         </p>
                                       </div>
                                     ))}
@@ -11578,26 +11572,26 @@ export default function Stallyard() {
                               {!item.buyerConfirmedAt && !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
                                 (item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && (
                                   <div className="mt-2 p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
-                                    <div className="text-xs font-medium mb-1" style={{ color: INK }}>Confirm delivery when you are satisfied</div>
+                                    <div className="text-xs font-medium mb-1" style={{ color: INK }}>Confirm receipt when you are satisfied</div>
                                     <p className="text-xs mb-2" style={{ color: SLATE }}>
-                                      Track your order status in Stallyard. After you receive and inspect the item, confirm delivery to receive your private 10-digit delivery token.
+                                      Your private token is already shown below. Confirm receipt after you receive, inspect, and accept the item.
                                     </p>
                                     <button
                                       onClick={() => confirmReceipt(o.id, item.id)}
                                       className="px-3 py-2 rounded-lg text-xs font-semibold"
                                       style={{ backgroundColor: MARIGOLD, color: INK }}
                                     >
-                                      Confirm delivery & get token
+                                      Confirm receipt
                                     </button>
                                   </div>
                                 )}
-                              {item.buyerConfirmedAt && o.paymentStatus !== "released" && (
+                              {o.paymentStatus === "held" && (
                                 <div className="mt-2">
                                   {(item.deliveryToken || deliveryTokens[item.id]) ? (
                                     <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
                                       <div className="text-xs font-medium mb-1" style={{ color: INK }}>Your 10-digit delivery token</div>
                                       <div className="text-xs mb-2" style={{ color: SLATE }}>
-                                        Keep this token private. Give it to the seller only now that you have received, inspected, and accepted the item.
+                                        This token was created after payment. Keep it private and give it to the seller only after you receive, inspect, and accept the item.
                                       </div>
                                       <div
                                         className="text-center py-2 rounded-lg text-lg font-semibold tracking-widest"
@@ -11621,7 +11615,7 @@ export default function Stallyard() {
                                   )}
                                 </div>
                               )}
-                              {item.buyerConfirmedAt && o.paymentStatus === "released" && (
+                              {o.paymentStatus === "released" && (
                                 <div className="mt-2">
                                   <Tag color={SAGE}>Delivery completed — payment released</Tag>
                                 </div>
@@ -15571,7 +15565,7 @@ export default function Stallyard() {
                       <h4 className="font-semibold mb-3" style={{ color: INK }}>Items, shipment & delivery</h4>
                       <div className="space-y-4">
                         {(activeOrder.items || []).map((i) => {
-                          const tokenStatus = i.deliveryTokenRedeemedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Issued after buyer confirmation — secret hidden" : "Not issued";
+                          const tokenStatus = i.deliveryTokenRedeemedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Generated after payment — visible only to buyer" : "Not generated";
                           return (
                             <div key={i.id} className="p-3 rounded-lg border" style={{ borderColor: "#EFEBE0" }}>
                               <div className="flex items-start justify-between gap-3 flex-wrap">
