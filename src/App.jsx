@@ -9298,6 +9298,16 @@ export default function Stallyard() {
                   My Stallyard
                 </button>
                 {currentUser && (
+                  <button
+                    type="button"
+                    onClick={() => setView("wallet")}
+                    className="hidden sm:inline-flex items-center gap-1 hover:underline"
+                  >
+                    <Wallet size={15} />
+                    Seller wallet
+                  </button>
+                )}
+                {currentUser && (
                   <button onClick={() => setNotifPanelOpen((o) => !o)} className="relative p-1" aria-label="Notifications">
                     <Bell size={18} />
                     {notifications.some((n) => !n.read) && (
@@ -12119,9 +12129,20 @@ export default function Stallyard() {
 
         {view === "buyerHome" && currentUser && (
           <div>
-            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-              Dashboard
-            </h2>
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+              <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                Dashboard
+              </h2>
+              <button
+                type="button"
+                onClick={() => setView("wallet")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
+                style={{ borderColor: SAGE, color: INK }}
+              >
+                <Wallet size={17} />
+                Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+              </button>
+            </div>
             <p className="text-sm mb-5" style={{ color: SLATE }}>
               Everything about your orders, messages, and alerts in one place.
             </p>
