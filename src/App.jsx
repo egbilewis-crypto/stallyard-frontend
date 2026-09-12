@@ -1092,7 +1092,7 @@ function backendUserToMember(user, existing) {
     casualSellerLimit: Number(user.casual_seller_limit ?? existing?.casualSellerLimit ?? 500000),
     casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
     sellerTier: user.seller_tier ?? existing?.sellerTier ?? (user.is_approved ? "verified" : "buyer"),
-    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 20000000),
+    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 10000000),
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -10397,6 +10397,24 @@ export default function Stallyard() {
               </div>
             )}
 
+            {currentUser && currentMember?.isApproved && currentMember?.sellerTier !== "premium" && (
+              <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller</p>
+                  <Tag color={MARIGOLD}>Up to ₦10,000,000</Tag>
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                </p>
+                <div className="h-2 rounded-full overflow-hidden mt-2" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div className="h-full rounded-full" style={{ backgroundColor: MARIGOLD, width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%` }} />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  Draft, sold, cancelled, expired and removed listings do not count. Premium Seller status will be required to publish above this combined limit.
+                </p>
+              </div>
+            )}
+
             {currentUser &&
               currentMember?.isApproved === false &&
               (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
@@ -11093,6 +11111,31 @@ export default function Stallyard() {
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
                   ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦10,000,000.
+                </p>
+              </div>
+            )}
+            {currentUser && currentMember?.isApproved && currentMember?.sellerTier !== "premium" && (
+              <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller allowance</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                    </p>
+                  </div>
+                  <Tag color={MARIGOLD}>Verified Seller</Tag>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden mt-3" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: MARIGOLD,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  ₦10,000,000 combined active-listing limit. Only active listings count. Premium Seller status is required above ₦10,000,000.
                 </p>
               </div>
             )}
