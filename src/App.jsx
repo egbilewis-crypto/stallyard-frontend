@@ -985,6 +985,7 @@ function backendOrderToFrontend(row) {
     refundPreviousPaymentStatus: row.refund_previous_payment_status || null,
     refundFailureReason: row.refund_failure_reason || "",
     refundedAt: row.refunded_at ? new Date(row.refunded_at).getTime() : null,
+    refundUpdatedAt: row.refund_updated_at ? new Date(row.refund_updated_at).getTime() : null,
     isDisputed: !!row.is_disputed,
     payouts: (row.payouts || []).map((p) => ({
       id: p.id,
@@ -1396,7 +1397,7 @@ function RefundProgress({ order, ink, slate, sage, berry, marigold, canvas }) {
   const needsAttention = ["request_unknown", "needs-attention", "needs_attention"].includes(status);
   const submittedToPaystack = !!order.paystackRefundId || !["", "requesting"].includes(status);
   const isProcessing = submittedToPaystack && !isComplete && !isFailed;
-  const latestAt = order.refundedAt || order.refundRequestedAt;
+  const latestAt = order.refundUpdatedAt || order.refundedAt || order.refundRequestedAt;
   const steps = [
     { label: "Cancellation submitted", done: !!order.refundRequestedAt || !!status, at: order.refundRequestedAt },
     { label: order.refundType === "buyer_cancellation" ? "2% fee and refund calculated" : "Refund amount calculated", done: Number(order.refundAmount || 0) > 0 },
@@ -2455,6 +2456,17 @@ export default function Stallyard() {
           }
         } catch {
           // couldn't reach backend for seller reports — leave empty
+        }
+      }
+      if (!isAdmin) {
+        try {
+          const sellerReportsRes = await authFetch(`${BACKEND_URL}/seller-reports/mine`);
+          if (sellerReportsRes.ok) {
+            const { reports } = await sellerReportsRes.json();
+            setSellerReports(reports || []);
+          }
+        } catch {
+          // Seller report history is supplementary to the buyer dashboard.
         }
       }
       try {
@@ -7847,6 +7859,11 @@ export default function Stallyard() {
       : 0;
     return sum + Math.max(0, keptSubtotal + keptShipping + taxShare);
   }, 0);
+  const buyerSpentOrderCount = myOrders.filter((order) => {
+    if (order.paymentStatus === "refunded" || (order.refundType === "full" && order.refundStatus === "processed")) return false;
+    if (order.refundStatus === "processed" && Number(order.refundAmount || 0) >= Number(order.total || 0)) return false;
+    return order.items.some((item) => !["cancelled", "returned"].includes(item.fulfillmentStatus) && item.returnStatus !== "approved" && item.cancellationStatus !== "approved");
+  }).length;
   const buyerTokensReadyCount = myOrders.reduce(
     (count, order) => count + (order.paymentStatus === "held" && !order.isDisputed
       ? order.items.filter((item) =>
@@ -11778,6 +11795,18 @@ export default function Stallyard() {
               </button>
             </div>
 
+            {sellerReports.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>My seller reports</h3>
+                <div className="space-y-2">{sellerReports.slice(0, 3).map((report) => (
+                  <div key={report.id} className="p-3 rounded-lg border bg-white text-xs" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2"><span className="font-medium" style={{ color: INK }}>{report.reference}</span><Tag color={report.status === "resolved" ? SAGE : report.status === "dismissed" ? SLATE : MARIGOLD}>{String(report.status).replace("_", " ")}</Tag></div>
+                    <div className="mt-1" style={{ color: SLATE }}>{report.seller_display_name || report.seller_username} · {String(report.reason).replaceAll("_", " ")}{report.order_id ? ` · ${orderNumber(report.order_id)}` : ""}</div>
+                  </div>
+                ))}</div>
+              </div>
+            )}
+
             <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
               Orders
             </h3>
@@ -12032,7 +12061,7 @@ export default function Stallyard() {
                       {formatMoney(buyerTotalSpent, "NGN")}
                     </div>
                     <div className="text-xs" style={{ color: SLATE }}>
-                      total spent ({myOrders.length} order{myOrders.length === 1 ? "" : "s"})
+                      total spent ({buyerSpentOrderCount} order{buyerSpentOrderCount === 1 ? "" : "s"})
                     </div>
                   </div>
                 </div>
@@ -12282,22 +12311,6 @@ export default function Stallyard() {
                                   </a>
                                 </div>
                               )}
-                              {!item.buyerConfirmedAt && !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
-                                (item.fulfillmentStatus === "shipped" || item.fulfillmentStatus === "delivered") && (
-                                  <div className="mt-2 p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
-                                    <div className="text-xs font-medium mb-1" style={{ color: INK }}>Confirm receipt when you are satisfied</div>
-                                    <p className="text-xs mb-2" style={{ color: SLATE }}>
-                                      Your private token is already shown below. Confirm receipt after you receive, inspect, and accept the item.
-                                    </p>
-                                    <button
-                                      onClick={() => confirmReceipt(o.id, item.id)}
-                                      className="px-3 py-2 rounded-lg text-xs font-semibold"
-                                      style={{ backgroundColor: MARIGOLD, color: INK }}
-                                    >
-                                      Confirm receipt
-                                    </button>
-                                  </div>
-                                )}
                               {o.paymentStatus === "held" &&
                                 !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
                                 !["requested", "approved"].includes(item.cancellationStatus) && (
@@ -12551,7 +12564,7 @@ export default function Stallyard() {
                               </div>
                             )}
 
-                            {item.fulfillmentStatus === "shipped" && (
+                            {(item.fulfillmentStatus === "delivered" || o.paymentStatus === "released") && !["cancelled", "returned"].includes(item.fulfillmentStatus) && (
                               <div className="mt-2 mb-1 pl-6">
                                 {existingReview && !reviewDrafts[draftKey] ? (
                                   <div className="flex items-center gap-2 flex-wrap">
@@ -14147,6 +14160,18 @@ export default function Stallyard() {
                       About: {activeThread.listingTitle}
                     </div>
                   </div>
+                  {activeThread.buyerUsername === currentUser && (
+                    <button
+                      onClick={() => {
+                        const seller = members.find((member) => member.username === activeThread.sellerUsername);
+                        openSellerReport(seller?.backendId, activeThread.sellerName || activeThread.sellerUsername, activeThreadOrderId || null);
+                      }}
+                      className="ml-auto text-xs font-medium underline"
+                      style={{ color: BERRY }}
+                    >
+                      Report seller
+                    </button>
+                  )}
                 </div>
 
                 <div
