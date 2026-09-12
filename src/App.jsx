@@ -10949,7 +10949,7 @@ export default function Stallyard() {
                   Manage your listings, orders, deliveries, payouts, messages, and seller performance.
                 </p>
               </div>
-              {currentUser && hasSellerListingAccess && (
+              {currentUser && (
                 <div className="flex items-center gap-2 flex-wrap">
                   <button
                     type="button"
@@ -10959,21 +10959,23 @@ export default function Stallyard() {
                   >
                     Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
                   </button>
-                  <button
-                    onClick={() => {
-                      resetForm();
-                      setView("sell");
-                    }}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-                    style={{ backgroundColor: MARIGOLD, color: INK }}
-                  >
-                    <Plus size={16} />
-                    Create a listing
-                  </button>
+                  {hasSellerListingAccess && (
+                    <button
+                      onClick={() => {
+                        resetForm();
+                        setView("sell");
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      <Plus size={16} />
+                      Create a listing
+                    </button>
+                  )}
                 </div>
               )}
             </div>
-            {currentUser && hasSellerListingAccess && (
+            {currentUser && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
                 {[
                   { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
