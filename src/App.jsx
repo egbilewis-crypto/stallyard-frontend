@@ -1657,9 +1657,8 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   const [cameraReady, setCameraReady] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({ legalName: "", dateOfBirth: "", idType: "nin", idNumber: "", idExpiration: "", consent: false });
+  const [form, setForm] = useState({ legalName: "", dateOfBirth: "", consent: false });
   const [captures, setCaptures] = useState({ liveSelfie: "", holdingIdSelfie: "", challengeFrames: [] });
-  const [documents, setDocuments] = useState({ idFront: "", idBack: "" });
   const [faceChecks, setFaceChecks] = useState([]);
   const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
   const [faceMatchScore, setFaceMatchScore] = useState(null);
@@ -1748,17 +1747,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     else setCaptures((current) => ({ ...current, challengeFrames: [...current.challengeFrames, dataUrl].slice(0, 3) }));
   };
 
-  const chooseDocument = async (event, key) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) { setError("Identity evidence must be an image."); return; }
-    try {
-      const dataUrl = await resizeImageFile(file, 1400, 0.86);
-      setDocuments((current) => ({ ...current, [key]: dataUrl }));
-      setError("");
-    } catch { setError("That image could not be read. Choose a clear photograph."); }
-  };
-
   const loadFaceMatcher = async () => {
     if (!window.faceapi) {
       await new Promise((resolve, reject) => {
@@ -1782,34 +1770,33 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src;
   });
 
-  const verifyFaceMatchesId = async () => {
+  const verifyFaceMatchesHoldingPhoto = async () => {
     const faceapi = await loadFaceMatcher();
-    const [selfieImage, idImage] = await Promise.all([dataUrlImage(captures.liveSelfie), dataUrlImage(documents.idFront)]);
+    const [selfieImage, holdingImage] = await Promise.all([dataUrlImage(captures.liveSelfie), dataUrlImage(captures.holdingIdSelfie)]);
     const [selfieFace, idFace] = await Promise.all([
       faceapi.detectSingleFace(selfieImage).withFaceLandmarks().withFaceDescriptor(),
-      faceapi.detectSingleFace(idImage).withFaceLandmarks().withFaceDescriptor(),
+      faceapi.detectSingleFace(holdingImage).withFaceLandmarks().withFaceDescriptor(),
     ]);
-    if (!selfieFace || !idFace) throw new Error("A clear face could not be found in both the live selfie and ID photo. Retake the unclear image.");
+    if (!selfieFace || !idFace) throw new Error("A clear face could not be found in both selfies. Retake the unclear image.");
     const distance = faceapi.euclideanDistance(selfieFace.descriptor, idFace.descriptor);
     const score = Math.max(0, Math.min(100, Math.round((1 - distance) * 100)));
     setFaceMatchScore(score);
-    if (distance > 0.5) throw new Error("The live selfie does not closely match the face on the ID. Check that the ID belongs to you and retake both images.");
+    if (distance > 0.5) throw new Error("Your live selfie does not closely match your selfie holding the ID. Retake both images.");
     return { passed: true, score, distance: Number(distance.toFixed(4)), selfieDescriptor: Array.from(selfieFace.descriptor) };
   };
 
   const submit = async () => {
     setError("");
     if (!faceDetectionSupported) { setError("Automatic face detection is unavailable on this browser. Use an updated supported phone or browser so Stallyard does not approve an unverified person."); return; }
-    if (!form.legalName.trim() || !form.dateOfBirth || !form.idNumber.trim() || !documents.idFront) { setError("Complete your identity details and add the front of your ID."); return; }
+    if (!form.legalName.trim() || !form.dateOfBirth) { setError("Enter your legal name and date of birth."); return; }
     if (!captures.liveSelfie || !captures.holdingIdSelfie || captures.challengeFrames.length !== 3) { setError("Complete the live selfie, all three challenges, and the selfie holding your ID."); return; }
     if (!form.consent) { setError("You must accept the identity-record consent before submitting."); return; }
     setSubmitting(true);
     try {
-      const faceMatch = await verifyFaceMatchesId();
+      const faceMatch = await verifyFaceMatchesHoldingPhoto();
       const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, idNumber: form.idNumber.trim(), idFront: documents.idFront, idBack: documents.idBack || null,
-          ...captures, challenges, faceDetectionSupported, faceChecks, faceMatch }),
+        body: JSON.stringify({ ...form, ...captures, challenges, faceDetectionSupported, faceChecks, faceMatch }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
@@ -1831,14 +1818,8 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           <div className="space-y-3">
             <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
             <label className="block text-xs" style={{ color: SLATE }}>Date of birth<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
-            <select className="w-full px-3 py-2 rounded-lg border" value={form.idType} onChange={(e) => setForm({ ...form, idType: e.target.value })}>
-              <option value="nin">National Identification Number (NIN)</option><option value="passport">Nigerian International Passport</option><option value="drivers_license">Nigerian Driver's Licence</option><option value="voters_card">Permanent Voter's Card (PVC)</option><option value="cerpac">Residence/Work Permit (CERPAC)</option>
-            </select>
-            <input className="w-full px-3 py-2 rounded-lg border" placeholder="ID number" value={form.idNumber} onChange={(e) => setForm({ ...form, idNumber: e.target.value })} />
-            <label className="block text-xs" style={{ color: SLATE }}>ID expiration, if applicable<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.idExpiration} onChange={(e) => setForm({ ...form, idExpiration: e.target.value })} /></label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="p-3 rounded-lg border cursor-pointer text-sm">{documents.idFront ? "✓ ID front added" : "Add ID front"}<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => chooseDocument(e, "idFront")} /></label>
-              <label className="p-3 rounded-lg border cursor-pointer text-sm">{documents.idBack ? "✓ ID back added" : "Add ID back"}<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => chooseDocument(e, "idBack")} /></label>
+            <div className="p-3 rounded-lg border text-xs" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE", color: SLATE }}>
+              You do not need to enter an ID number or upload separate ID photographs for Casual Seller verification. You will only take a selfie while holding your identification.
             </div>
           </div>
           <div>
@@ -1854,7 +1835,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
         </div>
         <label className="flex gap-2 mt-5 text-xs" style={{ color: SLATE }}><input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} /><span>I consent to Stallyard collecting and securely retaining my identity images and verification results for fraud prevention, account security, seller accountability, transaction investigations, and legal recordkeeping. They may be accessed only by authorized Stallyard verification personnel.</span></label>
         {error && <p className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
-        {faceMatchScore !== null && <p className="text-xs mt-2" style={{ color: SAGE }}>Live-selfie to ID face match: {faceMatchScore}%</p>}
+        {faceMatchScore !== null && <p className="text-xs mt-2" style={{ color: SAGE }}>Live-selfie match: {faceMatchScore}%</p>}
         <button disabled={submitting} onClick={submit} className="w-full mt-4 py-3 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{submitting ? "Securely checking and saving…" : "Submit for automatic verification"}</button>
       </div>
     </div>
@@ -2315,6 +2296,9 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
+  const [verifiedSellerIdForm, setVerifiedSellerIdForm] = useState({ idType: "nin", idNumber: "", idExpiration: "" });
+  const [verifiedSellerIdImages, setVerifiedSellerIdImages] = useState({ front: "", back: "" });
+  const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
@@ -2887,12 +2871,14 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === currentUser);
     if (target?.backendId) {
       try {
+        if (!verifiedSellerIdForm.idNumber.trim() || !verifiedSellerIdImages.front) { showToast("Enter your ID number and upload the front of your identification"); return; }
         if (!bankStatementDraft) { showToast("Upload a bank statement before applying for verified seller status"); return; }
         if (!verifiedSellerConsent) { showToast("Accept the verified-seller declaration before applying"); return; }
         const res = await authFetch(`${BACKEND_URL}/verified-seller/apply`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bankStatement: bankStatementDraft, consent: true }),
+          body: JSON.stringify({ bankStatement: bankStatementDraft, consent: true, ...verifiedSellerIdForm,
+            idFront: verifiedSellerIdImages.front, idBack: verifiedSellerIdImages.back || null }),
         });
         if (!res.ok) {
           let message = "Couldn't submit application — try again";
@@ -2919,6 +2905,8 @@ export default function Stallyard() {
       )
     );
     setBankStatementDraft(null);
+    setVerifiedSellerIdForm({ idType: "nin", idNumber: "", idExpiration: "" });
+    setVerifiedSellerIdImages({ front: "", back: "" });
     setVerifiedSellerConsent(false);
     showToast("Verified-seller application submitted — you'll be notified after admin review");
   };
@@ -5588,6 +5576,16 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message); }
   };
 
+  const viewVerifiedSellerIdentification = async (application, side) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/identification/${side}`);
+      if (!response.ok) throw new Error("Identification image unavailable");
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) { showToast(err.message); }
+  };
+
   useEffect(() => {
     if (adminTab === "members" && currentMember?.isAdmin && hasAdminPermission(currentMember, "seller_verification")) {
       fetchVerifiedSellerApplications();
@@ -7207,6 +7205,26 @@ export default function Stallyard() {
       showToast("Couldn't read that file — try a different one");
     } finally {
       setUploadingBankStatement(false);
+    }
+  };
+
+  const handleVerifiedSellerIdSelect = async (e, side) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      showToast("Choose a clear ID image under 5MB");
+      return;
+    }
+    setUploadingVerifiedSellerId(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 1400, 0.86);
+      setVerifiedSellerIdImages((current) => ({ ...current, [side]: dataUrl }));
+      showToast(`${side === "front" ? "Front" : "Back"} of identification attached`);
+    } catch {
+      showToast("Couldn't process that identification image");
+    } finally {
+      setUploadingVerifiedSellerId(false);
     }
   };
 
@@ -10386,7 +10404,26 @@ export default function Stallyard() {
                   <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
                     <p className="text-sm font-medium" style={{ color: INK }}>Need more than ₦500,000?</p>
                     <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦10,000,000 in combined active listings.</p>
-                    <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for admin approval.</p>
+                    <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Add one accepted government ID, upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for approval.</p>
+                    <select value={verifiedSellerIdForm.idType} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idType: e.target.value }))} className="w-full px-3 py-2 rounded-lg border text-sm bg-white mb-2" style={{ borderColor: "#DDD8CC" }}>
+                      <option value="nin">National Identification Number (NIN)</option>
+                      <option value="passport">Nigerian International Passport</option>
+                      <option value="drivers_license">Nigerian Driver's Licence</option>
+                      <option value="voters_card">Permanent Voter's Card (PVC)</option>
+                      <option value="cerpac">Residence/Work Permit (CERPAC)</option>
+                    </select>
+                    <input value={verifiedSellerIdForm.idNumber} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idNumber: e.target.value }))} placeholder="Identification number" className="w-full px-3 py-2 rounded-lg border text-sm mb-2" style={{ borderColor: "#DDD8CC" }} />
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Expiration date, if applicable<input type="date" value={verifiedSellerIdForm.idExpiration} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idExpiration: e.target.value }))} className="block w-full mt-1 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} /></label>
+                    <div className="grid grid-cols-2 gap-2 mb-2">
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
+                        {verifiedSellerIdImages.front ? "✓ ID front attached" : "Upload ID front"}
+                        <input type="file" accept="image/*" onChange={(e) => handleVerifiedSellerIdSelect(e, "front")} className="hidden" disabled={uploadingVerifiedSellerId} />
+                      </label>
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
+                        {verifiedSellerIdImages.back ? "✓ ID back attached" : "Upload ID back, if applicable"}
+                        <input type="file" accept="image/*" onChange={(e) => handleVerifiedSellerIdSelect(e, "back")} className="hidden" disabled={uploadingVerifiedSellerId} />
+                      </label>
+                    </div>
                     <label className="inline-block px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
                       {bankStatementDraft ? "✓ Bank statement attached" : "Upload required bank statement"}
                       <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
@@ -16114,8 +16151,12 @@ export default function Stallyard() {
                     <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified-seller applications awaiting approval</h4>
                     <div className="space-y-2">{verifiedSellerApplications.filter((application) => application.status === "pending").map((application) => (
                       <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
-                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p></div>
-                        <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View private bank statement</button>
+                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p><p className="text-xs mt-1" style={{ color: SLATE }}>{application.id_type || "Identification"} · ending {application.id_number_last4 || "—"}{application.id_expiration ? ` · expires ${application.id_expiration}` : ""}</p></div>
+                        <div className="flex gap-3 flex-wrap">
+                          <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
+                          {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
+                          <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
+                        </div>
                       </div>
                     ))}</div>
                   </div>
