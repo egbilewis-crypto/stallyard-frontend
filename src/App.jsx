@@ -1060,6 +1060,11 @@ function backendUserToMember(user, existing) {
     phone: user.phone || existing?.phone || "",
     firstName: user.first_name || existing?.firstName || "",
     lastName: user.last_name || existing?.lastName || "",
+    otherName: user.other_name || existing?.otherName || "",
+    dateOfBirth: user.date_of_birth ? String(user.date_of_birth).slice(0, 10) : existing?.dateOfBirth || "",
+    gender: user.gender || existing?.gender || "",
+    nationality: user.nationality || existing?.nationality || "",
+    stateOfResidence: user.state_of_residence || existing?.stateOfResidence || "",
     officeLocation: user.office_location || existing?.officeLocation || "",
     avatarUrl: user.avatar_url ?? existing?.avatarUrl ?? "",
     storeBio: user.store_bio ?? existing?.storeBio ?? "",
@@ -1896,6 +1901,7 @@ export default function Stallyard() {
   const [addMemberForm, setAddMemberForm] = useState({
     firstName: "",
     lastName: "",
+    otherName: "",
     displayName: "",
     officeLocation: "",
     username: "",
@@ -1992,6 +1998,11 @@ export default function Stallyard() {
     displayName: "",
     firstName: "",
     lastName: "",
+    otherName: "",
+    dateOfBirth: "",
+    gender: "",
+    nationality: "",
+    stateOfResidence: "",
     officeLocation: "",
     country: "Nigeria",
     licenseNumber: "",
@@ -3084,6 +3095,11 @@ export default function Stallyard() {
       displayName: "",
       firstName: "",
       lastName: "",
+      otherName: "",
+      dateOfBirth: "",
+      gender: "",
+      nationality: "",
+      stateOfResidence: "",
       officeLocation: "",
       country: "Nigeria",
       licenseNumber: "",
@@ -3109,7 +3125,31 @@ export default function Stallyard() {
   const completeProfile = async () => {
     setProfileStageError("");
     if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
-      setProfileStageError("Enter your first and last name");
+      setProfileStageError("Enter your surname and first name");
+      return;
+    }
+    if (!authForm.dateOfBirth) {
+      setProfileStageError("Enter your date of birth");
+      return;
+    }
+    const birthDate = new Date(`${authForm.dateOfBirth}T00:00:00Z`);
+    const today = new Date();
+    let profileAge = today.getUTCFullYear() - birthDate.getUTCFullYear();
+    if (today.getUTCMonth() < birthDate.getUTCMonth() || (today.getUTCMonth() === birthDate.getUTCMonth() && today.getUTCDate() < birthDate.getUTCDate())) profileAge -= 1;
+    if (Number.isNaN(birthDate.getTime()) || birthDate > today || profileAge < 18) {
+      setProfileStageError("You must be at least 18 years old");
+      return;
+    }
+    if (!authForm.gender) {
+      setProfileStageError("Select your gender");
+      return;
+    }
+    if (!authForm.nationality.trim()) {
+      setProfileStageError("Enter your nationality");
+      return;
+    }
+    if (!authForm.stateOfResidence) {
+      setProfileStageError("Select your state of residence");
       return;
     }
     if (!authForm.country.trim()) {
@@ -3138,6 +3178,11 @@ export default function Stallyard() {
         body: JSON.stringify({
           firstName: authForm.firstName.trim(),
           lastName: authForm.lastName.trim(),
+          otherName: authForm.otherName.trim(),
+          dateOfBirth: authForm.dateOfBirth,
+          gender: authForm.gender,
+          nationality: authForm.nationality.trim(),
+          stateOfResidence: authForm.stateOfResidence,
           phone: authForm.phone.trim(),
           officeLocation: authForm.officeLocation.trim(),
           country: authForm.country.trim(),
@@ -3276,6 +3321,11 @@ export default function Stallyard() {
       displayName: "",
       firstName: member.firstName || "",
       lastName: member.lastName || "",
+      otherName: member.otherName || "",
+      dateOfBirth: member.dateOfBirth || "",
+      gender: member.gender || "",
+      nationality: member.nationality || "",
+      stateOfResidence: member.stateOfResidence || "",
       officeLocation: member.officeLocation || "",
       country: member.country || "",
       licenseNumber: member.licenseNumber || "",
@@ -8812,29 +8862,80 @@ export default function Stallyard() {
                         Enter your bank-account name exactly
                       </p>
                       <p className="text-xs mt-1" style={{ color: SLATE }}>
-                        Your first and last name must match the name registered on your bank account. A small spelling difference may cause Stallyard to reject the account and prevent seller payouts.
+                        Your surname, first name and any other name must match the name registered on your bank account. A small spelling difference may cause Stallyard to reject the account during buying, selling or payout verification.
                       </p>
                     </div>
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <input
-                          value={authForm.firstName}
-                          onChange={(e) => setAuthForm({ ...authForm, firstName: e.target.value })}
-                          placeholder="First name"
-                          className="w-full px-3 py-2 rounded-lg border outline-none"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
-                      </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="flex-1">
                         <input
                           value={authForm.lastName}
                           onChange={(e) => setAuthForm({ ...authForm, lastName: e.target.value })}
-                          placeholder="Last name"
+                          placeholder="Surname"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          value={authForm.firstName}
+                          onChange={(e) => setAuthForm({ ...authForm, firstName: e.target.value })}
+                          placeholder="First Name"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          value={authForm.otherName}
+                          onChange={(e) => setAuthForm({ ...authForm, otherName: e.target.value })}
+                          placeholder="Other Name (optional)"
                           className="w-full px-3 py-2 rounded-lg border outline-none"
                           style={{ borderColor: "#DDD8CC" }}
                         />
                       </div>
                     </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <label className="text-xs" style={{ color: SLATE }}>
+                        Date of Birth
+                        <input
+                          type="date"
+                          value={authForm.dateOfBirth}
+                          onChange={(e) => setAuthForm({ ...authForm, dateOfBirth: e.target.value })}
+                          className="block w-full mt-1 px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        />
+                      </label>
+                      <label className="text-xs" style={{ color: SLATE }}>
+                        Gender
+                        <select
+                          value={authForm.gender}
+                          onChange={(e) => setAuthForm({ ...authForm, gender: e.target.value })}
+                          className="block w-full mt-1 px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC", color: authForm.gender ? INK : SLATE }}
+                        >
+                          <option value="">Select gender</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                          <option value="prefer_not_to_say">Prefer not to say</option>
+                        </select>
+                      </label>
+                    </div>
+                    <input
+                      value={authForm.nationality}
+                      onChange={(e) => setAuthForm({ ...authForm, nationality: e.target.value })}
+                      placeholder="Nationality"
+                      className="w-full px-3 py-2 rounded-lg border outline-none"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <select
+                      value={authForm.stateOfResidence}
+                      onChange={(e) => setAuthForm({ ...authForm, stateOfResidence: e.target.value })}
+                      className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                      style={{ borderColor: "#DDD8CC", color: authForm.stateOfResidence ? INK : SLATE }}
+                    >
+                      <option value="">Select state of residence</option>
+                      {NIGERIAN_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                    </select>
                     {showBusinessFields && (
                       <input
                         value={authForm.displayName}
