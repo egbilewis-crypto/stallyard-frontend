@@ -9173,9 +9173,6 @@ export default function Stallyard() {
                     >
                       {isSignUp ? "Continue" : "Sign in"}
                     </button>
-                    <p className="text-xs text-center pt-1" style={{ color: SLATE }}>
-                      Demo accounts — please don't reuse a real password, and don't enter your actual ID/passport number anywhere.
-                    </p>
                   </div>
                 </>
               )}
