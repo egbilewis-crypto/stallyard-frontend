@@ -7720,26 +7720,56 @@ export default function Stallyard() {
   );
   const buyerActiveOrdersCount = myOrders.filter((o) =>
     o.paymentStatus === "held" &&
-    o.items.some((i) => !["cancelled", "returned"].includes(i.fulfillmentStatus))
+    o.items.some((i) =>
+      !["cancelled", "returned"].includes(i.fulfillmentStatus) &&
+      !["approved"].includes(i.returnStatus) &&
+      !["approved"].includes(i.cancellationStatus)
+    )
   ).length;
   const buyerOrdersWaitingToShip = myPurchasedItems.filter((i) =>
-    i.paymentStatus === "held" && ["new", "preparing"].includes(i.fulfillmentStatus || "new")
+    i.paymentStatus === "held" && ["new", "preparing"].includes(i.fulfillmentStatus || "new") &&
+    i.returnStatus !== "approved" && i.cancellationStatus !== "approved"
   ).length;
   const buyerOrdersInTransit = myPurchasedItems.filter((i) =>
-    i.paymentStatus === "held" && i.fulfillmentStatus === "shipped"
+    i.paymentStatus === "held" && i.fulfillmentStatus === "shipped" &&
+    i.returnStatus !== "approved" && i.cancellationStatus !== "approved"
   ).length;
   const buyerCompletedCount = myPurchasedItems.filter((i) =>
     i.paymentStatus === "released" && !["cancelled", "returned"].includes(i.fulfillmentStatus)
   ).length;
-  const buyerOpenDisputesCount = myOrders.filter((o) => o.isDisputed).length;
+  // Count unique order IDs, never dispute rows or order items. Return cases are
+  // intentionally excluded from this card because they have their own count.
+  const buyerOpenDisputeOrderIds = new Set(
+    (myDisputes.length > 0
+      ? myDisputes
+      .filter((dispute) => ["open", "in_review"].includes(dispute.status))
+      .map((dispute) => String(dispute.order_id || dispute.orderId))
+      : myOrders.filter((o) => o.isDisputed).map((o) => String(o.id)))
+      .filter((id) => id && id !== "undefined")
+  );
+  const buyerOpenDisputesCount = buyerOpenDisputeOrderIds.size;
   const buyerActiveReturnsDisputes = myOrders.filter((o) =>
     o.isDisputed || o.items.some((i) => ["requested", "approved"].includes(i.returnStatus))
   ).length;
   const buyerPendingReturnsCount = myPurchasedItems.filter((i) => i.returnStatus === "requested").length;
   const buyerTotalSpent = myOrders.reduce((sum, order) => {
-    if (order.paymentStatus === "refunded") return sum;
+    if (order.paymentStatus === "refunded" || (order.refundType === "full" && order.refundStatus === "processed")) return sum;
     const processedRefund = order.refundStatus === "processed" ? Number(order.refundAmount || 0) : 0;
-    return sum + Math.max(0, Number(order.total || 0) - processedRefund);
+    if (processedRefund > 0) return sum + Math.max(0, Number(order.total || 0) - processedRefund);
+
+    const keptItems = order.items.filter((item) =>
+      !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
+      item.returnStatus !== "approved" && item.cancellationStatus !== "approved"
+    );
+    if (keptItems.length === 0) return sum;
+    if (keptItems.length === order.items.length) return sum + Number(order.total || 0);
+
+    const keptSubtotal = keptItems.reduce((amount, item) => amount + Number(item.price || 0) * Number(item.qty || 1), 0);
+    const keptShipping = keptItems.reduce((amount, item) => amount + Number(item.shippingFee || 0) * Number(item.qty || 1), 0);
+    const taxShare = Number(order.subtotal || 0) > 0
+      ? Number(order.taxAmount || 0) * (keptSubtotal / Number(order.subtotal))
+      : 0;
+    return sum + Math.max(0, keptSubtotal + keptShipping + taxShare);
   }, 0);
   const buyerTokensReadyCount = myOrders.reduce(
     (count, order) => count + (order.paymentStatus === "held" && !order.isDisputed
@@ -7771,19 +7801,22 @@ export default function Stallyard() {
     const items = order.items || [];
     if (buyerOrderStatusFilter === "all") return true;
     if (buyerOrderStatusFilter === "active") {
-      return order.paymentStatus === "held" && items.some((item) => !["cancelled", "returned"].includes(item.fulfillmentStatus));
+      return order.paymentStatus === "held" && items.some((item) =>
+        !["cancelled", "returned"].includes(item.fulfillmentStatus) &&
+        item.returnStatus !== "approved" && item.cancellationStatus !== "approved"
+      );
     }
     if (buyerOrderStatusFilter === "preparing") {
-      return items.some((item) => ["new", "preparing"].includes(item.fulfillmentStatus || "new"));
+      return items.some((item) => ["new", "preparing"].includes(item.fulfillmentStatus || "new") && item.returnStatus !== "approved" && item.cancellationStatus !== "approved");
     }
-    if (buyerOrderStatusFilter === "shipped") return items.some((item) => item.fulfillmentStatus === "shipped");
+    if (buyerOrderStatusFilter === "shipped") return items.some((item) => item.fulfillmentStatus === "shipped" && item.returnStatus !== "approved" && item.cancellationStatus !== "approved");
     if (buyerOrderStatusFilter === "delivered") return items.some((item) => item.fulfillmentStatus === "delivered");
     if (buyerOrderStatusFilter === "completed") return order.paymentStatus === "released";
     if (buyerOrderStatusFilter === "returned") {
       return items.some((item) => item.fulfillmentStatus === "returned" || ["requested", "approved"].includes(item.returnStatus));
     }
     if (buyerOrderStatusFilter === "refunded") return order.paymentStatus === "refunded" || order.refundStatus === "processed";
-    if (buyerOrderStatusFilter === "disputed") return order.isDisputed;
+    if (buyerOrderStatusFilter === "disputed") return buyerOpenDisputeOrderIds.has(String(order.id));
     return true;
   });
   const unreadNotifCount = notifications.filter((n) => !n.read).length;
@@ -11634,7 +11667,11 @@ export default function Stallyard() {
                 </div>
               </button>
               <button
-                onClick={() => setView("orders")}
+                onClick={() => {
+                  setBuyerOrderSearch("");
+                  setBuyerOrderStatusFilter("disputed");
+                  setView("orders");
+                }}
                 className="p-3 rounded-lg border bg-white text-left"
                 style={{ borderColor: "#DDD8CC" }}
               >
@@ -11726,7 +11763,12 @@ export default function Stallyard() {
                     {myOrders.slice(0, 3).map((o) => (
                       <button
                         key={o.id}
-                        onClick={() => setView("orders")}
+                        onClick={() => {
+                          setBuyerOrderSearch(orderNumber(o.id));
+                          setBuyerOrderStatusFilter("all");
+                          setView("orders");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
                         className="w-full text-left p-3 rounded-lg border bg-white"
                         style={{ borderColor: "#DDD8CC" }}
                       >
