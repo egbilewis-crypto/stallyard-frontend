@@ -8789,6 +8789,14 @@ export default function Stallyard() {
                       <option value="">Country of residence</option>
                       <option value="Nigeria">Nigeria</option>
                     </select>
+                    <div className="p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8" }}>
+                      <p className="text-sm font-semibold" style={{ color: INK }}>
+                        Enter your bank-account name exactly
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                        Your first and last name must match the name registered on your bank account. A small spelling difference may cause Stallyard to reject the account and prevent seller payouts.
+                      </p>
+                    </div>
                     <div className="flex gap-3">
                       <div className="flex-1">
                         <input
@@ -9096,6 +9104,17 @@ export default function Stallyard() {
                       ? "Just a username, email, and password to get started — you can add the rest later."
                       : "Sign in to manage your stall and listings."}
                   </p>
+
+                  {isSignUp && (
+                    <div className="p-3 rounded-lg border mb-4" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8" }}>
+                      <p className="text-sm font-semibold" style={{ color: INK }}>
+                        Use the exact name on your bank account
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>
+                        After signup, enter your first and last name exactly as your bank has them. Even a small spelling difference can cause Stallyard to reject your bank account during seller payout verification.
+                      </p>
+                    </div>
+                  )}
 
                   <div className="space-y-3">
                     <input
