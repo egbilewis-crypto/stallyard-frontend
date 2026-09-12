@@ -1987,6 +1987,7 @@ export default function Stallyard() {
   const [sellerReports, setSellerReports] = useState([]);
   const [sellerReportTarget, setSellerReportTarget] = useState(null);
   const [sellerReportReceipt, setSellerReportReceipt] = useState(null);
+  const [showAllSellerReports, setShowAllSellerReports] = useState(false);
   const [sellerReportForm, setSellerReportForm] = useState({ reason: "", details: "", evidenceUrls: [] });
   const [submittingSellerReport, setSubmittingSellerReport] = useState(false);
   const [adminDisputes, setAdminDisputes] = useState([]);
@@ -3582,7 +3583,7 @@ export default function Stallyard() {
 
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartSubtotal = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0), 0);
+  const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0) * Number(i.qty || 1), 0);
   const cartTax = Math.round(cartSubtotal * (settings.taxRate || 0) * 100) / 100;
   const cartTotal = cartSubtotal + cartShipping + cartTax;
   const cartCurrency = "NGN";
@@ -7965,8 +7966,8 @@ export default function Stallyard() {
     return { avg, count: rs.length };
   };
 
-  const getReviewFor = (orderId, itemId) =>
-    reviews.find((r) => r.orderId === orderId && r.itemId === itemId) || null;
+  const getReviewFor = (orderId, listingId) =>
+    reviews.find((r) => r.orderId === orderId && r.listingId === listingId) || null;
 
   const getSellerVacationInfo = (username) => {
     const seller = members.find((m) => m.username === username);
@@ -11708,7 +11709,7 @@ export default function Stallyard() {
             <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
               Needs your attention
             </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
               <button
                 onClick={() => setView("orders")}
                 className="p-3 rounded-lg border bg-white text-left"
@@ -11742,21 +11743,6 @@ export default function Stallyard() {
                 </div>
                 <div className="text-xs" style={{ color: SLATE }}>
                   unread messages
-                </div>
-              </button>
-              <button
-                onClick={() => setView("orders")}
-                className="p-3 rounded-lg border bg-white text-left"
-                style={{ borderColor: "#DDD8CC" }}
-              >
-                <div
-                  className="text-2xl font-semibold"
-                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerPendingReturnsCount ? "#3B6E8F" : INK }}
-                >
-                  {buyerPendingReturnsCount}
-                </div>
-                <div className="text-xs" style={{ color: SLATE }}>
-                  pending returns
                 </div>
               </button>
               <button
@@ -11798,12 +11784,13 @@ export default function Stallyard() {
             {sellerReports.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>My seller reports</h3>
-                <div className="space-y-2">{sellerReports.slice(0, 3).map((report) => (
+                <div className="space-y-2">{(showAllSellerReports ? sellerReports : sellerReports.slice(0, 3)).map((report) => (
                   <div key={report.id} className="p-3 rounded-lg border bg-white text-xs" style={{ borderColor: "#DDD8CC" }}>
                     <div className="flex justify-between gap-2"><span className="font-medium" style={{ color: INK }}>{report.reference}</span><Tag color={report.status === "resolved" ? SAGE : report.status === "dismissed" ? SLATE : MARIGOLD}>{String(report.status).replace("_", " ")}</Tag></div>
                     <div className="mt-1" style={{ color: SLATE }}>{report.seller_display_name || report.seller_username} · {String(report.reason).replaceAll("_", " ")}{report.order_id ? ` · ${orderNumber(report.order_id)}` : ""}</div>
                   </div>
                 ))}</div>
+                {sellerReports.length > 3 && <button onClick={() => setShowAllSellerReports((shown) => !shown)} className="text-xs font-medium underline mt-2" style={{ color: SLATE }}>{showAllSellerReports ? "Show less" : `View all ${sellerReports.length} reports`}</button>}
               </div>
             )}
 
@@ -12184,7 +12171,7 @@ export default function Stallyard() {
                     )}
                     <div className="space-y-1.5">
                       {o.items.map((item, idx) => {
-                        const existingReview = getReviewFor(o.id, item.id);
+                        const existingReview = getReviewFor(o.id, item.listingId);
                         const draftKey = `${o.id}-${item.id}`;
                         const draft = reviewDrafts[draftKey] || {
                           rating: existingReview?.rating || 0,
@@ -12617,7 +12604,7 @@ export default function Stallyard() {
                                           await submitReview(
                                             o.id,
                                             item.id,
-                                            item.id,
+                                            item.listingId,
                                             item.ownerUsername,
                                             draft.rating,
                                             draft.comment
