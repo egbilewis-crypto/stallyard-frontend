@@ -973,6 +973,16 @@ function backendOrderToFrontend(row) {
     refundFailureReason: row.refund_failure_reason || "",
     refundedAt: row.refunded_at ? new Date(row.refunded_at).getTime() : null,
     isDisputed: !!row.is_disputed,
+    payouts: (row.payouts || []).map((p) => ({
+      id: p.id,
+      sellerId: p.seller_id,
+      amount: Number(p.amount) || 0,
+      status: p.status || "queued",
+      reference: p.paystack_reference || "",
+      failureReason: p.failure_reason || "",
+      createdAt: p.created_at ? new Date(p.created_at).getTime() : null,
+      completedAt: p.completed_at ? new Date(p.completed_at).getTime() : null,
+    })),
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     items: (row.items || []).map((i) => ({
       id: i.id,
@@ -993,6 +1003,7 @@ function backendOrderToFrontend(row) {
       // Secret delivery token is returned only on buyer-facing order responses.
       deliveryToken: i.delivery_token || null,
       deliveryTokenGeneratedAt: i.delivery_token_generated_at ? new Date(i.delivery_token_generated_at).getTime() : null,
+      deliveryTokenRedeemedAt: i.delivery_token_redeemed_at ? new Date(i.delivery_token_redeemed_at).getTime() : null,
       returnStatus: i.return_status || null,
       returnReason: i.return_reason || "",
       returnNote: i.return_note || "",
@@ -1792,12 +1803,17 @@ export default function Stallyard() {
   const [cartOpen, setCartOpen] = useState(false);
   const [shippingForm, setShippingForm] = useState({
     fullName: "",
+    phone: "",
     street: "",
     city: "",
     state: "",
     zip: "",
     country: "Nigeria",
+    deliveryInstructions: "",
+    preferredDeliveryTime: "",
+    locationPhotos: [],
   });
+  const [uploadingLocationPhotos, setUploadingLocationPhotos] = useState(false);
   const [saveShippingAddress, setSaveShippingAddress] = useState(true);
   const [shippingError, setShippingError] = useState("");
   const [confirmedOrder, setConfirmedOrder] = useState(null);
@@ -5945,6 +5961,28 @@ export default function Stallyard() {
     );
   };
 
+  const saveCheckoutAddressIfNeeded = async () => {
+    if (!saveShippingAddress) return;
+    const duplicate = savedAddresses.some((a) =>
+      String(a.street || "").trim().toLowerCase() === shippingForm.street.trim().toLowerCase() &&
+      String(a.city || "").trim().toLowerCase() === shippingForm.city.trim().toLowerCase()
+    );
+    if (duplicate) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/addresses`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...shippingForm, label: "Delivery address" }),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setSavedAddresses((addresses) => [saved, ...addresses]);
+      }
+    } catch {
+      // Saving an address is optional and must never interrupt a paid checkout.
+    }
+  };
+
   const checkout = async () => {
     if (cartItems.length === 0) return;
     if (!currentUser) {
@@ -5956,8 +5994,8 @@ export default function Stallyard() {
       showToast("Log in to check out");
       return;
     }
-    if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
+    if (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
+      setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
       return;
     }
     setShippingError("");
@@ -5986,6 +6024,7 @@ export default function Stallyard() {
       return;
     }
     if (saveShippingAddress) {
+      await saveCheckoutAddressIfNeeded();
       await persistMembers(
         members.map((m) => (m.username === currentUser ? { ...m, shippingAddress: { ...shippingForm } } : m))
       );
@@ -6027,8 +6066,8 @@ export default function Stallyard() {
   // redirect to Paystack needed, the charge happens directly.
   const payWithSavedCard = async (cardId) => {
     if (cartItems.length === 0) return;
-    if (!shippingForm.fullName.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
-      setShippingError("Fill in your name, street, city, and postal code to ship this order in Nigeria.");
+    if (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
+      setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
       return;
     }
     setShippingError("");
@@ -6050,6 +6089,7 @@ export default function Stallyard() {
         return;
       }
       if (saveShippingAddress) {
+        await saveCheckoutAddressIfNeeded();
         await persistMembers(
           members.map((m) => (m.username === currentUser ? { ...m, shippingAddress: { ...shippingForm } } : m))
         );
@@ -6100,7 +6140,7 @@ export default function Stallyard() {
   const [addressError, setAddressError] = useState("");
 
   const startNewAddress = () => {
-    setAddressDraft({ label: "", street: "", city: "", state: "", zip: "", country: "Nigeria" });
+    setAddressDraft({ label: "", fullName: currentMember?.displayName || "", phone: currentMember?.phone || "", street: "", city: "", state: "", zip: "", country: "Nigeria", deliveryInstructions: "", preferredDeliveryTime: "", locationPhotos: [] });
     setAddressError("");
   };
 
@@ -6108,18 +6148,41 @@ export default function Stallyard() {
     setAddressDraft({
       id: a.id,
       label: a.label || "",
+      fullName: a.full_name || "",
+      phone: a.phone || "",
       street: a.street || "",
       city: a.city || "",
       state: a.state || "",
       zip: a.zip || "",
       country: "Nigeria",
+      deliveryInstructions: a.delivery_instructions || "",
+      preferredDeliveryTime: a.preferred_delivery_time || "",
+      locationPhotos: a.location_photos || [],
     });
     setAddressError("");
   };
 
+  const handleSavedAddressLocationPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!addressDraft) return;
+    const room = 5 - (addressDraft.locationPhotos || []).length;
+    if (room <= 0) return showToast("You can add up to 5 delivery-location photos");
+    try {
+      const photos = [];
+      for (const file of files.slice(0, room)) {
+        if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) throw new Error();
+        photos.push(await resizeImageFile(file, 1200, 0.78));
+      }
+      setAddressDraft((draft) => ({ ...draft, locationPhotos: [...(draft.locationPhotos || []), ...photos].slice(0, 5) }));
+    } catch {
+      showToast("Use image files under 5MB each");
+    }
+  };
+
   const saveAddressDraft = async () => {
-    if (!addressDraft.street.trim() || !addressDraft.city.trim() || !addressDraft.country.trim()) {
-      setAddressError("Street and city are required for a Nigerian delivery address.");
+    if (!addressDraft.fullName?.trim() || !addressDraft.phone?.trim() || !addressDraft.street.trim() || !addressDraft.city.trim() || !addressDraft.country.trim()) {
+      setAddressError("Recipient name, phone, street, and city are required for a Nigerian delivery address.");
       return;
     }
     setAddressSaving(true);
@@ -6402,6 +6465,35 @@ export default function Stallyard() {
       showToast("Couldn't read that photo — try a different one");
     } finally {
       setUploadingPodKey(null);
+    }
+  };
+
+  const handleDeliveryLocationPhotos = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    const room = 5 - (shippingForm.locationPhotos || []).length;
+    if (!files.length || room <= 0) {
+      if (room <= 0) showToast("You can add up to 5 delivery-location photos");
+      return;
+    }
+    setUploadingLocationPhotos(true);
+    try {
+      const accepted = files.slice(0, room);
+      if (accepted.some((file) => !file.type.startsWith("image/") || file.size > 5 * 1024 * 1024)) {
+        showToast("Use image files under 5MB each");
+        return;
+      }
+      const photos = [];
+      for (const file of accepted) photos.push(await resizeImageFile(file, 1200, 0.78));
+      setShippingForm((form) => ({
+        ...form,
+        locationPhotos: [...(form.locationPhotos || []), ...photos].slice(0, 5),
+      }));
+      if (files.length > room) showToast("Only the first 5 delivery-location photos were added");
+    } catch {
+      showToast("Couldn't process one of those location photos");
+    } finally {
+      setUploadingLocationPhotos(false);
     }
   };
 
@@ -10693,12 +10785,22 @@ export default function Stallyard() {
                               className="text-xs mb-3 p-2 rounded-lg"
                               style={{ backgroundColor: CANVAS, color: INK }}
                             >
-                              <span className="font-medium">Ship to:</span> {o.shippingAddress.fullName},{" "}
-                              {o.shippingAddress.street}, {o.shippingAddress.city}
-                              {o.shippingAddress.state ? `, ${o.shippingAddress.state}` : ""}{" "}
-                              {o.shippingAddress.zip}, {o.shippingAddress.country}
+                              <div><span className="font-medium">Deliver to:</span> {o.shippingAddress.fullName}</div>
+                              <div>{o.shippingAddress.street}, {o.shippingAddress.city}{o.shippingAddress.state ? `, ${o.shippingAddress.state}` : ""} {o.shippingAddress.zip}, {o.shippingAddress.country}</div>
+                              {o.shippingAddress.phone && <div className="mt-1"><span className="font-medium">Contact:</span> <a href={`tel:${o.shippingAddress.phone}`} className="underline">{o.shippingAddress.phone}</a></div>}
+                              {o.shippingAddress.deliveryInstructions && <div className="mt-1"><span className="font-medium">Private instructions:</span> {o.shippingAddress.deliveryInstructions}</div>}
+                              {o.shippingAddress.preferredDeliveryTime && <div className="mt-1"><span className="font-medium">Preferred time:</span> {o.shippingAddress.preferredDeliveryTime}</div>}
+                              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.shippingAddress.street, o.shippingAddress.city, o.shippingAddress.state, o.shippingAddress.country].filter(Boolean).join(", "))}`} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 underline font-medium">Open address in map</a>
+                              {(o.shippingAddress.locationPhotos || []).length > 0 && (
+                                <div className="mt-2"><div className="font-medium mb-1">Private location photos</div><div className="flex gap-2 flex-wrap">{o.shippingAddress.locationPhotos.map((photo, index) => <img key={index} src={photo} alt={`Delivery location ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />)}</div></div>
+                              )}
                             </div>
                           )}
+                          {(o.payouts || []).length > 0 && (() => {
+                            const payout = o.payouts[0];
+                            const label = { queued: "Payout queued", processing: "Payout processing", paid: "Paid to bank", failed: "Payout failed", reversed: "Payout reversed", request_unknown: "Payout being verified", needs_bank: "Bank details required" }[payout.status] || payout.status;
+                            return <div className="text-xs mb-3 p-2 rounded-lg border" style={{ borderColor: payout.status === "paid" ? SAGE : payout.status === "failed" || payout.status === "reversed" ? BERRY : MARIGOLD }}><span className="font-semibold">{label}</span> · {formatMoney(payout.amount, "NGN")}{payout.failureReason ? <div className="mt-1">{payout.failureReason}</div> : null}</div>;
+                          })()}
                           {o.isDisputed && getMyDisputeForOrder(o.id) && (
                             <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FFF7F5" }}>
                               <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
@@ -12714,6 +12816,10 @@ export default function Stallyard() {
                         className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
                         style={{ borderColor: "#DDD8CC" }}
                       />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                        <input value={addressDraft.fullName || ""} onChange={(e) => setAddressDraft({ ...addressDraft, fullName: e.target.value })} placeholder="Recipient full name" className="px-3 py-2 rounded-lg border outline-none text-sm" style={{ borderColor: "#DDD8CC" }} />
+                        <input value={addressDraft.phone || ""} onChange={(e) => setAddressDraft({ ...addressDraft, phone: e.target.value })} placeholder="Recipient phone" className="px-3 py-2 rounded-lg border outline-none text-sm" style={{ borderColor: "#DDD8CC" }} />
+                      </div>
                       <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
                         Street
                       </label>
@@ -12738,6 +12844,12 @@ export default function Stallyard() {
                           className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
+                      </div>
+                      <textarea value={addressDraft.deliveryInstructions || ""} onChange={(e) => setAddressDraft({ ...addressDraft, deliveryInstructions: e.target.value.slice(0, 1000) })} placeholder="Private delivery instructions or landmark" rows={3} className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm" style={{ borderColor: "#DDD8CC" }} />
+                      <input value={addressDraft.preferredDeliveryTime || ""} onChange={(e) => setAddressDraft({ ...addressDraft, preferredDeliveryTime: e.target.value.slice(0, 200) })} placeholder="Preferred delivery time (optional)" className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm" style={{ borderColor: "#DDD8CC" }} />
+                      <div className="mb-2">
+                        <label className="text-xs font-medium underline cursor-pointer" style={{ color: SLATE }}>Add private location photos ({(addressDraft.locationPhotos || []).length}/5)<input type="file" accept="image/*" multiple className="hidden" onChange={handleSavedAddressLocationPhotos} /></label>
+                        <div className="flex gap-2 flex-wrap mt-2">{(addressDraft.locationPhotos || []).map((photo, index) => <div key={index} className="relative"><img src={photo} alt={`Location ${index + 1}`} className="w-14 h-14 object-cover rounded-lg border" /><button type="button" onClick={() => setAddressDraft((draft) => ({ ...draft, locationPhotos: draft.locationPhotos.filter((_, i) => i !== index) }))} className="absolute -top-1 -right-1 bg-white rounded-full border" aria-label="Remove photo"><X size={12} /></button></div>)}</div>
                       </div>
                       <div className="flex gap-2 mb-2">
                         <input
@@ -15404,6 +15516,10 @@ export default function Stallyard() {
                           <div className="pt-2">
                             <strong style={{ color: INK }}>Ship to:</strong><br />
                             {[activeOrder.shippingAddress?.fullName, activeOrder.shippingAddress?.street, activeOrder.shippingAddress?.city, activeOrder.shippingAddress?.state, activeOrder.shippingAddress?.zip, activeOrder.shippingAddress?.country].filter(Boolean).join(", ") || "No shipping address recorded"}
+                            {activeOrder.shippingAddress?.phone && <div className="mt-1"><strong>Contact:</strong> {activeOrder.shippingAddress.phone}</div>}
+                            {activeOrder.shippingAddress?.deliveryInstructions && <div className="mt-1"><strong>Delivery instructions:</strong> {activeOrder.shippingAddress.deliveryInstructions}</div>}
+                            {activeOrder.shippingAddress?.preferredDeliveryTime && <div className="mt-1"><strong>Preferred time:</strong> {activeOrder.shippingAddress.preferredDeliveryTime}</div>}
+                            {(activeOrder.shippingAddress?.locationPhotos || []).length > 0 && <div className="flex gap-2 flex-wrap mt-2">{activeOrder.shippingAddress.locationPhotos.map((photo, index) => <img key={index} src={photo} alt={`Delivery location ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" />)}</div>}
                           </div>
                         </div>
                       </div>
@@ -15426,6 +15542,9 @@ export default function Stallyard() {
                       <div className="grid md:grid-cols-2 gap-3 text-sm" style={{ color: SLATE }}>
                         <div><strong style={{ color: INK }}>Payment status:</strong> {activeOrder.paymentStatus || "Unknown"}</div>
                         <div><strong style={{ color: INK }}>Paystack reference:</strong> <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{activeOrder.paystackReference || "Not recorded"}</span></div>
+                        {(activeOrder.payouts || []).length > 0 && (
+                          <div className="mt-2"><strong style={{ color: INK }}>Seller bank payouts:</strong>{activeOrder.payouts.map((payout) => <div key={payout.id} className="mt-1 pl-2">Seller #{payout.sellerId} · {formatMoney(payout.amount, "NGN")} · {payout.status}{payout.reference ? ` · ${payout.reference}` : ""}{payout.failureReason ? ` · ${payout.failureReason}` : ""}{["failed", "reversed", "needs_bank"].includes(payout.status) && <button type="button" className="ml-2 underline font-medium" onClick={async () => { const res = await authFetch(`${BACKEND_URL}/seller-payouts/${payout.id}/retry`, { method: "POST" }); const data = await res.json().catch(() => ({})); if (!res.ok) return showToast(data.error || "Payout retry failed"); setOrders((all) => all.map((order) => order.id === activeOrder.id ? { ...order, payouts: order.payouts.map((p) => p.id === payout.id ? { ...p, status: data.payout.status, reference: data.payout.paystack_reference, failureReason: data.payout.failure_reason || "" } : p) } : order)); showToast("Payout retry submitted to Paystack"); }}>Retry safely</button>}</div>)}</div>
+                        )}
                         <div><strong style={{ color: INK }}>Channel:</strong> {activeOrder.paymentChannel || "—"}</div>
                         <div><strong style={{ color: INK }}>Card / bank:</strong> {[activeOrder.paymentCardType, activeOrder.paymentBank, activeOrder.paymentLast4 ? `•••• ${activeOrder.paymentLast4}` : ""].filter(Boolean).join(" · ") || "—"}</div>
                       </div>
@@ -15452,7 +15571,7 @@ export default function Stallyard() {
                       <h4 className="font-semibold mb-3" style={{ color: INK }}>Items, shipment & delivery</h4>
                       <div className="space-y-4">
                         {(activeOrder.items || []).map((i) => {
-                          const tokenStatus = activeOrder.paymentStatus === "released" && i.buyerConfirmedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Issued after buyer confirmation — secret hidden" : "Not issued";
+                          const tokenStatus = i.deliveryTokenRedeemedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Issued after buyer confirmation — secret hidden" : "Not issued";
                           return (
                             <div key={i.id} className="p-3 rounded-lg border" style={{ borderColor: "#EFEBE0" }}>
                               <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -17905,12 +18024,16 @@ export default function Stallyard() {
                             onClick={() =>
                               setShippingForm({
                                 ...shippingForm,
-                                fullName: shippingForm.fullName,
+                                fullName: a.full_name || shippingForm.fullName,
+                                phone: a.phone || shippingForm.phone,
                                 street: a.street,
                                 city: a.city,
                                 state: a.state,
                                 zip: a.zip,
                                 country: "Nigeria",
+                                deliveryInstructions: a.delivery_instructions || "",
+                                preferredDeliveryTime: a.preferred_delivery_time || "",
+                                locationPhotos: a.location_photos || [],
                               })
                             }
                             className="text-xs px-2 py-1 rounded-full border"
@@ -17926,6 +18049,13 @@ export default function Stallyard() {
                         value={shippingForm.fullName}
                         onChange={(e) => setShippingForm({ ...shippingForm, fullName: e.target.value })}
                         placeholder="Full name"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <input
+                        value={shippingForm.phone}
+                        onChange={(e) => setShippingForm({ ...shippingForm, phone: e.target.value })}
+                        placeholder="Recipient phone number"
                         className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
                         style={{ borderColor: "#DDD8CC" }}
                       />
@@ -17951,6 +18081,39 @@ export default function Stallyard() {
                           className="w-28 px-3 py-2 rounded-lg border outline-none text-sm"
                           style={{ borderColor: "#DDD8CC" }}
                         />
+                      </div>
+                      <textarea
+                        value={shippingForm.deliveryInstructions}
+                        onChange={(e) => setShippingForm({ ...shippingForm, deliveryInstructions: e.target.value.slice(0, 1000) })}
+                        placeholder="Private delivery instructions or nearby landmark (optional)"
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <input
+                        value={shippingForm.preferredDeliveryTime}
+                        onChange={(e) => setShippingForm({ ...shippingForm, preferredDeliveryTime: e.target.value.slice(0, 200) })}
+                        placeholder="Preferred delivery time (optional)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-medium" style={{ color: INK }}>Private location photos (up to 5)</span>
+                          <label className="text-xs font-medium underline cursor-pointer" style={{ color: SLATE }}>
+                            {uploadingLocationPhotos ? "Processing…" : "Add photos"}
+                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleDeliveryLocationPhotos} disabled={uploadingLocationPhotos || (shippingForm.locationPhotos || []).length >= 5} />
+                          </label>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          {(shippingForm.locationPhotos || []).map((photo, index) => (
+                            <div key={index} className="relative">
+                              <img src={photo} alt={`Delivery location ${index + 1}`} className="w-16 h-16 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                              <button type="button" onClick={() => setShippingForm((form) => ({ ...form, locationPhotos: form.locationPhotos.filter((_, i) => i !== index) }))} className="absolute -top-1 -right-1 bg-white border rounded-full" aria-label="Remove location photo"><X size={13} /></button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Visible only to the seller handling this paid order and authorized support staff.</p>
                       </div>
                       <div className="flex gap-2">
                         <input
@@ -17981,9 +18144,7 @@ export default function Stallyard() {
                           {shippingError}
                         </p>
                       )}
-                      <p className="text-xs" style={{ color: SLATE }}>
-                        Demo storage isn't encrypted — avoid using an address you wouldn't want visible to the marketplace admin.
-                      </p>
+                      <p className="text-xs" style={{ color: SLATE }}>Your delivery details are shared only with the seller handling the paid order and authorized support staff.</p>
                     </div>
                   </div>
                 )}
