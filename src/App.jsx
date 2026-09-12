@@ -2961,13 +2961,17 @@ export default function Stallyard() {
 
   const login = async () => {
     setAuthError("");
-    const username = authForm.username.trim().toLowerCase();
+    const loginIdentifier = authForm.username.trim().toLowerCase();
+    if (!loginIdentifier || !authForm.password) {
+      setAuthError("Enter your username or email and password");
+      return;
+    }
     let res;
     try {
       res = await backendFetch(`${BACKEND_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password: authForm.password }),
+        body: JSON.stringify({ username: loginIdentifier, password: authForm.password }),
       });
     } catch {
       setAuthError("Couldn't reach the server — check your connection and try again.");
@@ -2979,11 +2983,11 @@ export default function Stallyard() {
       return;
     }
     if (data.twoFactorRequired) {
-      setPendingTwoFactor({ userId: data.userId, username, method: data.method || "email" });
+      setPendingTwoFactor({ userId: data.userId, username: loginIdentifier, method: data.method || "email" });
       setTwoFactorCodeInput("");
       return;
     }
-    await completeLogin(data, username);
+    await completeLogin(data, loginIdentifier);
   };
 
   // Handles both steps of admin login (authenticator app, then the
@@ -3023,15 +3027,18 @@ export default function Stallyard() {
   };
 
   const completeLogin = async (data, username) => {
-    const existing = members.find((m) => m.username === username);
+    // Email can be used to authenticate, but all marketplace ownership and
+    // session state must continue to use the account's canonical username.
+    const canonicalUsername = data.user?.username || username;
+    const existing = members.find((m) => m.username === canonicalUsername);
     setSessionUserProfile(data.user);
     const member = backendUserToMember(data.user, existing);
     const nextMembers = existing
-      ? members.map((m) => (m.username === username ? member : m))
+      ? members.map((m) => (m.username === canonicalUsername ? member : m))
       : [...members, member];
     await persistMembers(nextMembers);
     await saveAuthToken(true);
-    await setSession(username);
+    await setSession(canonicalUsername);
     setAuthForm({
       username: "",
       password: "",
@@ -8736,10 +8743,11 @@ export default function Stallyard() {
                     <input
                       value={authForm.username}
                       onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
-                      placeholder="Username"
+                      placeholder={isSignUp ? "Username" : "Username or email"}
                       className="w-full px-3 py-2 rounded-lg border outline-none"
                       style={{ borderColor: "#DDD8CC" }}
                       autoCapitalize="none"
+                      autoComplete="username"
                     />
                     {isSignUp && (
                       <input
