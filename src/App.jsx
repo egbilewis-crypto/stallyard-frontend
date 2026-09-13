@@ -3563,6 +3563,7 @@ export default function Stallyard() {
     currentMember?.isApproved || currentMember?.isAdmin ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
+  const casualSellerContactReady = casualSellerStatus?.emailVerified === true && casualSellerStatus?.phoneVerified === true;
 
   useEffect(() => {
     const accountNumber = bankForm.accountNumber.replace(/\D/g, "");
@@ -10543,9 +10544,33 @@ export default function Stallyard() {
                     <p className="font-semibold text-sm" style={{ color: INK }}>Sell as a verified casual seller</p>
                     <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings.</p>
                   </div>
-                  <button onClick={() => setCasualVerificationOpen(true)} className="px-4 py-2 rounded-lg font-medium text-sm" style={{ backgroundColor: SAGE, color: "white" }}>
-                    {casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
+                  <button
+                    onClick={() => setCasualVerificationOpen(true)}
+                    disabled={!casualSellerContactReady}
+                    title={!casualSellerContactReady ? "Verify both your email and phone number first" : undefined}
+                    className="px-4 py-2 rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ backgroundColor: SAGE, color: "white" }}
+                  >
+                    {!casualSellerContactReady
+                      ? "Verify email and phone first"
+                      : casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
                   </button>
+                </div>
+                <div className="mt-3 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
+                  <p className="text-xs font-semibold" style={{ color: INK }}>
+                    Email and phone verification are required
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: SLATE }}>
+                    You must verify both your email address and phone number before you can continue with face verification.
+                  </p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <Tag color={casualSellerStatus?.emailVerified ? SAGE : BERRY}>
+                      Email: {casualSellerStatus?.emailVerified ? "Verified" : "Not verified"}
+                    </Tag>
+                    <Tag color={casualSellerStatus?.phoneVerified ? SAGE : BERRY}>
+                      Phone: {casualSellerStatus?.phoneVerified ? "Verified" : "Not verified"}
+                    </Tag>
+                  </div>
                 </div>
                 {casualSellerStatus?.application?.decision_reason && <p className="text-xs mt-2" style={{ color: BERRY }}>{casualSellerStatus.application.decision_reason}</p>}
               </div>
