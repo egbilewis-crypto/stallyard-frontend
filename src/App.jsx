@@ -7992,6 +7992,26 @@ export default function Stallyard() {
     showToast("Seller approved — they can now list items");
   };
 
+  const adminAutoVerifySeller = async (application) => {
+    if (!window.confirm(`Run automatic record checks and approve @${application.username} if every check passes?`)) return;
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/auto-verify`, { method: "PATCH" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast(data.error || "Automatic verification could not approve this seller");
+        return;
+      }
+      const nextMembers = members.map((member) =>
+        member.username === application.username ? backendUserToMember(data.user, member) : member
+      );
+      await persistMembers(nextMembers);
+      fetchVerifiedSellerApplications();
+      showToast("Verified Seller automatically approved — all Stallyard record checks passed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
   const adminRejectMember = async (username, reason) => {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
@@ -16200,6 +16220,9 @@ export default function Stallyard() {
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
                           <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
+                          {currentMember?.adminRole === "super_admin" && (
+                            <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: INK, color: "white" }}>Auto-verify</button>
+                          )}
                           <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
                           <button onClick={() => { setRejectModalUsername(application.username); setRejectReasonDraft(""); }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
                         </div>
