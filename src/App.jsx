@@ -1075,6 +1075,7 @@ function backendUserToMember(user, existing) {
     adminRole: user.admin_role ?? existing?.adminRole ?? null,
     isEmailVerified: user.is_email_verified ?? existing?.isEmailVerified ?? false,
     isPhoneVerified: user.is_phone_verified ?? existing?.isPhoneVerified ?? false,
+    profileComplete: user.profile_complete ?? existing?.profileComplete ?? false,
     country: user.country || existing?.country || "",
     isAdmin: !!user.is_admin,
     isApproved: !!user.is_approved,
@@ -1082,6 +1083,8 @@ function backendUserToMember(user, existing) {
     isSuspended: !!user.is_suspended,
     joinedAt: user.created_at ? new Date(user.created_at).getTime() : existing?.joinedAt || Date.now(),
     accountType: user.account_type || existing?.accountType || "personal",
+    onboardingIntent: user.onboarding_intent || existing?.onboardingIntent || "buy",
+    onboardingCompletedAt: user.onboarding_completed_at || existing?.onboardingCompletedAt || null,
     licenseNumber: user.license_number || existing?.licenseNumber || "",
     idType: user.id_type || existing?.idType || "Passport",
     idCountry: user.id_country || existing?.idCountry || "",
@@ -2050,7 +2053,9 @@ export default function Stallyard() {
   const [adminTotpError, setAdminTotpError] = useState("");
   const [startingAdminTotpSetup, setStartingAdminTotpSetup] = useState(false);
   const [confirmingAdminTotpSetup, setConfirmingAdminTotpSetup] = useState(false);
-  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller | business
+  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller
+  const [accountCreatedSuccess, setAccountCreatedSuccess] = useState(false);
+  const [isNewAccountOnboarding, setIsNewAccountOnboarding] = useState(false);
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -3138,6 +3143,7 @@ export default function Stallyard() {
           email: draft.email,
           password: draft.password,
           emailVerified: true,
+          onboardingIntent: registrationIntent === "seller" ? "sell" : "buy",
         }),
       });
     } catch {
@@ -3154,6 +3160,7 @@ export default function Stallyard() {
     await persistMembers([...members, newMember]);
     await saveAuthToken(true);
     await setSession(newMember.username);
+    setIsNewAccountOnboarding(true);
     setPendingEmailVerification(null);
     setEmailCodeInput("");
     setEmailVerifyError("");
@@ -3175,7 +3182,7 @@ export default function Stallyard() {
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
-      accountType: registrationIntent === "business" ? "business" : "personal",
+      accountType: "personal",
       licensePhotos: [],
     });
     showToast(
@@ -3234,12 +3241,10 @@ export default function Stallyard() {
       setProfileStageError("That phone number doesn't look right — check it and try again");
       return;
     }
-    const skipOfficeLocation = authForm.accountType === "personal";
-    if (!skipOfficeLocation && !authForm.officeLocation.trim()) {
-      setProfileStageError("Enter your office location");
+    if (!authForm.phone.trim()) {
+      setProfileStageError("Enter your Nigerian phone number");
       return;
     }
-    const skipId = false;
     let res;
     try {
       res = await authFetch(`${BACKEND_URL}/profile/complete`, {
@@ -3254,14 +3259,7 @@ export default function Stallyard() {
           nationality: authForm.nationality.trim(),
           stateOfResidence: authForm.stateOfResidence,
           phone: authForm.phone.trim(),
-          officeLocation: authForm.officeLocation.trim(),
-          country: authForm.country.trim(),
-          accountType: authForm.accountType,
-          idType: skipId ? "" : authForm.idType,
-          idCountry: skipId ? "" : authForm.country.trim(),
-          licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
-          licensePhotos: skipId ? [] : authForm.licensePhotos,
-          idVerificationExempt: false,
+          country: "Nigeria",
         }),
       });
     } catch {
@@ -3278,16 +3276,17 @@ export default function Stallyard() {
     const updatedMember = backendUserToMember(data.user, existing);
     await persistMembers(members.map((m) => (m.username === currentUser ? updatedMember : m)));
     setProfileStageOpen(false);
-    setView(authReturnView);
-    showToast(
-      updatedMember.profileComplete
-        ? "Profile complete — you're all set!"
-        : "Saved — you can finish the rest whenever you're ready."
-    );
+    if (isNewAccountOnboarding) {
+      setAccountCreatedSuccess(true);
+      setIsNewAccountOnboarding(false);
+    } else {
+      setView(updatedMember.onboardingIntent === "sell" ? "sell" : "buyerHome");
+      showToast("Profile completed successfully");
+    }
   };
 
   const openRegistration = (intent = "buyer") => {
-    const normalizedIntent = ["buyer", "seller", "business"].includes(intent) ? intent : "buyer";
+    const normalizedIntent = ["buyer", "seller"].includes(intent) ? intent : "buyer";
     setRegistrationIntent(normalizedIntent);
     setAuthMode("register");
     setAuthError("");
@@ -3296,7 +3295,7 @@ export default function Stallyard() {
     setAuthReturnView(normalizedIntent === "buyer" ? "browse" : "sell");
     setAuthForm((prev) => ({
       ...prev,
-      accountType: normalizedIntent === "business" ? "business" : "personal",
+      accountType: "personal",
       country: "Nigeria",
     }));
     setView("signup");
@@ -8816,7 +8815,6 @@ export default function Stallyard() {
 
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
-    const showBusinessFields = authForm.accountType !== "personal";
     return (
       <div className="min-h-screen w-full flex" style={{ backgroundColor: "white", fontFamily: "'Work Sans', sans-serif" }}>
         {/* Photo panel */}
@@ -8978,35 +8976,39 @@ export default function Stallyard() {
                     </button>
                   </div>
                 </div>
+              ) : accountCreatedSuccess ? (
+                <div role="status" aria-live="polite">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mb-5" style={{ backgroundColor: "#EDF4EE", color: SAGE }}>✓</div>
+                  <h1 className="text-3xl mb-2" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Account created successfully</h1>
+                  <p className="text-sm mb-5 leading-6" style={{ color: SLATE }}>Welcome to Stallyard. Your email is verified, your profile has been saved, and you are securely signed in.</p>
+                  <div className="rounded-xl border p-4 mb-5 space-y-2 text-sm" style={{ borderColor: "#DDD8CC", backgroundColor: "#FAF8F2", color: INK }}>
+                    <p>✓ Account created</p>
+                    <p>✓ Email verified</p>
+                    <p>✓ Personal profile completed</p>
+                    <p style={{ color: sessionUserProfile?.is_phone_verified ? SAGE : SLATE }}>{sessionUserProfile?.is_phone_verified ? "✓ Phone verified" : "○ Phone verification still required before selling"}</p>
+                  </div>
+                  {registrationIntent === "seller" ? (
+                    <>
+                      <p className="text-sm mb-4" style={{ color: SLATE }}>Next, verify your phone, add your payout bank and complete the secure Casual Seller identity check.</p>
+                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("sell"); }} className="w-full py-3 rounded-lg font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>Continue seller setup</button>
+                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("buyerHome"); }} className="w-full mt-3 py-2 text-sm underline" style={{ color: SLATE }}>Go to dashboard</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("buyerHome"); }} className="w-full py-3 rounded-lg font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>Go to Buyer Dashboard</button>
+                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("browse"); }} className="w-full mt-3 py-2 text-sm underline" style={{ color: SLATE }}>Start shopping</button>
+                    </>
+                  )}
+                </div>
               ) : profileStageOpen ? (
                 <div>
                   <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                     Finish your profile
                   </h1>
                   <p className="text-sm mb-6" style={{ color: SLATE }}>
-                    You're signed in — this just unlocks buying and selling. Close this any time and pick up where you left off.
+                    You're signed in. Complete these details to unlock buying and selling, or finish later and continue browsing.
                   </p>
                   <div className="space-y-3">
-                    <div
-                      className="w-full flex rounded-full p-1 mb-1"
-                      style={{ backgroundColor: "#F1EDE1" }}
-                    >
-                      {["personal", "business"].map((type) => (
-                        <button
-                          key={type}
-                          type="button"
-                          onClick={() => setAuthForm({ ...authForm, accountType: type })}
-                          className="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
-                          style={
-                            authForm.accountType === type
-                              ? { backgroundColor: INK, color: "#fff" }
-                              : { backgroundColor: "transparent", color: SLATE }
-                          }
-                        >
-                          {type === "personal" ? "Personal" : "Business"}
-                        </button>
-                      ))}
-                    </div>
                     <select
                       value={authForm.country}
                       onChange={(e) => setAuthForm({ ...authForm, country: e.target.value })}
@@ -9058,6 +9060,7 @@ export default function Stallyard() {
                         Date of Birth
                         <input
                           type="date"
+                          max={new Date(Date.UTC(new Date().getUTCFullYear() - 18, new Date().getUTCMonth(), new Date().getUTCDate())).toISOString().slice(0, 10)}
                           value={authForm.dateOfBirth}
                           onChange={(e) => setAuthForm({ ...authForm, dateOfBirth: e.target.value })}
                           className="block w-full mt-1 px-3 py-2 rounded-lg border outline-none"
@@ -9095,106 +9098,14 @@ export default function Stallyard() {
                       <option value="">Select state of residence</option>
                       {NIGERIAN_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
                     </select>
-                    {showBusinessFields && (
-                      <input
-                        value={authForm.displayName}
-                        onChange={(e) => setAuthForm({ ...authForm, displayName: e.target.value })}
-                        placeholder="Stall name (e.g. Maple & Co.)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
                     <input
                       type="tel"
                       value={authForm.phone}
                       onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
-                      placeholder="Phone number (optional)"
+                      placeholder="Nigerian phone number"
                       className="w-full px-3 py-2 rounded-lg border outline-none"
                       style={{ borderColor: "#DDD8CC" }}
                     />
-                    {showBusinessFields && (
-                      <input
-                        value={authForm.officeLocation}
-                        onChange={(e) => setAuthForm({ ...authForm, officeLocation: e.target.value })}
-                        placeholder="Office location (e.g. Downtown branch)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
-                    {true && (
-                      <select
-                        value={authForm.idType}
-                        onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
-                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
-                        style={{ borderColor: "#DDD8CC" }}
-                      >
-                        <option>Passport</option>
-                        <option>National ID</option>
-                        <option>Driver's License</option>
-                        <option>NIN</option>
-                        <option>Permanent Voter's Card</option>
-                        <option>Residence/Work Permit (CERPAC)</option>
-                      </select>
-                    )}
-                    {false && (
-                      <p className="text-xs" style={{ color: SLATE }}>
-                        ID verification isn't required for US-based members.
-                      </p>
-                    )}
-                    {true && showBusinessFields && (
-                      <input
-                        value={authForm.licenseNumber}
-                        onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
-                        placeholder="License number (optional, self-reported)"
-                        className="w-full px-3 py-2 rounded-lg border outline-none"
-                        style={{ borderColor: "#DDD8CC" }}
-                      />
-                    )}
-                    {true && (
-                      <div>
-                        <p className="text-xs mb-2" style={{ color: SLATE }}>
-                          License photos (optional, up to 5)
-                        </p>
-                        {authForm.licensePhotos.length > 0 && (
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {authForm.licensePhotos.map((src, idx) => (
-                              <div key={idx} className="relative w-20 h-20">
-                                <img
-                                  src={src}
-                                  alt={`License photo ${idx + 1}`}
-                                  className="w-full h-full object-cover rounded-lg"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => removeLicensePhoto(idx)}
-                                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
-                                  style={{ backgroundColor: BERRY }}
-                                  aria-label="Remove photo"
-                                >
-                                  <X size={14} color="white" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {authForm.licensePhotos.length < 5 && (
-                          <label
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
-                          >
-                            {uploadingLicense ? "Processing..." : "Add license photos"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              onChange={handleLicensePhotoSelect}
-                              disabled={uploadingLicense}
-                              className="hidden"
-                            />
-                          </label>
-                        )}
-                      </div>
-                    )}
                     {profileStageError && (
                       <p className="text-sm" style={{ color: BERRY }}>
                         {profileStageError}
@@ -10020,7 +9931,7 @@ export default function Stallyard() {
               <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Choose the account path that fits what you want to do. Stallyard is a Nigeria-only marketplace and marketplace payments are in naira.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
               {[
                 {
                   intent: "buyer",
@@ -10035,13 +9946,6 @@ export default function Stallyard() {
                   title: "Create a seller account",
                   text: "Create a personal account, complete seller verification, then list products and receive payouts after valid delivery confirmation.",
                   button: "Create seller account",
-                },
-                {
-                  intent: "business",
-                  icon: "🏢",
-                  title: "Create a business account",
-                  text: "Register your business/stall profile, complete the required verification, and sell under your business identity on Stallyard.",
-                  button: "Create business account",
                 },
               ].map((option) => (
                 <div key={option.intent} className="rounded-2xl border bg-white p-6 flex flex-col" style={{ borderColor: "#DDD8CC" }}>
@@ -10063,9 +9967,9 @@ export default function Stallyard() {
             <div className="rounded-2xl border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
               <div className="p-6 sm:p-8 border-b" style={{ borderColor: "#EEE9DE", backgroundColor: "#FFF9EE" }}>
                 <h2 className="text-2xl sm:text-3xl font-semibold" style={{ color: INK }}>What you’ll need to sign up</h2>
-                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Basic account creation is quick. Seller and business accounts require additional verification before listings can go live.</p>
+                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Every Stallyard account can buy and later become a seller. Seller verification is required before listings can go live.</p>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
                 <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
                   <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Buyer account</h3>
                   <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
@@ -10087,16 +9991,6 @@ export default function Stallyard() {
                   </ul>
                 </div>
 
-                <div className="p-6 sm:p-7">
-                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Business account</h3>
-                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business or stall name</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business/office location in Nigeria</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Representative’s name, phone number and government-issued ID</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Bank statement and seller-verification information before selling</span></li>
-                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Payout bank details are added securely for seller withdrawals/payouts</span></li>
-                  </ul>
-                </div>
               </div>
             </div>
 
