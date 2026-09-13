@@ -5728,6 +5728,15 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't download report"); }
   };
 
+  const revealCasualSellerReportPassword = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/casual-seller-reports/${report.id}/password`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Report password unavailable");
+      window.alert(`Password for the ${String(report.report_date).slice(0, 10)} Casual Seller report:\n\n${data.password}\n\nKeep this password private.`);
+    } catch (err) { showToast(err.message || "Couldn't reveal report password"); }
+  };
+
   const verifyPaystackReconciliation = async (orderId) => {
     setPaystackCheckingOrderId(orderId);
     try {
@@ -17012,7 +17021,7 @@ export default function Stallyard() {
                   </div>
                   <div className="p-4 rounded-xl border bg-white h-fit" style={{ borderColor: "#DDD8CC" }}>
                     <h4 className="font-semibold mb-3" style={{ color: INK }}>Daily PDF reports</h4>
-                    <div className="space-y-2">{casualSellerReports.map((report) => <button key={report.id} onClick={() => downloadCasualSellerReport(report)} className="w-full text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}><strong>{String(report.report_date).slice(0, 10)}</strong><br />{report.application_count} applications · {report.email_status}</button>)}</div>
+                    <div className="space-y-2">{casualSellerReports.map((report) => <div key={report.id} className="w-full text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}><strong>{String(report.report_date).slice(0, 10)}</strong><br />{report.application_count} applications · {report.email_status}<div className="flex gap-3 mt-2"><button onClick={() => downloadCasualSellerReport(report)} className="font-semibold underline">Download PDF</button><button onClick={() => revealCasualSellerReportPassword(report)} className="font-semibold underline" style={{ color: BERRY }}>Reveal password</button></div></div>)}</div>
                   </div>
                 </div>
               </div>
