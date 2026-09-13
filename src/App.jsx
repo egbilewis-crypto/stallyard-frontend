@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
+import { FaceLivenessDetectorCore } from "@aws-amplify/ui-react-liveness";
+import "@aws-amplify/ui-react-liveness/styles.css";
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -1670,6 +1672,9 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   const [challenges, setChallenges] = useState([]);
   const [challengeToken, setChallengeToken] = useState("");
   const [challengeLoading, setChallengeLoading] = useState(true);
+  const [awsLiveness, setAwsLiveness] = useState(null);
+  const [awsLivenessVerified, setAwsLivenessVerified] = useState(false);
+  const [rekognitionVerificationToken, setRekognitionVerificationToken] = useState("");
 
   const labels = {
     blink: "Blink slowly, then look at the camera",
@@ -1688,10 +1693,17 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     let cancelled = false;
     (async () => {
       try {
-        const response = await authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Couldn't start secure verification");
-        if (!cancelled) { setChallenges(data.challenges || []); setChallengeToken(data.token || ""); }
+        const [challengeResponse, awsResponse] = await Promise.all([
+          authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" }),
+          authFetch(`${BACKEND_URL}/casual-seller/rekognition/session`, { method: "POST" }),
+        ]);
+        const [data, awsData] = await Promise.all([challengeResponse.json(), awsResponse.json()]);
+        if (!challengeResponse.ok) throw new Error(data.error || "Couldn't start secure verification");
+        if (!awsResponse.ok) throw new Error(awsData.error || "Couldn't start AWS face verification");
+        if (!cancelled) {
+          setChallenges(data.challenges || []); setChallengeToken(data.token || "");
+          setAwsLiveness(awsData);
+        }
       } catch (err) {
         if (!cancelled) setError(err.message || "Couldn't start secure verification");
       } finally {
@@ -1700,6 +1712,18 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     })();
     return () => { cancelled = true; };
   }, []);
+
+  const completeAwsLiveness = async () => {
+    const response = await authFetch(`${BACKEND_URL}/casual-seller/rekognition/complete`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: awsLiveness.sessionId }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "AWS could not verify liveness");
+    setAwsLivenessVerified(true);
+    setRekognitionVerificationToken(data.verificationToken || "");
+    showToast(`Secure liveness verified (${Math.round(Number(data.confidence || 0))}%)`);
+  };
 
   const initializeFaceDetector = async () => {
     const vision = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm");
@@ -1810,6 +1834,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
 
   const submit = async () => {
     setError("");
+    if (!awsLivenessVerified || !rekognitionVerificationToken) { setError("Complete the secure AWS face-liveness check first."); return; }
     if (!faceDetectionSupported) { setError("Automatic face detection is unavailable on this browser. Use an updated supported phone or browser so Stallyard does not approve an unverified person."); return; }
     if (!form.legalName.trim() || !form.dateOfBirth) { setError("Enter your legal name and date of birth."); return; }
     if (!captures.liveSelfie || !captures.holdingIdSelfie || captures.challengeFrames.length !== 3) { setError("Complete the live selfie, all three challenges, and the selfie holding your ID."); return; }
@@ -1819,7 +1844,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
       const faceMatch = await verifyFaceMatchesHoldingPhoto();
       const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, faceMatch }),
+        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, faceMatch, rekognitionVerificationToken }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
@@ -1837,6 +1862,24 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           <div><h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Automatic casual-seller verification</h2><p className="text-sm" style={{ color: SLATE }}>Verify once to publish up to ₦500,000 in combined active listings.</p></div>
           <button onClick={onClose} aria-label="Close"><X size={22} /></button>
         </div>
+        {!awsLivenessVerified && awsLiveness && (
+          <div className="mb-5 rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
+            <FaceLivenessDetectorCore
+              sessionId={awsLiveness.sessionId}
+              region={awsLiveness.region}
+              config={{ credentialProvider: async () => ({
+                accessKeyId: awsLiveness.credentials.accessKeyId,
+                secretAccessKey: awsLiveness.credentials.secretAccessKey,
+                sessionToken: awsLiveness.credentials.sessionToken,
+                expiration: awsLiveness.credentials.expiration ? new Date(awsLiveness.credentials.expiration) : undefined,
+              }) }}
+              onAnalysisComplete={completeAwsLiveness}
+              onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
+              onUserCancel={onClose}
+            />
+          </div>
+        )}
+        {awsLivenessVerified && <p className="mb-4 text-sm font-medium" style={{ color: SAGE }}>✓ AWS face-liveness verification passed</p>}
         <div className="grid md:grid-cols-2 gap-5">
           <div className="space-y-3">
             <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
@@ -1847,7 +1890,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           </div>
           <div>
             <div className="aspect-square rounded-xl overflow-hidden bg-black mb-2"><video ref={videoRef} muted playsInline className="w-full h-full object-cover" /></div>
-            {!cameraReady ? <button disabled={challengeLoading || !challengeToken} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : "Open secure camera"}</button> : (
+            {!cameraReady ? <button disabled={challengeLoading || !challengeToken || !awsLivenessVerified} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : !awsLivenessVerified ? "Complete AWS liveness first" : "Open secure camera"}</button> : (
               <div className="space-y-2 text-sm">
                 <button onClick={() => captureCamera("live")} className="w-full py-2 rounded-lg border">{captures.liveSelfie ? "✓ Retake neutral live selfie" : "Capture neutral live selfie"}</button>
                 {challenges.map((challenge, index) => <button key={challenge} disabled={captures.challengeFrames.length !== index} onClick={() => captureCamera("challenge", challenge)} className="w-full py-2 px-2 rounded-lg border disabled:opacity-40 text-left">{captures.challengeFrames[index] ? "✓ " : `${index + 1}. `}{labels[challenge]}</button>)}
