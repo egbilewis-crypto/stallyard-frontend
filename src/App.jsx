@@ -9621,6 +9621,17 @@ export default function Stallyard() {
                   )}
                 </button>
                 {currentUser && (
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="lg:hidden relative p-1"
+                    aria-label="Log out"
+                    title="Log out"
+                  >
+                    <LogOut size={19} />
+                  </button>
+                )}
+                {currentUser && (
                   <button onClick={logout} className="hidden lg:inline hover:underline">Log out</button>
                 )}
               </div>
