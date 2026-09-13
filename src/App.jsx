@@ -2307,7 +2307,7 @@ export default function Stallyard() {
   const [idVerifyForm, setIdVerifyForm] = useState({ idType: "Passport", idCountry: "", licenseNumber: "" });
   const [bankStatementDraft, setBankStatementDraft] = useState(null);
   const [uploadingBankStatement, setUploadingBankStatement] = useState(false);
-  const [verifiedSellerIdForm, setVerifiedSellerIdForm] = useState({ idType: "nin", idNumber: "", idExpiration: "" });
+  const [verifiedSellerIdForm, setVerifiedSellerIdForm] = useState({ idType: "nin" });
   const [verifiedSellerIdImages, setVerifiedSellerIdImages] = useState({ front: "", back: "" });
   const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
@@ -2885,7 +2885,7 @@ export default function Stallyard() {
       return;
     }
     try {
-        if (!verifiedSellerIdForm.idNumber.trim() || !verifiedSellerIdImages.front) { showToast("Enter your ID number and upload the front of your identification"); return; }
+        if (!verifiedSellerIdImages.front) { showToast("Upload the front of your identification"); return; }
         if (!bankStatementDraft) { showToast("Upload a bank statement before applying for verified seller status"); return; }
         if (!verifiedSellerConsent) { showToast("Accept the verified-seller declaration before applying"); return; }
         const res = await authFetch(`${BACKEND_URL}/verified-seller/apply`, {
@@ -2924,7 +2924,7 @@ export default function Stallyard() {
       )
     );
     setBankStatementDraft(null);
-    setVerifiedSellerIdForm({ idType: "nin", idNumber: "", idExpiration: "" });
+    setVerifiedSellerIdForm({ idType: "nin" });
     setVerifiedSellerIdImages({ front: "", back: "" });
     setVerifiedSellerConsent(false);
     showToast("Verified Seller application submitted — you'll be notified after admin review");
@@ -10527,8 +10527,6 @@ export default function Stallyard() {
                       <option value="voters_card">Permanent Voter's Card (PVC)</option>
                       <option value="cerpac">Residence/Work Permit (CERPAC)</option>
                     </select>
-                    <input value={verifiedSellerIdForm.idNumber} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idNumber: e.target.value }))} placeholder="Identification number" className="w-full px-3 py-2 rounded-lg border text-sm mb-2" style={{ borderColor: "#DDD8CC" }} />
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Expiration date, if applicable<input type="date" value={verifiedSellerIdForm.idExpiration} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idExpiration: e.target.value }))} className="block w-full mt-1 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} /></label>
                     <div className="grid grid-cols-2 gap-2 mb-2">
                       <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>
                         {verifiedSellerIdImages.front ? "✓ ID front attached" : "Upload ID front"}
@@ -16197,7 +16195,7 @@ export default function Stallyard() {
                     <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified-seller applications awaiting approval</h4>
                     <div className="space-y-2">{verifiedSellerApplications.filter((application) => application.status === "pending").map((application) => (
                       <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
-                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p><p className="text-xs mt-1" style={{ color: SLATE }}>{application.id_type || "Identification"} · ending {application.id_number_last4 || "—"}{application.id_expiration ? ` · expires ${application.id_expiration}` : ""}</p></div>
+                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p><p className="text-xs mt-1" style={{ color: SLATE }}>{application.id_type || "Identification"}</p></div>
                         <div className="flex gap-3 flex-wrap">
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
