@@ -2880,8 +2880,11 @@ export default function Stallyard() {
 
   const applyToSell = async () => {
     const target = members.find((m) => m.username === currentUser);
-    if (target?.backendId) {
-      try {
+    if (!target?.backendId) {
+      showToast("Your account is still loading — wait a moment and try again");
+      return;
+    }
+    try {
         if (!verifiedSellerIdForm.idNumber.trim() || !verifiedSellerIdImages.front) { showToast("Enter your ID number and upload the front of your identification"); return; }
         if (!bankStatementDraft) { showToast("Upload a bank statement before applying for verified seller status"); return; }
         if (!verifiedSellerConsent) { showToast("Accept the verified-seller declaration before applying"); return; }
@@ -2897,11 +2900,16 @@ export default function Stallyard() {
           showToast(message);
           return;
         }
-      } catch {
-        showToast("Couldn't reach the server — try again");
-        return;
-      }
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return;
     }
+    setSessionUserProfile((current) => current ? {
+      ...current,
+      has_applied_to_sell: true,
+      verification_status: "pending",
+      rejection_reason: null,
+    } : current);
     await persistMembers(
       members.map((m) =>
         m.username === currentUser
@@ -2919,7 +2927,7 @@ export default function Stallyard() {
     setVerifiedSellerIdForm({ idType: "nin", idNumber: "", idExpiration: "" });
     setVerifiedSellerIdImages({ front: "", back: "" });
     setVerifiedSellerConsent(false);
-    showToast("Verified-seller application submitted — you'll be notified after admin review");
+    showToast("Verified Seller application submitted — you'll be notified after admin review");
   };
 
   const saveVacationSettings = async () => {
@@ -7963,7 +7971,9 @@ export default function Stallyard() {
       try {
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}/approve`, { method: "PATCH" });
         if (!res.ok) {
-          showToast("Couldn't approve member — try again");
+          let message = "Couldn't approve member — try again";
+          try { const data = await res.json(); if (data?.error) message = data.error; } catch {}
+          showToast(message);
           return;
         }
       } catch {
@@ -7978,6 +7988,7 @@ export default function Stallyard() {
           : m
       )
     );
+    fetchVerifiedSellerApplications();
     showToast("Seller approved — they can now list items");
   };
 
@@ -7991,7 +8002,9 @@ export default function Stallyard() {
           body: JSON.stringify({ reason: reason || "" }),
         });
         if (!res.ok) {
-          showToast("Couldn't reject member — try again");
+          let message = "Couldn't reject member — try again";
+          try { const data = await res.json(); if (data?.error) message = data.error; } catch {}
+          showToast(message);
           return;
         }
       } catch {
@@ -8006,6 +8019,7 @@ export default function Stallyard() {
           : m
       )
     );
+    fetchVerifiedSellerApplications();
     showToast("Seller application rejected");
   };
 
@@ -10554,55 +10568,6 @@ export default function Stallyard() {
               </div>
             )}
 
-            {currentUser &&
-              currentMember?.isApproved === false &&
-              (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
-              !currentMember?.hasAppliedToSell && (
-              <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
-                <p className="text-sm mb-2" style={{ color: INK }}>
-                  Selling on Stallyard requires seller verification and admin approval. Apply for a seller account to get started.
-                </p>
-                <div className="mb-3">
-                  <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
-                    Bank statement <span className="font-normal" style={{ color: SLATE }}>(optional, helps speed up review)</span>
-                  </label>
-                  {bankStatementDraft ? (
-                    <div className="flex items-center gap-2 text-xs" style={{ color: SLATE }}>
-                      <span>File attached</span>
-                      <button
-                        onClick={() => setBankStatementDraft(null)}
-                        className="underline font-medium"
-                        style={{ color: BERRY }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ) : (
-                    <label
-                      className="inline-block px-3 py-1.5 rounded-lg border text-xs font-medium cursor-pointer"
-                      style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
-                    >
-                      {uploadingBankStatement ? "Uploading…" : "Upload bank statement"}
-                      <input
-                        type="file"
-                        accept="image/*,.pdf"
-                        onChange={handleBankStatementSelect}
-                        className="hidden"
-                        disabled={uploadingBankStatement}
-                      />
-                    </label>
-                  )}
-                </div>
-                <button
-                  onClick={applyToSell}
-                  className="px-4 py-2 rounded-lg font-medium text-sm"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  Apply for seller account
-                </button>
-              </div>
-            )}
-
             {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
               <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                 <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
@@ -10624,11 +10589,11 @@ export default function Stallyard() {
                   </p>
                 )}
                 <button
-                  onClick={applyToSell}
+                  onClick={() => setView("sell")}
                   className="px-4 py-2 rounded-lg font-medium text-sm"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  Re-apply
+                  Review requirements and re-apply
                 </button>
               </div>
             )}
@@ -11278,26 +11243,6 @@ export default function Stallyard() {
                 </p>
               </div>
             )}
-            {currentUser &&
-              currentMember?.isApproved === false &&
-              (currentMember?.verificationStatus === "none" || !currentMember?.verificationStatus) &&
-              !currentMember?.hasAppliedToSell && (
-              <div
-                className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
-                style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
-              >
-                <p className="text-sm" style={{ color: INK }}>
-                  Selling on Stallyard requires seller verification and admin approval.
-                </p>
-                <button
-                  onClick={applyToSell}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium"
-                  style={{ backgroundColor: MARIGOLD, color: INK }}
-                >
-                  Apply for seller account
-                </button>
-              </div>
-            )}
             {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
               <div
                 className="mb-4 p-4 rounded-lg border"
@@ -11319,11 +11264,11 @@ export default function Stallyard() {
                   Your seller application wasn't approved.
                 </p>
                 <button
-                  onClick={applyToSell}
+                  onClick={() => setView("sell")}
                   className="px-3 py-1.5 rounded-lg text-sm font-medium"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
-                  Re-apply
+                  Review requirements and re-apply
                 </button>
               </div>
             )}
@@ -16257,6 +16202,8 @@ export default function Stallyard() {
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
                           <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
+                          <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
+                          <button onClick={() => { setRejectModalUsername(application.username); setRejectReasonDraft(""); }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
                         </div>
                       </div>
                     ))}</div>
