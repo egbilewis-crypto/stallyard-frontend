@@ -1844,10 +1844,9 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     if (!form.consent) { setError("You must accept the identity-record consent before submitting."); return; }
     setSubmitting(true);
     try {
-      const faceMatch = await verifyFaceMatchesHoldingPhoto();
       const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, faceMatch, rekognitionVerificationToken }),
+        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, rekognitionVerificationToken }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
