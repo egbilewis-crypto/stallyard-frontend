@@ -1865,6 +1865,10 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           <div><h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Automatic casual-seller verification</h2><p className="text-sm" style={{ color: SLATE }}>Verify once to publish up to ₦500,000 in combined active listings.</p></div>
           <button onClick={onClose} aria-label="Close"><X size={22} /></button>
         </div>
+        <div className="mb-4 p-3 rounded-lg border text-xs leading-5" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8", color: SLATE }}>
+          <strong style={{ color: INK }}>Identity-check attempt limit:</strong> You may start up to 3 AWS face-liveness checks in a rolling 24-hour period. Closing, restarting or abandoning a started check still uses an attempt.
+          {awsLiveness && <span className="block mt-1 font-medium" style={{ color: INK }}>{Number(awsLiveness.remainingAttempts || 0)} attempt{Number(awsLiveness.remainingAttempts || 0) === 1 ? "" : "s"} remaining after this session.</span>}
+        </div>
         {!awsLivenessVerified && awsLiveness && (
           <div className="mb-5 rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
             <FaceLivenessDetectorCore
@@ -10538,7 +10542,7 @@ export default function Stallyard() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <p className="font-semibold text-sm" style={{ color: INK }}>Sell as a verified casual seller</p>
-                    <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings without waiting for admin approval.</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings.</p>
                   </div>
                   <button onClick={() => setCasualVerificationOpen(true)} className="px-4 py-2 rounded-lg font-medium text-sm" style={{ backgroundColor: SAGE, color: "white" }}>
                     {casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
