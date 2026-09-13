@@ -5635,6 +5635,11 @@ export default function Stallyard() {
   };
 
   const fetchVerifiedSellerApplications = async () => {
+    const isSuperAdmin = currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin");
+    if (!isSuperAdmin) {
+      setVerifiedSellerApplications([]);
+      return;
+    }
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications`);
       const data = await response.json();
@@ -5705,8 +5710,10 @@ export default function Stallyard() {
   };
 
   useEffect(() => {
-    if (adminTab === "members" && currentMember?.isAdmin && hasAdminPermission(currentMember, "seller_verification")) {
+    if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
       fetchVerifiedSellerApplications();
+    } else if (adminTab === "members") {
+      setVerifiedSellerApplications([]);
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
@@ -16289,7 +16296,7 @@ export default function Stallyard() {
                     Add member
                   </button>
                 )}
-                {verifiedSellerApplications.filter((application) => application.status === "pending").length > 0 && (
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && verifiedSellerApplications.filter((application) => application.status === "pending").length > 0 && (
                   <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
                     <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified-seller applications awaiting approval</h4>
                     <div className="space-y-2">{verifiedSellerApplications.filter((application) => application.status === "pending").map((application) => (
