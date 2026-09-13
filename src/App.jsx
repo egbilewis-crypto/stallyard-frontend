@@ -5647,6 +5647,15 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't download report"); }
   };
 
+  const revealVerifiedSellerReportPassword = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports/${report.id}/password`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Report password unavailable");
+      window.alert(`Password for the ${String(report.report_date).slice(0, 10)} Verified Seller report:\n\n${data.password}\n\nKeep this password private.`);
+    } catch (err) { showToast(err.message || "Couldn't reveal report password"); }
+  };
+
   const runVerifiedSellerReportNow = async () => {
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports/run`, { method: "POST" });
@@ -16280,10 +16289,14 @@ export default function Stallyard() {
                     </div>
                     <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
                       {verifiedSellerReports.map((report) => (
-                        <button key={report.id} onClick={() => downloadVerifiedSellerReport(report)} className="text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}>
+                        <div key={report.id} className="p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}>
                           <strong>{String(report.report_date).slice(0, 10)}</strong><br />
                           {report.application_count} approval{Number(report.application_count) === 1 ? "" : "s"} · {report.email_status}
-                        </button>
+                          <div className="flex gap-3 mt-2">
+                            <button onClick={() => downloadVerifiedSellerReport(report)} className="font-semibold underline">Download PDF</button>
+                            <button onClick={() => revealVerifiedSellerReportPassword(report)} className="font-semibold underline" style={{ color: BERRY }}>Reveal password</button>
+                          </div>
+                        </div>
                       ))}
                       {!verifiedSellerReports.length && <p className="text-xs" style={{ color: SLATE }}>No Verified Seller reports have been generated yet.</p>}
                     </div>
