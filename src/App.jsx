@@ -1667,8 +1667,9 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   const [faceChecks, setFaceChecks] = useState([]);
   const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
   const [faceMatchScore, setFaceMatchScore] = useState(null);
-  const challengePool = ["blink", "turn_left", "turn_right", "smile", "move_closer"];
-  const [challenges] = useState(() => [...challengePool].sort(() => Math.random() - 0.5).slice(0, 3));
+  const [challenges, setChallenges] = useState([]);
+  const [challengeToken, setChallengeToken] = useState("");
+  const [challengeLoading, setChallengeLoading] = useState(true);
 
   const labels = {
     blink: "Blink slowly, then look at the camera",
@@ -1681,6 +1682,23 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   useEffect(() => () => {
     if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
     if (detectorRef.current?.close) detectorRef.current.close();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Couldn't start secure verification");
+        if (!cancelled) { setChallenges(data.challenges || []); setChallengeToken(data.token || ""); }
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Couldn't start secure verification");
+      } finally {
+        if (!cancelled) setChallengeLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const initializeFaceDetector = async () => {
@@ -1801,7 +1819,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
       const faceMatch = await verifyFaceMatchesHoldingPhoto();
       const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...captures, challenges, faceDetectionSupported, faceChecks, faceMatch }),
+        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, faceMatch }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
@@ -1829,7 +1847,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           </div>
           <div>
             <div className="aspect-square rounded-xl overflow-hidden bg-black mb-2"><video ref={videoRef} muted playsInline className="w-full h-full object-cover" /></div>
-            {!cameraReady ? <button onClick={startCamera} className="w-full py-2 rounded-lg font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>Open secure camera</button> : (
+            {!cameraReady ? <button disabled={challengeLoading || !challengeToken} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : "Open secure camera"}</button> : (
               <div className="space-y-2 text-sm">
                 <button onClick={() => captureCamera("live")} className="w-full py-2 rounded-lg border">{captures.liveSelfie ? "✓ Retake neutral live selfie" : "Capture neutral live selfie"}</button>
                 {challenges.map((challenge, index) => <button key={challenge} disabled={captures.challengeFrames.length !== index} onClick={() => captureCamera("challenge", challenge)} className="w-full py-2 px-2 rounded-lg border disabled:opacity-40 text-left">{captures.challengeFrames[index] ? "✓ " : `${index + 1}. `}{labels[challenge]}</button>)}
@@ -10473,14 +10491,18 @@ export default function Stallyard() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
               <div className="rounded-2xl border bg-white p-6 sm:p-8" style={{ borderColor: "#DDD8CC" }}>
-                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>What you’ll need</h2>
-                <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A Stallyard account with your name and email</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A verified Nigerian phone number</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your address in Nigeria</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>A valid government-issued ID</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>One bank statement showing your account information and account history</span></li>
-                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Your Nigerian payout bank details</span></li>
+                <h2 className="text-2xl font-semibold mb-5" style={{ color: INK }}>Seller-level requirements</h2>
+                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Casual Seller · up to ₦500,000 active</h3>
+                <ul className="space-y-2 text-sm leading-6 mb-5" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Completed profile, verified email and verified Nigerian phone</span></li>
+                  <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Live selfie, selfie holding identification and three camera challenges</span></li>
+                </ul>
+                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified Seller · up to ₦10,000,000 active</h3>
+                <ul className="space-y-2 text-sm leading-6" style={{ color: SLATE }}>
+                  <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Approved Casual Seller verification</span></li>
+                  <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Accepted ID type with front and applicable back images</span></li>
+                  <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Recent bank statement, complete Nigerian address and verified payout bank</span></li>
+                  <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Administrative approval</span></li>
                 </ul>
               </div>
 
@@ -17013,7 +17035,7 @@ export default function Stallyard() {
                   <div className="lg:col-span-2 space-y-3">
                     {(casualSellerApplications || []).map((application) => (
                       <div key={application.id} className="p-4 rounded-xl border bg-white flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: "#DDD8CC" }}>
-                        <div><div className="flex items-center gap-2"><strong style={{ color: INK }}>{application.legal_name}</strong><Tag color={application.status === "approved" ? SAGE : application.status === "suspended" ? BERRY : MARIGOLD}>{application.status}</Tag></div><p className="text-xs mt-1" style={{ color: SLATE }}>@{application.username} · {application.reference} · {application.id_type} ending {application.id_number_last4}</p></div>
+                        <div><div className="flex items-center gap-2"><strong style={{ color: INK }}>{application.legal_name}</strong><Tag color={application.status === "approved" ? SAGE : application.status === "suspended" ? BERRY : MARIGOLD}>{application.status}</Tag></div><p className="text-xs mt-1" style={{ color: SLATE }}>@{application.username} · {application.reference} · selfie-and-liveness verification</p></div>
                         <button onClick={() => openCasualApplicationEvidence(application)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>Review evidence</button>
                       </div>
                     ))}
