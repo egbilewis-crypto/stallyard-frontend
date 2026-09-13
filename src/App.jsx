@@ -2152,6 +2152,7 @@ export default function Stallyard() {
   const [casualSellerApplications, setCasualSellerApplications] = useState([]);
   const [casualSellerReports, setCasualSellerReports] = useState([]);
   const [verifiedSellerApplications, setVerifiedSellerApplications] = useState([]);
+  const [verifiedSellerReports, setVerifiedSellerReports] = useState([]);
   const [casualSellerAdminLoading, setCasualSellerAdminLoading] = useState(false);
   const [selectedCasualApplication, setSelectedCasualApplication] = useState(null);
   const [casualEvidenceUrls, setCasualEvidenceUrls] = useState({});
@@ -5624,6 +5625,38 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't load verified-seller applications"); }
   };
 
+  const fetchVerifiedSellerReports = async () => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Couldn't load Verified Seller reports");
+      setVerifiedSellerReports(data.reports || []);
+    } catch (err) { showToast(err.message || "Couldn't load Verified Seller reports"); }
+  };
+
+  const downloadVerifiedSellerReport = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports/${report.id}/download`);
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || "Report unavailable"); }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `stallyard-verified-sellers-${String(report.report_date).slice(0, 10)}.pdf`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { showToast(err.message || "Couldn't download report"); }
+  };
+
+  const runVerifiedSellerReportNow = async () => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports/run`, { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Report could not be generated");
+      await fetchVerifiedSellerReports();
+      showToast(data.sent ? `Verified Seller report sent for ${data.applicationCount} approval(s)` : "No unreported Verified Seller approvals were found");
+    } catch (err) { showToast(err.message || "Couldn't generate Verified Seller report"); }
+  };
+
   const viewVerifiedSellerBankStatement = async (application) => {
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/bank-statement`);
@@ -5647,6 +5680,12 @@ export default function Stallyard() {
   useEffect(() => {
     if (adminTab === "members" && currentMember?.isAdmin && hasAdminPermission(currentMember, "seller_verification")) {
       fetchVerifiedSellerApplications();
+    }
+  }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
+
+  useEffect(() => {
+    if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
+      fetchVerifiedSellerReports();
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
@@ -16220,7 +16259,7 @@ export default function Stallyard() {
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
                           <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
-                          {currentMember?.adminRole === "super_admin" && (
+                          {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
                             <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: INK, color: "white" }}>Auto-verify</button>
                           )}
                           <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
@@ -16228,6 +16267,26 @@ export default function Stallyard() {
                         </div>
                       </div>
                     ))}</div>
+                  </div>
+                )}
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                  <div className="mb-4 p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                      <div>
+                        <h4 className="font-semibold text-sm" style={{ color: INK }}>Verified Seller daily approval reports</h4>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Super Admin only. Reports are sent daily after 8:00 AM Lagos time, retained securely, and every download is logged.</p>
+                      </div>
+                      <button onClick={runVerifiedSellerReportNow} className="px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: INK, color: "white" }}>Generate report now</button>
+                    </div>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {verifiedSellerReports.map((report) => (
+                        <button key={report.id} onClick={() => downloadVerifiedSellerReport(report)} className="text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}>
+                          <strong>{String(report.report_date).slice(0, 10)}</strong><br />
+                          {report.application_count} approval{Number(report.application_count) === 1 ? "" : "s"} · {report.email_status}
+                        </button>
+                      ))}
+                      {!verifiedSellerReports.length && <p className="text-xs" style={{ color: SLATE }}>No Verified Seller reports have been generated yet.</p>}
+                    </div>
                   </div>
                 )}
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
