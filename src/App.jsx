@@ -10716,6 +10716,12 @@ export default function Stallyard() {
                       <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
                     </div>
                   ) : (<>
+                    {casualSellerStatus?.premiumApplication?.status === "rejected" && (
+                      <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
+                        <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
+                      </div>
+                    )}
                     <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling, and every application is reviewed manually.</p>
                     <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
                       <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
