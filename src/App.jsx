@@ -1102,7 +1102,9 @@ function backendUserToMember(user, existing) {
     casualSellerLimit: Number(user.casual_seller_limit ?? existing?.casualSellerLimit ?? 500000),
     casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
     sellerTier: user.seller_tier ?? existing?.sellerTier ?? (user.is_approved ? "verified" : "buyer"),
-    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 10000000),
+    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 20000000),
+    sellerSuspended: !!(user.seller_suspended ?? existing?.sellerSuspended),
+    sellerSuspendedReason: user.seller_suspended_reason ?? existing?.sellerSuspendedReason ?? "",
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -1671,7 +1673,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   const [captures, setCaptures] = useState({ liveSelfie: "", holdingIdSelfie: "", challengeFrames: [] });
   const [faceChecks, setFaceChecks] = useState([]);
   const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
-  const [faceMatchScore, setFaceMatchScore] = useState(null);
   const [challenges, setChallenges] = useState([]);
   const [challengeToken, setChallengeToken] = useState("");
   const [challengeLoading, setChallengeLoading] = useState(true);
@@ -1797,44 +1798,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     else setCaptures((current) => ({ ...current, challengeFrames: [...current.challengeFrames, dataUrl].slice(0, 3) }));
   };
 
-  const loadFaceMatcher = async () => {
-    if (!window.faceapi) {
-      await new Promise((resolve, reject) => {
-        const existing = document.querySelector('script[data-stallyard-face-api="true"]');
-        if (existing) { existing.addEventListener("load", resolve, { once: true }); existing.addEventListener("error", reject, { once: true }); return; }
-        const script = document.createElement("script");
-        script.src = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
-        script.dataset.stallyardFaceApi = "true"; script.onload = resolve; script.onerror = reject; document.head.appendChild(script);
-      });
-    }
-    const modelPath = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights";
-    await Promise.all([
-      window.faceapi.nets.ssdMobilenetv1.loadFromUri(modelPath),
-      window.faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
-      window.faceapi.nets.faceRecognitionNet.loadFromUri(modelPath),
-    ]);
-    return window.faceapi;
-  };
-
-  const dataUrlImage = (src) => new Promise((resolve, reject) => {
-    const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src;
-  });
-
-  const verifyFaceMatchesHoldingPhoto = async () => {
-    const faceapi = await loadFaceMatcher();
-    const [selfieImage, holdingImage] = await Promise.all([dataUrlImage(captures.liveSelfie), dataUrlImage(captures.holdingIdSelfie)]);
-    const [selfieFace, idFace] = await Promise.all([
-      faceapi.detectSingleFace(selfieImage).withFaceLandmarks().withFaceDescriptor(),
-      faceapi.detectSingleFace(holdingImage).withFaceLandmarks().withFaceDescriptor(),
-    ]);
-    if (!selfieFace || !idFace) throw new Error("A clear face could not be found in both selfies. Retake the unclear image.");
-    const distance = faceapi.euclideanDistance(selfieFace.descriptor, idFace.descriptor);
-    const score = Math.max(0, Math.min(100, Math.round((1 - distance) * 100)));
-    setFaceMatchScore(score);
-    if (distance > 0.5) throw new Error("Your live selfie does not closely match your selfie holding the ID. Retake both images.");
-    return { passed: true, score, distance: Number(distance.toFixed(4)), selfieDescriptor: Array.from(selfieFace.descriptor) };
-  };
-
   const submit = async () => {
     setError("");
     if (!awsLivenessVerified || !rekognitionVerificationToken) { setError("Complete the secure AWS face-liveness check first."); return; }
@@ -1907,7 +1870,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
         </div>
         <label className="flex gap-2 mt-5 text-xs" style={{ color: SLATE }}><input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} /><span>I consent to Stallyard collecting and securely retaining my identity images and verification results for fraud prevention, account security, seller accountability, transaction investigations, and legal recordkeeping. They may be accessed only by authorized Stallyard verification personnel.</span></label>
         {error && <p className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
-        {faceMatchScore !== null && <p className="text-xs mt-2" style={{ color: SAGE }}>Live-selfie match: {faceMatchScore}%</p>}
         <button disabled={submitting} onClick={submit} className="w-full mt-4 py-3 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{submitting ? "Securely checking and saving…" : "Submit for automatic verification"}</button>
       </div>
     </div>
@@ -2221,6 +2183,8 @@ export default function Stallyard() {
   const [casualSellerApplications, setCasualSellerApplications] = useState([]);
   const [casualSellerReports, setCasualSellerReports] = useState([]);
   const [verifiedSellerApplications, setVerifiedSellerApplications] = useState([]);
+  const [premiumSellerApplications, setPremiumSellerApplications] = useState([]);
+  const [premiumSellerReports, setPremiumSellerReports] = useState([]);
   const [verifiedSellerReports, setVerifiedSellerReports] = useState([]);
   const [casualSellerAdminLoading, setCasualSellerAdminLoading] = useState(false);
   const [selectedCasualApplication, setSelectedCasualApplication] = useState(null);
@@ -2381,6 +2345,8 @@ export default function Stallyard() {
   const [verifiedSellerIdImages, setVerifiedSellerIdImages] = useState({ front: "", back: "" });
   const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
+  const [premiumSellerLimit, setPremiumSellerLimit] = useState("25000000");
+  const [premiumSellerConsent, setPremiumSellerConsent] = useState(false);
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
@@ -3000,6 +2966,27 @@ export default function Stallyard() {
     showToast("Verified Seller application submitted — you'll be notified after admin review");
   };
 
+  const applyForPremiumSeller = async () => {
+    const requestedLimit = Number(premiumSellerLimit);
+    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000 || requestedLimit > 1000000000) {
+      showToast("Request a limit above ₦20,000,000 and no higher than ₦1,000,000,000");
+      return;
+    }
+    if (!bankStatementDraft) { showToast("Upload a recent supporting bank statement"); return; }
+    if (!premiumSellerConsent) { showToast("Accept the Premium Seller declaration"); return; }
+    try {
+      const response = await authFetch(`${BACKEND_URL}/premium-seller/apply`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestedLimit, supportingDocument: bankStatementDraft, consent: true }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Premium Seller application could not be submitted");
+      setBankStatementDraft(null);
+      setPremiumSellerConsent(false);
+      showToast(`Premium Seller application ${data.reference} submitted for review`);
+    } catch (err) { showToast(err.message || "Couldn't reach the server — try again"); }
+  };
+
   const saveVacationSettings = async () => {
     await persistMembers(
       members.map((m) =>
@@ -3559,7 +3546,7 @@ export default function Stallyard() {
   const currentMember = currentUser && sessionUserProfile?.username === currentUser
     ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
     : publicCurrentMember;
-  const hasSellerListingAccess = !!(
+  const hasSellerListingAccess = !currentMember?.sellerSuspended && !!(
     currentMember?.isApproved || currentMember?.isAdmin ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
@@ -5694,6 +5681,47 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't load verified-seller applications"); }
   };
 
+  const fetchPremiumSellerApplications = async () => {
+    const isSuperAdmin = currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin");
+    if (!isSuperAdmin) { setPremiumSellerApplications([]); return; }
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Couldn't load Premium Seller applications");
+      setPremiumSellerApplications(data.applications || []);
+    } catch (err) { showToast(err.message || "Couldn't load Premium Seller applications"); }
+  };
+
+  const viewPremiumSellerDocument = async (application) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications/${application.id}/document`);
+      if (!response.ok) throw new Error("Supporting document unavailable");
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) { showToast(err.message); }
+  };
+
+  const decidePremiumSellerApplication = async (application, approve) => {
+    const reason = approve ? "" : window.prompt("Reason for rejection");
+    if (!approve && !reason) return;
+    const approvedLimit = approve ? Number(window.prompt("Approved combined active-listing limit", String(application.requested_limit))) : null;
+    if (approve && (!Number.isFinite(approvedLimit) || approvedLimit <= 20000000)) { showToast("Enter an approved limit above ₦20,000,000"); return; }
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications/${application.id}/${approve ? "approve" : "reject"}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(approve ? { approvedLimit } : { reason }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Application could not be updated");
+      if (data.user) {
+        await persistMembers(members.map((member) => member.username === application.username ? backendUserToMember(data.user, member) : member));
+      }
+      await fetchPremiumSellerApplications();
+      showToast(approve ? "Premium Seller approved" : "Premium Seller application rejected");
+    } catch (err) { showToast(err.message || "Couldn't reach the server"); }
+  };
+
   const fetchVerifiedSellerReports = async () => {
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-reports`);
@@ -5735,6 +5763,44 @@ export default function Stallyard() {
     } catch (err) { showToast(err.message || "Couldn't generate Verified Seller report"); }
   };
 
+  const fetchPremiumSellerReports = async () => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Couldn't load Premium Seller reports");
+      setPremiumSellerReports(data.reports || []);
+    } catch (err) { showToast(err.message || "Couldn't load Premium Seller reports"); }
+  };
+
+  const downloadPremiumSellerReport = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/${report.id}/download`);
+      if (!response.ok) throw new Error("Premium Seller report unavailable");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a"); link.href=url; link.download=`stallyard-premium-sellers-${String(report.report_date).slice(0,10)}.pdf`; link.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    } catch (err) { showToast(err.message); }
+  };
+
+  const revealPremiumSellerReportPassword = async (report) => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/${report.id}/password`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Report password unavailable");
+      window.alert(`Password for the ${String(report.report_date).slice(0,10)} Premium Seller report:\n\n${data.password}\n\nKeep this password private.`);
+    } catch (err) { showToast(err.message); }
+  };
+
+  const runPremiumSellerReportNow = async () => {
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/run`,{method:"POST"});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Report could not be generated");
+      await fetchPremiumSellerReports();
+      showToast(data.sent ? `Premium Seller report sent for ${data.applicationCount} approval(s)` : "No unreported Premium Seller approvals were found");
+    } catch (err) { showToast(err.message); }
+  };
+
   const viewVerifiedSellerBankStatement = async (application) => {
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/bank-statement`);
@@ -5758,14 +5824,17 @@ export default function Stallyard() {
   useEffect(() => {
     if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
       fetchVerifiedSellerApplications();
+      fetchPremiumSellerApplications();
     } else if (adminTab === "members") {
       setVerifiedSellerApplications([]);
+      setPremiumSellerApplications([]);
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
   useEffect(() => {
     if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
       fetchVerifiedSellerReports();
+      fetchPremiumSellerReports();
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
@@ -10437,13 +10506,15 @@ export default function Stallyard() {
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Completed profile, verified email and verified Nigerian phone</span></li>
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Live selfie, selfie holding identification and three camera challenges</span></li>
                 </ul>
-                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified Seller · up to ₦10,000,000 active</h3>
+                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified Seller · up to ₦20,000,000 active</h3>
                 <ul className="space-y-2 text-sm leading-6" style={{ color: SLATE }}>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Approved Casual Seller verification</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Accepted ID type with front and applicable back images</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Recent bank statement, complete Nigerian address and verified payout bank</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Administrative approval</span></li>
                 </ul>
+                <h3 className="font-semibold text-sm mt-5 mb-2" style={{ color: INK }}>Premium Seller · above ₦20,000,000 active</h3>
+                <ul className="space-y-2 text-sm leading-6" style={{ color: SLATE }}><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Approved Verified Seller account and verified payout bank</span></li><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Recent supporting document and requested listing limit</span></li><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Manual review and an individually approved numeric limit</span></li></ul>
               </div>
 
               <div className="rounded-2xl border p-6 sm:p-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
@@ -10581,7 +10652,7 @@ export default function Stallyard() {
                 {currentMember?.verificationStatus !== "pending" ? (
                   <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
                     <p className="text-sm font-medium" style={{ color: INK }}>Need more than ₦500,000?</p>
-                    <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦10,000,000 in combined active listings.</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦20,000,000 in combined active listings.</p>
                     <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Add one accepted government ID, upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for approval.</p>
                     <select value={verifiedSellerIdForm.idType} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idType: e.target.value }))} className="w-full px-3 py-2 rounded-lg border text-sm bg-white mb-2" style={{ borderColor: "#DDD8CC" }}>
                       <option value="nin">National Identification Number (NIN)</option>
@@ -10615,18 +10686,42 @@ export default function Stallyard() {
               <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller</p>
-                  <Tag color={MARIGOLD}>Up to ₦10,000,000</Tag>
+                  <Tag color={MARIGOLD}>Up to ₦20,000,000</Tag>
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                  {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 20000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
                 </p>
                 <div className="h-2 rounded-full overflow-hidden mt-2" style={{ backgroundColor: "#E8E5DC" }}>
-                  <div className="h-full rounded-full" style={{ backgroundColor: MARIGOLD, width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%` }} />
+                  <div className="h-full rounded-full" style={{ backgroundColor: MARIGOLD, width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 20000000) * 100))}%` }} />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  Draft, sold, cancelled, expired and removed listings do not count. Premium Seller status will be required to publish above this combined limit.
+                  Draft, sold, cancelled, expired and removed listings do not count. Premium Seller approval is required above this combined limit.
                 </p>
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
+                  <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
+                  <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every Premium application is reviewed manually.</p>
+                  <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
+                    <input type="number" min="20000001" max="1000000000" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                  </label>
+                  <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
+                    <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
+                  </label>
+                  <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
+                  <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                </div>
               </div>
+            )}
+
+            {currentUser && currentMember?.sellerTier === "premium" && (
+              <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap"><p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller</p><Tag color={SAGE}>{formatMoney(currentMember.sellerListingLimit, "NGN")} approved limit</Tag></div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>{formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} in combined active listings. Only active listings count.</p>
+              </div>
+            )}
+
+            {currentUser && currentMember?.sellerSuspended && (
+              <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}><p className="text-sm font-semibold" style={{ color: BERRY }}>Selling access suspended</p><p className="text-xs mt-1" style={{ color: SLATE }}>{currentMember.sellerSuspendedReason || "Contact Stallyard support for review."}</p></div>
             )}
 
             {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
@@ -11243,8 +11338,8 @@ export default function Stallyard() {
             )}
             {currentUser && !hasSellerListingAccess && (
               <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
-                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your live selfie and Nigerian ID to publish up to ₦500,000 in combined active listings.</p></div>
-                <button onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: SAGE, color: "white" }}>Start verification</button>
+                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your email and phone first, then complete your live selfie and Nigerian ID check to publish up to ₦500,000 in combined active listings.</p></div>
+                <button disabled={!casualSellerContactReady} title={!casualSellerContactReady ? "Verify both your email and phone number first" : undefined} onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" style={{ backgroundColor: SAGE, color: "white" }}>{casualSellerContactReady ? "Start verification" : "Verify email and phone first"}</button>
               </div>
             )}
             {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
@@ -11275,7 +11370,7 @@ export default function Stallyard() {
                   />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦10,000,000.
+                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦20,000,000.
                 </p>
               </div>
             )}
@@ -11285,7 +11380,7 @@ export default function Stallyard() {
                   <div>
                     <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller allowance</p>
                     <p className="text-xs mt-1" style={{ color: SLATE }}>
-                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 20000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
                     </p>
                   </div>
                   <Tag color={MARIGOLD}>Verified Seller</Tag>
@@ -11295,12 +11390,12 @@ export default function Stallyard() {
                     className="h-full rounded-full"
                     style={{
                       backgroundColor: MARIGOLD,
-                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%`,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 20000000) * 100))}%`,
                     }}
                   />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  ₦10,000,000 combined active-listing limit. Only active listings count. Premium Seller status is required above ₦10,000,000.
+                  ₦20,000,000 combined active-listing limit. Only active listings count. Premium Seller approval is required above ₦20,000,000.
                 </p>
               </div>
             )}
@@ -16273,6 +16368,17 @@ export default function Stallyard() {
                     ))}</div>
                   </div>
                 )}
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && premiumSellerApplications.filter((application) => application.status === "pending").length > 0 && (
+                  <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
+                    <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Premium Seller applications awaiting approval</h4>
+                    <div className="space-y-2">{premiumSellerApplications.filter((application) => application.status === "pending").map((application) => (
+                      <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
+                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested {formatMoney(Number(application.requested_limit), "NGN")}</p></div>
+                        <div className="flex gap-2 flex-wrap"><button onClick={() => viewPremiumSellerDocument(application)} className="text-xs font-medium underline" style={{ color: INK }}>View supporting document</button><button onClick={() => decidePremiumSellerApplication(application, true)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Premium Seller</button><button onClick={() => decidePremiumSellerApplication(application, false)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button></div>
+                      </div>
+                    ))}</div>
+                  </div>
+                )}
                 {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
                   <div className="mb-4 p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -16295,6 +16401,12 @@ export default function Stallyard() {
                       ))}
                       {!verifiedSellerReports.length && <p className="text-xs" style={{ color: SLATE }}>No Verified Seller reports have been generated yet.</p>}
                     </div>
+                  </div>
+                )}
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                  <div className="mb-4 p-4 rounded-xl border bg-white" style={{ borderColor: SAGE }}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap mb-3"><div><h4 className="font-semibold text-sm" style={{ color: INK }}>Premium Seller daily approval reports</h4><p className="text-xs mt-1" style={{ color: SLATE }}>Password-protected, retained securely and available only to authorized administration.</p></div><button onClick={runPremiumSellerReportNow} className="px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: INK, color: "white" }}>Generate report now</button></div>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">{premiumSellerReports.map((report) => <div key={report.id} className="p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}><strong>{String(report.report_date).slice(0,10)}</strong><br />{report.application_count} approval{Number(report.application_count)===1?"":"s"} · {report.email_status}<div className="flex gap-3 mt-2"><button onClick={()=>downloadPremiumSellerReport(report)} className="font-semibold underline">Download PDF</button><button onClick={()=>revealPremiumSellerReportPassword(report)} className="font-semibold underline" style={{ color:BERRY }}>Reveal password</button></div></div>)}{!premiumSellerReports.length && <p className="text-xs" style={{ color:SLATE }}>No Premium Seller reports have been generated yet.</p>}</div>
                   </div>
                 )}
                 <p className="text-xs mb-2" style={{ color: SLATE }}>
