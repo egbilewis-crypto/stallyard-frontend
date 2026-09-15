@@ -2858,12 +2858,30 @@ export default function Stallyard() {
   useEffect(() => {
     if (!currentUser || !authToken || sessionUserProfile?.is_admin) { setCasualSellerStatus(null); return; }
     let cancelled = false;
+    let refreshInFlight = false;
     const refreshSellerStage = async () => {
+      if (refreshInFlight) return;
+      refreshInFlight = true;
       try {
         const [statusResponse, sessionResponse] = await Promise.all([
           authFetch(`${BACKEND_URL}/casual-seller/status`),
           authFetch(`${BACKEND_URL}/session/me`),
         ]);
+        if (sessionResponse.status === 401) {
+          if (cancelled) return;
+          setCasualSellerStatus(null);
+          setSessionUserProfile(null);
+          setCurrentUser(null);
+          setAuthToken(null);
+          try {
+            await window.storage.delete("stallyard-session", false);
+            await window.storage.delete("stallyard-auth-token", false);
+          } catch {
+            // The server has already ended the session; local cleanup is best effort.
+          }
+          showToast("Your session expired. Please sign in again.");
+          return;
+        }
         const statusData = statusResponse.ok ? await statusResponse.json() : null;
         const sessionData = sessionResponse.ok ? await sessionResponse.json() : null;
         if (cancelled) return;
@@ -2871,6 +2889,8 @@ export default function Stallyard() {
         if (sessionData?.user?.username === currentUser) setSessionUserProfile(sessionData.user);
       } catch {
         // Keep the last confirmed seller stage during a temporary network interruption.
+      } finally {
+        refreshInFlight = false;
       }
     };
     refreshSellerStage();
