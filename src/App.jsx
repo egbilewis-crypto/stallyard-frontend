@@ -2857,10 +2857,25 @@ export default function Stallyard() {
 
   useEffect(() => {
     if (!currentUser || !authToken || sessionUserProfile?.is_admin) { setCasualSellerStatus(null); return; }
-    authFetch(`${BACKEND_URL}/casual-seller/status`)
-      .then(async (response) => response.ok ? response.json() : null)
-      .then((data) => { if (data) setCasualSellerStatus(data); })
-      .catch(() => {});
+    let cancelled = false;
+    const refreshSellerStage = async () => {
+      try {
+        const [statusResponse, sessionResponse] = await Promise.all([
+          authFetch(`${BACKEND_URL}/casual-seller/status`),
+          authFetch(`${BACKEND_URL}/session/me`),
+        ]);
+        const statusData = statusResponse.ok ? await statusResponse.json() : null;
+        const sessionData = sessionResponse.ok ? await sessionResponse.json() : null;
+        if (cancelled) return;
+        if (statusData) setCasualSellerStatus(statusData);
+        if (sessionData?.user?.username === currentUser) setSessionUserProfile(sessionData.user);
+      } catch {
+        // Keep the last confirmed seller stage during a temporary network interruption.
+      }
+    };
+    refreshSellerStage();
+    const interval = setInterval(refreshSellerStage, 20000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [currentUser, authToken, sessionUserProfile?.is_admin]);
 
   useEffect(() => {
@@ -16382,10 +16397,7 @@ export default function Stallyard() {
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
                           <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
-                          {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
-                            <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: INK, color: "white" }}>Auto-verify</button>
-                          )}
-                          <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
+                          <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
                           <button onClick={() => { setRejectModalUsername(application.username); setRejectReasonDraft(""); }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
                         </div>
                       </div>
