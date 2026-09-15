@@ -6420,11 +6420,16 @@ export default function Stallyard() {
   };
 
   const cancelAndRefundOrder = async (order) => {
+    const cancellationDeadline = Number(order.createdAt || 0) + (3 * 60 * 60 * 1000);
+    if (!order.createdAt || Date.now() >= cancellationDeadline) {
+      showToast("The 3-hour cancellation window for this order has closed");
+      return;
+    }
     const fee = Math.round(Number(order.total || 0) * 0.02 * 100) / 100;
     const refund = Math.round((Number(order.total || 0) - fee) * 100) / 100;
     const received = order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl);
     const accepted = window.confirm(
-      `Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
+      `Orders can only be cancelled within 3 hours after they are placed. Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
     );
     if (!accepted) return;
     const reason = window.prompt(received ? "Why are you returning and refunding this order?" : "Why are you cancelling this order?");
@@ -13535,12 +13540,17 @@ export default function Stallyard() {
                       </div>
                       <div className="flex items-center gap-3 flex-wrap justify-end">
                         {!o.isDisputed && o.paymentStatus === "held" &&
+                          o.createdAt && Date.now() < o.createdAt + (3 * 60 * 60 * 1000) &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
                             <button onClick={() => cancelAndRefundOrder(o)} className="text-xs font-semibold underline" style={{ color: BERRY }}>
                               {o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)
                                 ? "Return order & refund"
                                 : "Cancel order & refund"}
                             </button>
+                          )}
+                        {!o.isDisputed && o.paymentStatus === "held" && o.createdAt &&
+                          Date.now() >= o.createdAt + (3 * 60 * 60 * 1000) && (
+                            <span className="text-xs" style={{ color: SLATE }}>3-hour cancellation window closed</span>
                           )}
                         {!o.isDisputed && o.paymentStatus === "held" &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
