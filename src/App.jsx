@@ -11295,7 +11295,7 @@ export default function Stallyard() {
           </div>
         )}
 
-        {view === "dashboard" && (
+        {view === "dashboard" && !currentMember?.isAdmin && (
           <div>
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
               <div>
