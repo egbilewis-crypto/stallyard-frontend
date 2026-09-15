@@ -2967,9 +2967,13 @@ export default function Stallyard() {
   };
 
   const applyForPremiumSeller = async () => {
+    if (casualSellerStatus?.premiumApplication?.status === "pending") {
+      showToast("Your Premium Seller application is already awaiting review");
+      return;
+    }
     const requestedLimit = Number(premiumSellerLimit);
-    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000 || requestedLimit > 1000000000) {
-      showToast("Request a limit above ₦20,000,000 and no higher than ₦1,000,000,000");
+    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000) {
+      showToast("Request a limit above ₦20,000,000");
       return;
     }
     if (!bankStatementDraft) { showToast("Upload a recent supporting bank statement"); return; }
@@ -2983,6 +2987,13 @@ export default function Stallyard() {
       if (!response.ok) throw new Error(data.error || "Premium Seller application could not be submitted");
       setBankStatementDraft(null);
       setPremiumSellerConsent(false);
+      setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
+        reference: data.reference,
+        requested_limit: requestedLimit,
+        status: "pending",
+        decision_reason: null,
+        created_at: new Date().toISOString(),
+      } } : current);
       showToast(`Premium Seller application ${data.reference} submitted for review`);
     } catch (err) { showToast(err.message || "Couldn't reach the server — try again"); }
   };
@@ -10699,16 +10710,23 @@ export default function Stallyard() {
                 </p>
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
                   <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
-                  <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every Premium application is reviewed manually.</p>
-                  <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
-                    <input type="number" min="20000001" max="1000000000" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
-                  </label>
-                  <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
-                    {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
-                    <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
-                  </label>
-                  <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
-                  <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                  {casualSellerStatus?.premiumApplication?.status === "pending" ? (
+                    <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
+                      <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
+                    </div>
+                  ) : (<>
+                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling, and every application is reviewed manually.</p>
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
+                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                    </label>
+                    <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
+                      <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
+                    </label>
+                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
+                    <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                  </>)}
                 </div>
               </div>
             )}
