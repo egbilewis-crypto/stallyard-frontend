@@ -2867,8 +2867,17 @@ export default function Stallyard() {
           authFetch(`${BACKEND_URL}/casual-seller/status`),
           authFetch(`${BACKEND_URL}/session/me`),
         ]);
-        if (sessionResponse.status === 401) {
+        if (sessionResponse.status === 401 || sessionResponse.status === 403) {
           if (cancelled) return;
+          let sessionMessage = sessionResponse.status === 403
+            ? "This account has been suspended. Contact Stallyard support."
+            : "Your session expired. Please sign in again.";
+          try {
+            const sessionError = await sessionResponse.json();
+            if (sessionError?.error) sessionMessage = sessionError.error;
+          } catch {
+            // Use the safe fallback message when the server sends no JSON body.
+          }
           setCasualSellerStatus(null);
           setSessionUserProfile(null);
           setCurrentUser(null);
@@ -2879,7 +2888,7 @@ export default function Stallyard() {
           } catch {
             // The server has already ended the session; local cleanup is best effort.
           }
-          showToast("Your session expired. Please sign in again.");
+          showToast(sessionMessage);
           return;
         }
         const statusData = statusResponse.ok ? await statusResponse.json() : null;
