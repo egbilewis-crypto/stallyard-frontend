@@ -6421,18 +6421,23 @@ export default function Stallyard() {
 
   const cancelAndRefundOrder = async (order) => {
     const cancellationDeadline = Number(order.createdAt || 0) + (3 * 60 * 60 * 1000);
-    if (!order.createdAt || Date.now() >= cancellationDeadline) {
+    const onTimeRetry = order.refundType === "buyer_cancellation" && order.refundStatus === "failed" &&
+      order.refundRequestedAt && order.refundRequestedAt < cancellationDeadline;
+    if (!order.createdAt || (Date.now() >= cancellationDeadline && !onTimeRetry)) {
       showToast("The 3-hour cancellation window for this order has closed");
+      return;
+    }
+    if (order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)) {
+      showToast("This order has already been recorded as delivered and can no longer be cancelled");
       return;
     }
     const fee = Math.round(Number(order.total || 0) * 0.02 * 100) / 100;
     const refund = Math.round((Number(order.total || 0) - fee) * 100) / 100;
-    const received = order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl);
     const accepted = window.confirm(
       `Orders can only be cancelled within 3 hours after they are placed. Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
     );
     if (!accepted) return;
-    const reason = window.prompt(received ? "Why are you returning and refunding this order?" : "Why are you cancelling this order?");
+    const reason = window.prompt("Why are you cancelling this order?");
     if (!reason?.trim()) return;
     try {
       const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/buyer-cancel-refund`, {
@@ -6442,21 +6447,38 @@ export default function Stallyard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (data.order) {
+          await persistOrders(orders.map((current) => current.id !== order.id ? current : {
+            ...current,
+            paymentStatus: data.order.payment_status || current.paymentStatus,
+            refundStatus: data.order.refund_status || current.refundStatus,
+            refundFailureReason: data.order.refund_failure_reason || data.error || current.refundFailureReason,
+            refundRequestedAt: data.order.refund_requested_at ? new Date(data.order.refund_requested_at).getTime() : current.refundRequestedAt,
+            refundType: data.order.refund_type || current.refundType,
+          }));
+        }
         showToast(data.error || "Couldn't submit the refund");
         return;
       }
+      const refundProcessed = data.order?.payment_status === "refunded" || data.order?.refund_status === "processed";
       await persistOrders(orders.map((current) => current.id !== order.id ? current : {
         ...current,
-        paymentStatus: "refund_pending",
+        paymentStatus: data.order?.payment_status || (refundProcessed ? "refunded" : "refund_pending"),
         refundStatus: data.order?.refund_status || "pending",
         refundType: "buyer_cancellation",
         refundAmount: Number(data.refundAmount || refund),
         cancellationFee: Number(data.cancellationFee || fee),
-        buyerExitType: data.buyerExitType || (received ? "return_refund" : "cancellation"),
+        buyerExitType: data.buyerExitType || "cancellation",
         refundReason: reason.trim(),
         refundRequestedAt: Date.now(),
+        refundedAt: data.order?.refunded_at ? new Date(data.order.refunded_at).getTime() : current.refundedAt,
+        items: refundProcessed
+          ? current.items.map((item) => ({ ...item, fulfillmentStatus: "cancelled", cancellationStatus: "approved" }))
+          : current.items,
       }));
-      showToast(`Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
+      showToast(refundProcessed
+        ? `Refund processed — ${formatMoney(fee, order.currency)} cancellation fee charged`
+        : `Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -13540,16 +13562,19 @@ export default function Stallyard() {
                       </div>
                       <div className="flex items-center gap-3 flex-wrap justify-end">
                         {!o.isDisputed && o.paymentStatus === "held" &&
-                          o.createdAt && Date.now() < o.createdAt + (3 * 60 * 60 * 1000) &&
+                          o.createdAt && (Date.now() < o.createdAt + (3 * 60 * 60 * 1000) ||
+                            (o.refundType === "buyer_cancellation" && o.refundStatus === "failed" && o.refundRequestedAt &&
+                              o.refundRequestedAt < o.createdAt + (3 * 60 * 60 * 1000))) &&
+                          !o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl) &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
                             <button onClick={() => cancelAndRefundOrder(o)} className="text-xs font-semibold underline" style={{ color: BERRY }}>
-                              {o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)
-                                ? "Return order & refund"
-                                : "Cancel order & refund"}
+                              Cancel order & refund
                             </button>
                           )}
                         {!o.isDisputed && o.paymentStatus === "held" && o.createdAt &&
-                          Date.now() >= o.createdAt + (3 * 60 * 60 * 1000) && (
+                          Date.now() >= o.createdAt + (3 * 60 * 60 * 1000) &&
+                          !(o.refundType === "buyer_cancellation" && o.refundStatus === "failed" && o.refundRequestedAt &&
+                            o.refundRequestedAt < o.createdAt + (3 * 60 * 60 * 1000)) && (
                             <span className="text-xs" style={{ color: SLATE }}>3-hour cancellation window closed</span>
                           )}
                         {!o.isDisputed && o.paymentStatus === "held" &&
