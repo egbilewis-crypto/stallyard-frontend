@@ -3557,8 +3557,8 @@ export default function Stallyard() {
   const currentMember = currentUser && sessionUserProfile?.username === currentUser
     ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
     : publicCurrentMember;
-  const hasSellerListingAccess = !currentMember?.sellerSuspended && !!(
-    currentMember?.isApproved || currentMember?.isAdmin ||
+  const hasSellerListingAccess = !currentMember?.isAdmin && !currentMember?.sellerSuspended && !!(
+    currentMember?.isApproved ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
   const casualSellerContactReady = casualSellerStatus?.emailVerified === true && casualSellerStatus?.phoneVerified === true;
@@ -9574,7 +9574,7 @@ export default function Stallyard() {
               </div>
 
               <div className="flex items-center gap-3 sm:gap-5 whitespace-nowrap">
-                <button onClick={() => setView("sell")} className="hover:underline">Sell</button>
+                {!currentMember?.isAdmin && <button onClick={() => setView("sell")} className="hover:underline">Sell</button>}
                 <button
                   onClick={() => currentUser ? setView("watchlist") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("watchlist"), setView("signup"))}
                   className="hidden sm:inline hover:underline"
@@ -10353,13 +10353,13 @@ export default function Stallyard() {
                 <p className="text-sm mt-1" style={{ color: SLATE }}>
                   Be the first to set one up.
                 </p>
-                <button
+                {!currentMember?.isAdmin && <button
                   onClick={() => setView("sell")}
                   className="mt-4 px-4 py-2 rounded-lg font-medium text-sm"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
                   List something
-                </button>
+                </button>}
               </div>
             )}
 
@@ -10566,7 +10566,7 @@ export default function Stallyard() {
           </section>
         )}
 
-        {view === "sell" && (
+        {view === "sell" && !currentMember?.isAdmin && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               {editingId ? "Edit your listing" : "Set up a listing"}
