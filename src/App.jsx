@@ -19295,7 +19295,7 @@ export default function Stallyard() {
                 Fees
               </button>
               <a
-                href="https://stallyard-legal.egbilewis.chatgpt.site/user-agreement/"
+                href="https://legal.stallyard.com/user-agreement/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-left"
