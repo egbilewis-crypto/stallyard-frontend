@@ -1025,6 +1025,8 @@ function backendOrderToFrontend(row) {
       buyerConfirmedAt: i.buyer_confirmed_at ? new Date(i.buyer_confirmed_at).getTime() : null,
       shippedAt: i.shipped_at ? new Date(i.shipped_at).getTime() : null,
       proofOfDeliveryUrl: i.proof_of_delivery_url || "",
+      selfDeliveryStage: i.self_delivery_stage || "",
+      selfDeliveryPersonPhotoUrl: i.self_delivery_person_photo_url || "",
       // Secret delivery token is returned only on buyer-facing order responses.
       deliveryToken: i.delivery_token || null,
       deliveryTokenGeneratedAt: i.delivery_token_generated_at ? new Date(i.delivery_token_generated_at).getTime() : null,
@@ -1191,72 +1193,6 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
         canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// Homepage hero images are the page's LCP resource. Desktop creatives use a
-// wide 4:1 frame; mobile creatives use a square frame so important content is
-// never lost to aggressive responsive cropping. Both are encoded as WebP.
-function resizeHomepageHero(file, variant = "desktop") {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Couldn't read file"));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("Couldn't read image"));
-      img.onload = async () => {
-        try {
-          const isMobile = variant === "mobile";
-          const targetRatio = isMobile ? 1 : 4;
-          const maxBytes = (isMobile ? 180 : 250) * 1024;
-          const sourceRatio = img.width / img.height;
-          let sx = 0;
-          let sy = 0;
-          let sourceWidth = img.width;
-          let sourceHeight = img.height;
-          if (sourceRatio > targetRatio) {
-            sourceWidth = Math.round(img.height * targetRatio);
-            sx = Math.round((img.width - sourceWidth) / 2);
-          } else if (sourceRatio < targetRatio) {
-            sourceHeight = Math.round(img.width / targetRatio);
-            sy = Math.round((img.height - sourceHeight) / 2);
-          }
-
-          const widths = isMobile ? [800, 720, 640] : [1600, 1440, 1280, 1120];
-          const qualities = [0.82, 0.74, 0.66, 0.58, 0.5];
-          let best = null;
-          for (const requestedWidth of widths) {
-            const width = Math.max(1, Math.min(requestedWidth, sourceWidth));
-            const height = Math.max(1, Math.round(width / targetRatio));
-            const canvas = document.createElement("canvas");
-            canvas.width = width;
-            canvas.height = height;
-            canvas.getContext("2d").drawImage(img, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
-            for (const quality of qualities) {
-              const blob = await new Promise((done) => canvas.toBlob(done, "image/webp", quality));
-              if (!blob) continue;
-              best = { blob, width, height };
-              if (blob.size <= maxBytes) break;
-            }
-            if (best?.blob.size <= maxBytes) break;
-          }
-          if (!best) throw new Error("This browser couldn't create a WebP image");
-          const outputReader = new FileReader();
-          outputReader.onerror = () => reject(new Error("Couldn't prepare the optimized image"));
-          outputReader.onload = () => resolve({
-            dataUrl: outputReader.result,
-            sizeBytes: best.blob.size,
-            width: best.width,
-            height: best.height,
-          });
-          outputReader.readAsDataURL(best.blob);
-        } catch (error) {
-          reject(error);
-        }
       };
       img.src = reader.result;
     };
@@ -1584,10 +1520,6 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
             <img
               src={listing.images[0]}
               alt={listing.title}
-              width="640"
-              height="360"
-              loading="lazy"
-              decoding="async"
               className="w-full h-36 object-cover rounded-tr-2xl"
             />
             <span
@@ -2212,8 +2144,6 @@ export default function Stallyard() {
     { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
     { slot: 3, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
   ]);
-  const [homepageHeroSlide, setHomepageHeroSlide] = useState(0);
-  const [homepageHeroPaused, setHomepageHeroPaused] = useState(false);
   const [homepageAdUploading, setHomepageAdUploading] = useState(null);
   const [homepageAdSaving, setHomepageAdSaving] = useState(null);
   const [policies, setPolicies] = useState({
@@ -2422,6 +2352,7 @@ export default function Stallyard() {
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
+  const [uploadingSelfDeliverySelfieKey, setUploadingSelfDeliverySelfieKey] = useState(null);
   const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [deliveryTokens, setDeliveryTokens] = useState({});
@@ -2450,30 +2381,6 @@ export default function Stallyard() {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }, []);
-
-  useEffect(() => {
-    const slideCount = homepageAds.filter((ad) => ad.imageUrl).length;
-    if (homepageHeroSlide >= Math.max(slideCount, 1)) setHomepageHeroSlide(0);
-    if (slideCount <= 1 || homepageHeroPaused || view !== "browse") return undefined;
-    const interval = setInterval(() => {
-      setHomepageHeroSlide((current) => (current + 1) % slideCount);
-    }, 7000);
-    return () => clearInterval(interval);
-  }, [homepageAds, homepageHeroPaused, homepageHeroSlide, view]);
-
-  useEffect(() => {
-    // Slide 1 is the LCP resource. Preload the remaining slides only after the
-    // initial page has had time to settle.
-    const timer = setTimeout(() => {
-      homepageAds.slice(1).forEach((ad) => {
-        [ad.imageUrl, ad.posterUrl].filter(Boolean).forEach((src) => {
-          const preload = new Image();
-          preload.src = src;
-        });
-      });
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [homepageAds]);
 
   useEffect(() => {
     (async () => {
@@ -2593,7 +2500,7 @@ export default function Stallyard() {
             return {
               slot,
               imageUrl: ad.image_url || "",
-              mediaType: "image",
+              mediaType: slot === 1 && ad.media_type === "video" ? "video" : "image",
               posterUrl: ad.poster_url || "",
               linkUrl: ad.link_url || "",
             };
@@ -2953,54 +2860,10 @@ export default function Stallyard() {
 
   useEffect(() => {
     if (!currentUser || !authToken || sessionUserProfile?.is_admin) { setCasualSellerStatus(null); return; }
-    let cancelled = false;
-    let refreshInFlight = false;
-    const refreshSellerStage = async () => {
-      if (refreshInFlight) return;
-      refreshInFlight = true;
-      try {
-        const [statusResponse, sessionResponse] = await Promise.all([
-          authFetch(`${BACKEND_URL}/casual-seller/status`),
-          authFetch(`${BACKEND_URL}/session/me`),
-        ]);
-        if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-          if (cancelled) return;
-          let sessionMessage = sessionResponse.status === 403
-            ? "This account has been suspended. Contact Stallyard support."
-            : "Your session expired. Please sign in again.";
-          try {
-            const sessionError = await sessionResponse.json();
-            if (sessionError?.error) sessionMessage = sessionError.error;
-          } catch {
-            // Use the safe fallback message when the server sends no JSON body.
-          }
-          setCasualSellerStatus(null);
-          setSessionUserProfile(null);
-          setCurrentUser(null);
-          setAuthToken(null);
-          try {
-            await window.storage.delete("stallyard-session", false);
-            await window.storage.delete("stallyard-auth-token", false);
-          } catch {
-            // The server has already ended the session; local cleanup is best effort.
-          }
-          showToast(sessionMessage);
-          return;
-        }
-        const statusData = statusResponse.ok ? await statusResponse.json() : null;
-        const sessionData = sessionResponse.ok ? await sessionResponse.json() : null;
-        if (cancelled) return;
-        if (statusData) setCasualSellerStatus(statusData);
-        if (sessionData?.user?.username === currentUser) setSessionUserProfile(sessionData.user);
-      } catch {
-        // Keep the last confirmed seller stage during a temporary network interruption.
-      } finally {
-        refreshInFlight = false;
-      }
-    };
-    refreshSellerStage();
-    const interval = setInterval(refreshSellerStage, 20000);
-    return () => { cancelled = true; clearInterval(interval); };
+    authFetch(`${BACKEND_URL}/casual-seller/status`)
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => { if (data) setCasualSellerStatus(data); })
+      .catch(() => {});
   }, [currentUser, authToken, sessionUserProfile?.is_admin]);
 
   useEffect(() => {
@@ -3107,13 +2970,9 @@ export default function Stallyard() {
   };
 
   const applyForPremiumSeller = async () => {
-    if (casualSellerStatus?.premiumApplication?.status === "pending") {
-      showToast("Your Premium Seller application is already awaiting review");
-      return;
-    }
     const requestedLimit = Number(premiumSellerLimit);
-    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000) {
-      showToast("Request a limit above ₦20,000,000");
+    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000 || requestedLimit > 1000000000) {
+      showToast("Request a limit above ₦20,000,000 and no higher than ₦1,000,000,000");
       return;
     }
     if (!bankStatementDraft) { showToast("Upload a recent supporting bank statement"); return; }
@@ -3127,13 +2986,6 @@ export default function Stallyard() {
       if (!response.ok) throw new Error(data.error || "Premium Seller application could not be submitted");
       setBankStatementDraft(null);
       setPremiumSellerConsent(false);
-      setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
-        reference: data.reference,
-        requested_limit: requestedLimit,
-        status: "pending",
-        decision_reason: null,
-        created_at: new Date().toISOString(),
-      } } : current);
       showToast(`Premium Seller application ${data.reference} submitted for review`);
     } catch (err) { showToast(err.message || "Couldn't reach the server — try again"); }
   };
@@ -3697,8 +3549,8 @@ export default function Stallyard() {
   const currentMember = currentUser && sessionUserProfile?.username === currentUser
     ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
     : publicCurrentMember;
-  const hasSellerListingAccess = !currentMember?.isAdmin && !currentMember?.sellerSuspended && !!(
-    currentMember?.isApproved ||
+  const hasSellerListingAccess = !currentMember?.sellerSuspended && !!(
+    currentMember?.isApproved || currentMember?.isAdmin ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
   const casualSellerContactReady = casualSellerStatus?.emailVerified === true && casualSellerStatus?.phoneVerified === true;
@@ -6147,6 +5999,69 @@ export default function Stallyard() {
     showToast(`Marked as ${FULFILLMENT_LABEL[status] || status}`);
   };
 
+  const updateSelfDelivery = async (orderId, itemId, patch, successMessage) => {
+    const ok = await patchOrderItemOnBackend(itemId, patch);
+    if (!ok) return false;
+    setOrders((all) => all.map((o) => o.id !== orderId ? o : {
+      ...o,
+      items: o.items.map((i) => i.id !== itemId ? i : {
+        ...i,
+        ...(patch.carrier !== undefined ? { carrier: patch.carrier } : {}),
+        ...(patch.fulfillmentStatus !== undefined ? { fulfillmentStatus: patch.fulfillmentStatus } : {}),
+        ...(patch.selfDeliveryStage !== undefined ? { selfDeliveryStage: patch.selfDeliveryStage } : {}),
+        ...(patch.selfDeliveryPersonPhotoUrl !== undefined ? { selfDeliveryPersonPhotoUrl: patch.selfDeliveryPersonPhotoUrl } : {}),
+      }),
+    }));
+    if (successMessage) showToast(successMessage);
+    return true;
+  };
+
+  const startSelfDelivery = async (orderId, itemId) => {
+    await updateSelfDelivery(orderId, itemId, {
+      carrier: "Self delivery",
+      fulfillmentStatus: "shipped",
+      selfDeliveryStage: "started",
+    }, "Self delivery started");
+  };
+
+  const setSelfDeliveryStage = async (orderId, item, stage) => {
+    if (stage === "arrived" && !item.selfDeliveryPersonPhotoUrl) {
+      showToast("Take the delivery person's selfie before marking I'm here");
+      return;
+    }
+    const patch = { carrier: "Self delivery", selfDeliveryStage: stage };
+    if (stage === "delivered") patch.fulfillmentStatus = "delivered";
+    await updateSelfDelivery(orderId, item.id, patch,
+      stage === "on_my_way" ? "On my way — take the delivery person's selfie next" :
+      stage === "arrived" ? "Buyer can now see that you've arrived" :
+      stage === "delivered" ? "Marked delivered — upload the delivery photo next" :
+      "Self-delivery status updated"
+    );
+  };
+
+  const handleSelfDeliverySelfieSelect = async (e, orderId, itemId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      showToast("Take or choose a clear photo under 5MB");
+      return;
+    }
+    const key = `${orderId}-${itemId}`;
+    setUploadingSelfDeliverySelfieKey(key);
+    try {
+      const dataUrl = await resizeImageFile(file, 1200, 0.84);
+      await updateSelfDelivery(orderId, itemId, {
+        carrier: "Self delivery",
+        selfDeliveryPersonPhotoUrl: dataUrl,
+      }, "Delivery person's photo saved and shared with the buyer");
+    } catch {
+      showToast("Couldn't process that photo — try again");
+    } finally {
+      setUploadingSelfDeliverySelfieKey(null);
+    }
+  };
+
   const updateItemTracking = async (orderId, itemId, trackingNumber) => {
     const ok = await patchOrderItemOnBackend(itemId, { trackingNumber });
     if (!ok) return;
@@ -6516,24 +6431,14 @@ export default function Stallyard() {
   };
 
   const cancelAndRefundOrder = async (order) => {
-    const cancellationDeadline = Number(order.createdAt || 0) + (3 * 60 * 60 * 1000);
-    const onTimeRetry = order.refundType === "buyer_cancellation" && order.refundStatus === "failed" &&
-      order.refundRequestedAt && order.refundRequestedAt < cancellationDeadline;
-    if (!order.createdAt || (Date.now() >= cancellationDeadline && !onTimeRetry)) {
-      showToast("The 3-hour cancellation window for this order has closed");
-      return;
-    }
-    if (order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)) {
-      showToast("This order has already been recorded as delivered and can no longer be cancelled");
-      return;
-    }
     const fee = Math.round(Number(order.total || 0) * 0.02 * 100) / 100;
     const refund = Math.round((Number(order.total || 0) - fee) * 100) / 100;
+    const received = order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl);
     const accepted = window.confirm(
-      `Orders can only be cancelled within 3 hours after they are placed. Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
+      `Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
     );
     if (!accepted) return;
-    const reason = window.prompt("Why are you cancelling this order?");
+    const reason = window.prompt(received ? "Why are you returning and refunding this order?" : "Why are you cancelling this order?");
     if (!reason?.trim()) return;
     try {
       const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/buyer-cancel-refund`, {
@@ -6543,38 +6448,21 @@ export default function Stallyard() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        if (data.order) {
-          await persistOrders(orders.map((current) => current.id !== order.id ? current : {
-            ...current,
-            paymentStatus: data.order.payment_status || current.paymentStatus,
-            refundStatus: data.order.refund_status || current.refundStatus,
-            refundFailureReason: data.order.refund_failure_reason || data.error || current.refundFailureReason,
-            refundRequestedAt: data.order.refund_requested_at ? new Date(data.order.refund_requested_at).getTime() : current.refundRequestedAt,
-            refundType: data.order.refund_type || current.refundType,
-          }));
-        }
         showToast(data.error || "Couldn't submit the refund");
         return;
       }
-      const refundProcessed = data.order?.payment_status === "refunded" || data.order?.refund_status === "processed";
       await persistOrders(orders.map((current) => current.id !== order.id ? current : {
         ...current,
-        paymentStatus: data.order?.payment_status || (refundProcessed ? "refunded" : "refund_pending"),
+        paymentStatus: "refund_pending",
         refundStatus: data.order?.refund_status || "pending",
         refundType: "buyer_cancellation",
         refundAmount: Number(data.refundAmount || refund),
         cancellationFee: Number(data.cancellationFee || fee),
-        buyerExitType: data.buyerExitType || "cancellation",
+        buyerExitType: data.buyerExitType || (received ? "return_refund" : "cancellation"),
         refundReason: reason.trim(),
         refundRequestedAt: Date.now(),
-        refundedAt: data.order?.refunded_at ? new Date(data.order.refunded_at).getTime() : current.refundedAt,
-        items: refundProcessed
-          ? current.items.map((item) => ({ ...item, fulfillmentStatus: "cancelled", cancellationStatus: "approved" }))
-          : current.items,
       }));
-      showToast(refundProcessed
-        ? `Refund processed — ${formatMoney(fee, order.currency)} cancellation fee charged`
-        : `Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
+      showToast(`Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -7754,17 +7642,16 @@ export default function Stallyard() {
     if (!file) return;
     setHomepageAdUploading(slot);
     try {
-      const optimized = await resizeHomepageHero(file, "desktop");
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads" }),
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url, mediaType: "image" } : ad));
-      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
-      showToast(`Slide ${slot} desktop image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url } : ad));
+      showToast(`Ad ${slot} image uploaded — click Save ad to publish it`);
     } catch (err) {
       showToast(err.message || "Couldn't upload that ad image");
     } finally {
@@ -7806,25 +7693,24 @@ export default function Stallyard() {
     }
   };
 
-  const handleHomepageAdMobileImageSelect = async (e, slot) => {
+  const handleHomepageAdPosterSelect = async (e, slot) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || slot !== 1) return;
     setHomepageAdUploading(slot);
     try {
-      const optimized = await resizeHomepageHero(file, "mobile");
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads/mobile" }),
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads/posters" }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Mobile image upload failed");
+      if (!res.ok) throw new Error(data.error || "Poster upload failed");
       setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, posterUrl: data.url } : ad));
-      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
-      showToast(`Slide ${slot} mobile image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
+      showToast("Video poster uploaded — click Save ad to publish it");
     } catch (err) {
-      showToast(err.message || "Couldn't upload that mobile image");
+      showToast(err.message || "Couldn't upload that poster image");
     } finally {
       setHomepageAdUploading(null);
     }
@@ -7840,8 +7726,8 @@ export default function Stallyard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageUrl: ad.imageUrl || "",
-          mediaType: "image",
-          posterUrl: ad.posterUrl || "",
+          mediaType: ad.slot === 1 ? (ad.mediaType || "image") : "image",
+          posterUrl: ad.slot === 1 ? (ad.posterUrl || "") : "",
           linkUrl: ad.linkUrl || "",
         }),
       });
@@ -7850,7 +7736,7 @@ export default function Stallyard() {
       setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
         slot,
         imageUrl: data.ad?.image_url || "",
-        mediaType: "image",
+        mediaType: slot === 1 && data.ad?.media_type === "video" ? "video" : "image",
         posterUrl: data.ad?.poster_url || "",
         linkUrl: data.ad?.link_url || "",
       } : item));
@@ -9743,7 +9629,7 @@ export default function Stallyard() {
               </div>
 
               <div className="flex items-center gap-3 sm:gap-5 whitespace-nowrap">
-                {!currentMember?.isAdmin && <button onClick={() => setView("sell")} className="hover:underline">Sell</button>}
+                <button onClick={() => setView("sell")} className="hover:underline">Sell</button>
                 <button
                   onClick={() => currentUser ? setView("watchlist") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("watchlist"), setView("signup"))}
                   className="hidden sm:inline hover:underline"
@@ -9756,22 +9642,6 @@ export default function Stallyard() {
                 >
                   My Stallyard
                 </button>
-                {currentUser && !currentMember?.isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(null);
-                      setView("dashboard");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className="inline-flex items-center gap-1 hover:underline"
-                    aria-label="Open seller dashboard"
-                    title="Seller Dashboard"
-                  >
-                    <Store size={16} />
-                    <span className="hidden md:inline">Seller Dashboard</span>
-                  </button>
-                )}
                 {currentUser && (
                   <button
                     type="button"
@@ -10264,88 +10134,60 @@ export default function Stallyard() {
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="mb-8 relative left-1/2 -translate-x-1/2 w-[calc(100vw-2rem)] sm:w-[calc(100vw-4rem)] max-w-[1600px]">
-                {(() => {
-                  const slides = homepageAds.filter((ad) => ad.imageUrl);
-                  if (!slides.length) return null;
-                  const activeIndex = Math.min(homepageHeroSlide, slides.length - 1);
-                  const ad = slides[activeIndex];
-                  const hero = (
-                    <picture>
-                      {ad.posterUrl && <source media="(max-width: 639px)" srcSet={ad.posterUrl} />}
-                      <img
-                        src={ad.imageUrl}
-                        alt={`Stallyard featured promotion ${activeIndex + 1}`}
-                        width="1600"
-                        height="400"
-                        loading={activeIndex === 0 ? "eager" : "lazy"}
-                        fetchPriority={activeIndex === 0 ? "high" : "auto"}
-                        decoding="async"
-                        className="absolute inset-0 w-full h-full object-cover"
-                      />
-                    </picture>
-                  );
-                  return (
-                    <section
-                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-square sm:aspect-[4/1]"
-                      style={{ borderColor: "#DDD8CC" }}
-                      aria-label="Featured Stallyard promotions"
+              <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] lg:grid-rows-2 gap-4">
+                {homepageAds.map((ad) => {
+                  const isPrimary = ad.slot === 1;
+                  const card = (
+                    <div
+                      className={`relative overflow-hidden rounded-2xl border bg-white ${isPrimary ? "lg:row-span-2" : ""}`}
+                      style={{
+                        borderColor: "#DDD8CC",
+                        minHeight: isPrimary ? "360px" : "172px",
+                      }}
                     >
-                      {ad.linkUrl ? (
-                        <a href={ad.linkUrl} className="absolute inset-0 block" aria-label={`Open promotion ${activeIndex + 1}`}>
-                          {hero}
-                        </a>
-                      ) : hero}
-
-                      {slides.length > 1 && (
-                        <>
-                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/55 px-3 py-2">
-                            {slides.map((slide, index) => (
-                              <button
-                                key={slide.slot}
-                                type="button"
-                                onClick={() => setHomepageHeroSlide(index)}
-                                aria-label={`Show promotion ${index + 1}`}
-                                aria-current={index === activeIndex ? "true" : undefined}
-                                className="h-2.5 w-2.5 rounded-full border border-white"
-                                style={{ backgroundColor: index === activeIndex ? "white" : "transparent" }}
-                              />
-                            ))}
-                          </div>
-                          <div className="absolute bottom-3 right-3 z-10 flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroSlide((activeIndex - 1 + slides.length) % slides.length)}
-                              aria-label="Previous promotion"
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              ‹
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroSlide((activeIndex + 1) % slides.length)}
-                              aria-label="Next promotion"
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              ›
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroPaused((paused) => !paused)}
-                              aria-label={homepageHeroPaused ? "Play promotions" : "Pause promotions"}
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-sm font-bold"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              {homepageHeroPaused ? "▶" : "Ⅱ"}
-                            </button>
-                          </div>
-                        </>
+                      {ad.imageUrl ? (
+                        isPrimary && ad.mediaType === "video" ? (
+                          <video
+                            src={ad.imageUrl}
+                            poster={ad.posterUrl || undefined}
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                            aria-label="Stallyard featured video promotion"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={ad.imageUrl}
+                            alt={`Stallyard featured promotion ${ad.slot}`}
+                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
+                          />
+                        )
+                      ) : (
+                        <div
+                          className="absolute inset-0 flex items-center justify-center"
+                          style={{ background: ad.slot === 1 ? "#EFE7D6" : ad.slot === 2 ? "#E7EFE8" : "#F4E5E2" }}
+                        >
+                          <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
+                        </div>
                       )}
-                    </section>
+                    </div>
                   );
-                })()}
+                  return ad.linkUrl ? (
+                    <a
+                      key={ad.slot}
+                      href={ad.linkUrl}
+                      className={isPrimary ? "lg:row-span-2 block" : "block"}
+                      aria-label={`Open featured promotion ${ad.slot}`}
+                    >
+                      {card}
+                    </a>
+                  ) : (
+                    <div key={ad.slot} className={isPrimary ? "lg:row-span-2" : ""}>{card}</div>
+                  );
+                })}
               </div>
             )}
 
@@ -10566,13 +10408,13 @@ export default function Stallyard() {
                 <p className="text-sm mt-1" style={{ color: SLATE }}>
                   Be the first to set one up.
                 </p>
-                {!currentMember?.isAdmin && <button
+                <button
                   onClick={() => setView("sell")}
                   className="mt-4 px-4 py-2 rounded-lg font-medium text-sm"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
                   List something
-                </button>}
+                </button>
               </div>
             )}
 
@@ -10779,7 +10621,7 @@ export default function Stallyard() {
           </section>
         )}
 
-        {view === "sell" && !currentMember?.isAdmin && (
+        {view === "sell" && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               {editingId ? "Edit your listing" : "Set up a listing"}
@@ -10923,29 +10765,16 @@ export default function Stallyard() {
                 </p>
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
                   <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
-                  {casualSellerStatus?.premiumApplication?.status === "pending" ? (
-                    <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
-                      <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
-                    </div>
-                  ) : (<>
-                    {casualSellerStatus?.premiumApplication?.status === "rejected" && (
-                      <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
-                        <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
-                        <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
-                      </div>
-                    )}
-                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling, and every application is reviewed manually.</p>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
-                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
-                    </label>
-                    <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
-                      {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
-                      <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
-                    </label>
-                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
-                    <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
-                  </>)}
+                  <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every Premium application is reviewed manually.</p>
+                  <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
+                    <input type="number" min="20000001" max="1000000000" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                  </label>
+                  <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
+                    <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
+                  </label>
+                  <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
+                  <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
                 </div>
               </div>
             )}
@@ -11514,7 +11343,7 @@ export default function Stallyard() {
           </div>
         )}
 
-        {view === "dashboard" && !currentMember?.isAdmin && (
+        {view === "dashboard" && (
           <div>
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
               <div>
@@ -12466,6 +12295,74 @@ export default function Stallyard() {
                                       </button>
                                     </div>
                                   )}
+                                  {!["cancelled", "returned", "delivered"].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: i.carrier === "Self delivery" ? SAGE : "#DDD8CC", backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-semibold" style={{ color: INK }}>Self delivery</div>
+                                      <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                        Delivering this order yourself? Mark On my way first, then take the delivery person's required selfie. GPS sharing is optional.
+                                      </div>
+                                      {i.carrier !== "Self delivery" || !i.selfDeliveryStage ? (
+                                        <button onClick={() => startSelfDelivery(o.id, i.id)} className="mt-2 px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                                          Start self delivery
+                                        </button>
+                                      ) : (
+                                        <div className="mt-2 space-y-2">
+                                          <Tag color={SAGE}>
+                                            {i.selfDeliveryStage === "started" ? "Started" : i.selfDeliveryStage === "on_my_way" ? "On my way" : i.selfDeliveryStage === "arrived" ? "I'm here" : i.selfDeliveryStage === "delivered" ? "Delivered" : "Self delivery"}
+                                          </Tag>
+                                          <div className="flex gap-2 flex-wrap">
+                                            {i.selfDeliveryStage === "started" && (
+                                              <button onClick={() => setSelfDeliveryStage(o.id, i, "on_my_way")} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: SAGE, color: "white" }}>
+                                                On my way
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          {["on_my_way", "arrived", "delivered"].includes(i.selfDeliveryStage) && (
+                                            <div>
+                                              <div className="text-xs font-medium" style={{ color: INK }}>Delivery person's selfie — required</div>
+                                              <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                                Take this after marking On my way. The buyer will see the photo so they know who is bringing the package.
+                                              </div>
+                                              {i.selfDeliveryPersonPhotoUrl ? (
+                                                <div className="flex items-center gap-2 mt-2">
+                                                  <img src={i.selfDeliveryPersonPhotoUrl} alt="Delivery person" className="w-16 h-16 object-cover rounded-lg border" style={{ borderColor: SAGE }} />
+                                                  <label className="px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
+                                                    Replace photo
+                                                    <input type="file" accept="image/*" capture="user" className="hidden" onChange={(e) => handleSelfDeliverySelfieSelect(e, o.id, i.id)} />
+                                                  </label>
+                                                </div>
+                                              ) : (
+                                                <label className="inline-block mt-2 px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer bg-white" style={{ borderColor: MARIGOLD, color: INK }}>
+                                                  {uploadingSelfDeliverySelfieKey === trackKey ? "Uploading…" : "Take delivery selfie"}
+                                                  <input type="file" accept="image/*" capture="user" className="hidden" disabled={uploadingSelfDeliverySelfieKey === trackKey} onChange={(e) => handleSelfDeliverySelfieSelect(e, o.id, i.id)} />
+                                                </label>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {i.selfDeliveryStage === "on_my_way" && (
+                                            <div className="text-xs" style={{ color: SLATE }}>
+                                              GPS sharing is optional. If you choose to share your live location, the buyer can follow your trip.
+                                            </div>
+                                          )}
+
+                                          <div className="flex gap-2 flex-wrap">
+                                            {i.selfDeliveryStage === "on_my_way" && (
+                                              <button disabled={!i.selfDeliveryPersonPhotoUrl} onClick={() => setSelfDeliveryStage(o.id, i, "arrived")} className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-40" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                                                I'm here
+                                              </button>
+                                            )}
+                                            {i.selfDeliveryStage === "arrived" && (
+                                              <button onClick={() => setSelfDeliveryStage(o.id, i, "delivered")} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: SAGE, color: "white" }}>
+                                                Delivered
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                   {!['cancelled', 'returned', 'delivered'].includes(i.fulfillmentStatus) && (
                                     <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
                                       <div className="text-xs font-medium mb-1" style={{ color: INK }}>Estimated delivery</div>
@@ -12736,32 +12633,15 @@ export default function Stallyard() {
               <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                 Dashboard
               </h2>
-              <div className="flex items-center gap-2 flex-wrap">
-                {!currentMember?.isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(null);
-                      setView("dashboard");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                    style={{ backgroundColor: INK }}
-                  >
-                    <Store size={17} />
-                    Seller Dashboard
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setView("wallet")}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
-                  style={{ borderColor: SAGE, color: INK }}
-                >
-                  <Wallet size={17} />
-                  Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setView("wallet")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
+                style={{ borderColor: SAGE, color: INK }}
+              >
+                <Wallet size={17} />
+                Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+              </button>
             </div>
             <p className="text-sm mb-5" style={{ color: SLATE }}>
               Everything about your orders, messages, and alerts in one place.
@@ -13335,6 +13215,21 @@ export default function Stallyard() {
                                   <div className="mt-1" style={{ color: SLATE }}>Location updates while the seller keeps Stallyard open on their phone.</div>
                                 </div>
                               )}
+                              {item.carrier === "Self delivery" && item.selfDeliveryStage && (
+                                <div className="mt-2 p-3 rounded-lg border text-xs" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                  <div className="font-medium" style={{ color: INK }}>Self-delivery update</div>
+                                  <div className="mt-1" style={{ color: SLATE }}>
+                                    Status: <strong style={{ color: INK }}>{item.selfDeliveryStage === "started" ? "Delivery started" : item.selfDeliveryStage === "on_my_way" ? "On my way" : item.selfDeliveryStage === "arrived" ? "I'm here" : item.selfDeliveryStage === "delivered" ? "Delivered" : "In progress"}</strong>
+                                  </div>
+                                  {item.selfDeliveryPersonPhotoUrl && (
+                                    <div className="mt-2">
+                                      <div className="mb-1" style={{ color: SLATE }}>Person delivering your package:</div>
+                                      <img src={item.selfDeliveryPersonPhotoUrl} alt="Person delivering your package" className="w-20 h-20 object-cover rounded-lg border" style={{ borderColor: SAGE }} />
+                                    </div>
+                                  )}
+                                  <div className="mt-2" style={{ color: SLATE }}>Live GPS appears below only if the seller chooses to share it.</div>
+                                </div>
+                              )}
                               {item.cancellationStatus && (
                                 <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
                                   <Tag color={item.cancellationStatus === "approved" ? SAGE : item.cancellationStatus === "denied" ? BERRY : MARIGOLD}>
@@ -13721,20 +13616,12 @@ export default function Stallyard() {
                       </div>
                       <div className="flex items-center gap-3 flex-wrap justify-end">
                         {!o.isDisputed && o.paymentStatus === "held" &&
-                          o.createdAt && (Date.now() < o.createdAt + (3 * 60 * 60 * 1000) ||
-                            (o.refundType === "buyer_cancellation" && o.refundStatus === "failed" && o.refundRequestedAt &&
-                              o.refundRequestedAt < o.createdAt + (3 * 60 * 60 * 1000))) &&
-                          !o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl) &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
                             <button onClick={() => cancelAndRefundOrder(o)} className="text-xs font-semibold underline" style={{ color: BERRY }}>
-                              Cancel order & refund
+                              {o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)
+                                ? "Return order & refund"
+                                : "Cancel order & refund"}
                             </button>
-                          )}
-                        {!o.isDisputed && o.paymentStatus === "held" && o.createdAt &&
-                          Date.now() >= o.createdAt + (3 * 60 * 60 * 1000) &&
-                          !(o.refundType === "buyer_cancellation" && o.refundStatus === "failed" && o.refundRequestedAt &&
-                            o.refundRequestedAt < o.createdAt + (3 * 60 * 60 * 1000)) && (
-                            <span className="text-xs" style={{ color: SLATE }}>3-hour cancellation window closed</span>
                           )}
                         {!o.isDisputed && o.paymentStatus === "held" &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
@@ -15972,7 +15859,7 @@ export default function Stallyard() {
                     Homepage ads
                   </h3>
                   <p className="text-sm mt-1" style={{ color: SLATE }}>
-                    The homepage uses one responsive carousel with up to three slides. Add a wide desktop image and an optional square mobile image to each slide. Images are automatically cropped, converted to WebP, and optimized for fast loading.
+                    Control the three clickable promotions shown at the top of the Stallyard homepage. Ad 1 can be an image or a short autoplay video; Ads 2 and 3 stay lightweight images.
                   </p>
                 </div>
 
@@ -15983,13 +15870,13 @@ export default function Stallyard() {
                         <div>
                           <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
                           <p className="text-xs" style={{ color: SLATE }}>
-                            {`Carousel slide ${ad.slot}${ad.slot === 1 ? " — loads first" : " — deferred"}`}
+                            {ad.slot === 1 ? "Large feature — image or video" : "Small feature — image"}
                           </p>
                         </div>
                         {ad.imageUrl && (
                           <button
                             type="button"
-                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "", posterUrl: "" } : item))}
+                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
                             className="text-xs underline"
                             style={{ color: BERRY }}
                           >
@@ -15998,9 +15885,46 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: "4 / 1" }}>
+                      {ad.slot === 1 && (
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                          {["image", "video"].map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === 1 ? {
+                                ...item,
+                                mediaType: type,
+                                imageUrl: item.mediaType === type ? item.imageUrl : "",
+                              } : item))}
+                              className="px-3 py-2 rounded-lg border text-sm font-medium"
+                              style={{
+                                borderColor: ad.mediaType === type ? MARIGOLD : "#DDD8CC",
+                                backgroundColor: ad.mediaType === type ? "#FBF0DC" : "white",
+                                color: INK,
+                              }}
+                            >
+                              {type === "image" ? "Image" : "Video"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "16 / 9" : "16 / 9" }}>
                         {ad.imageUrl ? (
-                          <img src={ad.imageUrl} alt={`Slide ${ad.slot} desktop preview`} className="w-full h-full object-cover" />
+                          ad.slot === 1 && ad.mediaType === "video" ? (
+                            <video
+                              src={ad.imageUrl}
+                              poster={ad.posterUrl || undefined}
+                              muted
+                              loop
+                              playsInline
+                              controls
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
+                          )
                         ) : (
                           <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
                             <ImageIcon size={32} />
@@ -16008,43 +15932,64 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Desktop image — 1600 × 400</label>
-                      <label
-                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                        style={{ borderColor: "#DDD8CC", color: SLATE }}
-                      >
-                        <ImageIcon size={16} />
-                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change desktop image" : "Choose desktop image"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={homepageAdUploading === ad.slot}
-                          onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
-                        />
-                      </label>
+                      {ad.slot === 1 && ad.mediaType === "video" ? (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Video</label>
+                          <label
+                            className="mb-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change video" : "Choose video"}
+                            <input
+                              type="file"
+                              accept="video/mp4,video/webm"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdVideoSelect(e, ad.slot)}
+                            />
+                          </label>
+                          <p className="text-xs mb-3" style={{ color: SLATE }}>MP4 or WebM, ideally 10–20 seconds, maximum 40 MB. It will autoplay muted and loop.</p>
 
-                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Mobile image — 800 × 800 (optional)</label>
-                      {ad.posterUrl && (
-                        <div className="mb-2 mx-auto w-28 aspect-square rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
-                          <img src={ad.posterUrl} alt={`Slide ${ad.slot} mobile preview`} className="w-full h-full object-cover" />
-                        </div>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Poster image (optional)</label>
+                          {ad.posterUrl && (
+                            <div className="mb-2 rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
+                              <img src={ad.posterUrl} alt="Ad 1 video poster" className="w-full h-24 object-cover" />
+                            </div>
+                          )}
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {ad.posterUrl ? "Change poster" : "Choose poster image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdPosterSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
                       )}
-                      <label
-                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                        style={{ borderColor: "#DDD8CC", color: SLATE }}
-                      >
-                        <ImageIcon size={16} />
-                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.posterUrl ? "Change mobile image" : "Choose mobile image"}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          disabled={homepageAdUploading === ad.slot}
-                          onChange={(e) => handleHomepageAdMobileImageSelect(e, ad.slot)}
-                        />
-                      </label>
-                      <p className="text-xs mb-3" style={{ color: SLATE }}>If omitted, the desktop image will be cropped automatically on phones.</p>
 
                       <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
                       <input
@@ -16062,7 +16007,7 @@ export default function Stallyard() {
                         className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
                         style={{ backgroundColor: MARIGOLD, color: INK }}
                       >
-                        {homepageAdSaving === ad.slot ? "Saving…" : `Save slide ${ad.slot}`}
+                        {homepageAdSaving === ad.slot ? "Saving…" : "Save ad"}
                       </button>
                     </div>
                   ))}
@@ -16562,7 +16507,10 @@ export default function Stallyard() {
                           <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
                           {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
                           <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
-                          <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
+                          {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                            <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: INK, color: "white" }}>Auto-verify</button>
+                          )}
+                          <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
                           <button onClick={() => { setRejectModalUsername(application.username); setRejectReasonDraft(""); }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
                         </div>
                       </div>
@@ -18982,7 +18930,7 @@ export default function Stallyard() {
                   <div>
                     <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>System health</h3>
                     <p className="text-sm mt-1" style={{ color: SLATE }}>
-                      Live and non-destructive configuration checks for Stallyard's critical infrastructure. These checks do not send emails or SMS messages, charge cards, create biometric sessions, or consume moderation requests.
+                      Live checks for Stallyard's critical infrastructure. These checks do not send emails, charge cards, or consume moderation requests.
                     </p>
                   </div>
                   <button onClick={fetchSystemHealth} disabled={systemHealthLoading}
@@ -19058,7 +19006,7 @@ export default function Stallyard() {
                       <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
                         <h4 className="font-semibold" style={{ color: INK }}>How to read this page</h4>
                         <p className="text-sm mt-2" style={{ color: SLATE }}>
-                          <strong>Healthy</strong> means Stallyard successfully contacted the service or confirmed an operational queue. <strong>Configured</strong> means required server settings are present, but the check intentionally avoids making a billable, biometric, or user-facing API request. <strong>Needs attention</strong> means a live check failed or an operational queue appears stalled. No secret keys or full deployment identifiers are returned to the browser.
+                          <strong>Healthy</strong> means Stallyard successfully contacted the service. <strong>Configured</strong> means credentials are present, but the check intentionally avoids making a billable or user-facing API request. <strong>Needs attention</strong> means a live check failed. No secret keys are returned to the browser.
                         </p>
                       </div>
                     </>
@@ -19396,7 +19344,7 @@ export default function Stallyard() {
                 Fees
               </button>
               <a
-                href="https://legal.stallyard.com/user-agreement/"
+                href="https://stallyard-legal.egbilewis.chatgpt.site/user-agreement/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-sm text-left"
