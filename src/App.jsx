@@ -18881,7 +18881,7 @@ export default function Stallyard() {
                   <div>
                     <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>System health</h3>
                     <p className="text-sm mt-1" style={{ color: SLATE }}>
-                      Live checks for Stallyard's critical infrastructure. These checks do not send emails, charge cards, or consume moderation requests.
+                      Live and non-destructive configuration checks for Stallyard's critical infrastructure. These checks do not send emails or SMS messages, charge cards, create biometric sessions, or consume moderation requests.
                     </p>
                   </div>
                   <button onClick={fetchSystemHealth} disabled={systemHealthLoading}
@@ -18957,7 +18957,7 @@ export default function Stallyard() {
                       <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
                         <h4 className="font-semibold" style={{ color: INK }}>How to read this page</h4>
                         <p className="text-sm mt-2" style={{ color: SLATE }}>
-                          <strong>Healthy</strong> means Stallyard successfully contacted the service. <strong>Configured</strong> means credentials are present, but the check intentionally avoids making a billable or user-facing API request. <strong>Needs attention</strong> means a live check failed. No secret keys are returned to the browser.
+                          <strong>Healthy</strong> means Stallyard successfully contacted the service or confirmed an operational queue. <strong>Configured</strong> means required server settings are present, but the check intentionally avoids making a billable, biometric, or user-facing API request. <strong>Needs attention</strong> means a live check failed or an operational queue appears stalled. No secret keys or full deployment identifiers are returned to the browser.
                         </p>
                       </div>
                     </>
