@@ -9756,6 +9756,22 @@ export default function Stallyard() {
                 >
                   My Stallyard
                 </button>
+                {currentUser && !currentMember?.isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelected(null);
+                      setView("dashboard");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="inline-flex items-center gap-1 hover:underline"
+                    aria-label="Open seller dashboard"
+                    title="Seller Dashboard"
+                  >
+                    <Store size={16} />
+                    <span className="hidden md:inline">Seller Dashboard</span>
+                  </button>
+                )}
                 {currentUser && (
                   <button
                     type="button"
@@ -12720,15 +12736,32 @@ export default function Stallyard() {
               <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                 Dashboard
               </h2>
-              <button
-                type="button"
-                onClick={() => setView("wallet")}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
-                style={{ borderColor: SAGE, color: INK }}
-              >
-                <Wallet size={17} />
-                Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {!currentMember?.isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelected(null);
+                      setView("dashboard");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                    style={{ backgroundColor: INK }}
+                  >
+                    <Store size={17} />
+                    Seller Dashboard
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setView("wallet")}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
+                  style={{ borderColor: SAGE, color: INK }}
+                >
+                  <Wallet size={17} />
+                  Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+                </button>
+              </div>
             </div>
             <p className="text-sm mb-5" style={{ color: SLATE }}>
               Everything about your orders, messages, and alerts in one place.
