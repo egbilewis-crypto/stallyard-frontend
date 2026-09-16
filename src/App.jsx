@@ -19,16 +19,10 @@ const BACKEND_URL =
 // Secure, HttpOnly session cookie. Authentication tokens are never stored in
 // localStorage or exposed to frontend JavaScript.
 const backendFetch = async (url, options = {}) => {
-  const response = await fetch(url, {
+  return fetch(url, {
     ...options,
     credentials: "include",
   });
-  if (typeof window !== "undefined" && response.status >= 500) {
-    window.dispatchEvent(new CustomEvent("stallyard:server-error", {
-      detail: { status: response.status },
-    }));
-  }
-  return response;
 };
 
 // `window.storage` may not exist in every browser environment. On the real
@@ -5579,8 +5573,9 @@ export default function Stallyard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast("Couldn't save that change — try again");
+        showToast(data.error || "Couldn't save that change — try again");
         return false;
       }
       return true;
