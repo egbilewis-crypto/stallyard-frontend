@@ -1198,10 +1198,10 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
   });
 }
 
-// Homepage hero images are the page's LCP resource. Crop them to a stable 16:9
-// frame and encode as WebP, progressively reducing quality/dimensions until the
-// upload is at or below the 250 KB performance budget whenever possible.
-function resizeHomepageHero(file, maxBytes = 250 * 1024) {
+// Homepage hero images are the page's LCP resource. Desktop creatives use a
+// wide 8:3 frame; mobile creatives use a square frame so important content is
+// never lost to aggressive responsive cropping. Both are encoded as WebP.
+function resizeHomepageHero(file, variant = "desktop") {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Couldn't read file"));
@@ -1210,7 +1210,9 @@ function resizeHomepageHero(file, maxBytes = 250 * 1024) {
       img.onerror = () => reject(new Error("Couldn't read image"));
       img.onload = async () => {
         try {
-          const targetRatio = 16 / 9;
+          const isMobile = variant === "mobile";
+          const targetRatio = isMobile ? 1 : 8 / 3;
+          const maxBytes = (isMobile ? 180 : 250) * 1024;
           const sourceRatio = img.width / img.height;
           let sx = 0;
           let sy = 0;
@@ -1224,7 +1226,7 @@ function resizeHomepageHero(file, maxBytes = 250 * 1024) {
             sy = Math.round((img.height - sourceHeight) / 2);
           }
 
-          const widths = [1600, 1440, 1280, 1120];
+          const widths = isMobile ? [800, 720, 640] : [1600, 1440, 1280, 1120];
           const qualities = [0.82, 0.74, 0.66, 0.58, 0.5];
           let best = null;
           for (const requestedWidth of widths) {
@@ -2210,6 +2212,8 @@ export default function Stallyard() {
     { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
     { slot: 3, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
   ]);
+  const [homepageHeroSlide, setHomepageHeroSlide] = useState(0);
+  const [homepageHeroPaused, setHomepageHeroPaused] = useState(false);
   const [homepageAdUploading, setHomepageAdUploading] = useState(null);
   const [homepageAdSaving, setHomepageAdSaving] = useState(null);
   const [policies, setPolicies] = useState({
@@ -2448,6 +2452,30 @@ export default function Stallyard() {
   }, []);
 
   useEffect(() => {
+    const slideCount = homepageAds.filter((ad) => ad.imageUrl).length;
+    if (homepageHeroSlide >= Math.max(slideCount, 1)) setHomepageHeroSlide(0);
+    if (slideCount <= 1 || homepageHeroPaused || view !== "browse") return undefined;
+    const interval = setInterval(() => {
+      setHomepageHeroSlide((current) => (current + 1) % slideCount);
+    }, 7000);
+    return () => clearInterval(interval);
+  }, [homepageAds, homepageHeroPaused, homepageHeroSlide, view]);
+
+  useEffect(() => {
+    // Slide 1 is the LCP resource. Preload the remaining slides only after the
+    // initial page has had time to settle.
+    const timer = setTimeout(() => {
+      homepageAds.slice(1).forEach((ad) => {
+        [ad.imageUrl, ad.posterUrl].filter(Boolean).forEach((src) => {
+          const preload = new Image();
+          preload.src = src;
+        });
+      });
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [homepageAds]);
+
+  useEffect(() => {
     (async () => {
       try {
         const res = await window.storage.get("stallyard-listings", true);
@@ -2565,7 +2593,7 @@ export default function Stallyard() {
             return {
               slot,
               imageUrl: ad.image_url || "",
-              mediaType: slot === 1 && ad.media_type === "video" ? "video" : "image",
+              mediaType: "image",
               posterUrl: ad.poster_url || "",
               linkUrl: ad.link_url || "",
             };
@@ -7724,13 +7752,9 @@ export default function Stallyard() {
     const file = (e.target.files || [])[0];
     e.target.value = "";
     if (!file) return;
-    if (slot !== 1) {
-      showToast("Only Homepage Ad 1 is displayed publicly");
-      return;
-    }
     setHomepageAdUploading(slot);
     try {
-      const optimized = await resizeHomepageHero(file);
+      const optimized = await resizeHomepageHero(file, "desktop");
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7738,9 +7762,9 @@ export default function Stallyard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url, mediaType: "image", posterUrl: "" } : ad));
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url, mediaType: "image" } : ad));
       const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
-      showToast(`Hero optimized to ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — click Save ad to publish it`);
+      showToast(`Slide ${slot} desktop image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
     } catch (err) {
       showToast(err.message || "Couldn't upload that ad image");
     } finally {
@@ -7782,24 +7806,25 @@ export default function Stallyard() {
     }
   };
 
-  const handleHomepageAdPosterSelect = async (e, slot) => {
+  const handleHomepageAdMobileImageSelect = async (e, slot) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
-    if (!file || slot !== 1) return;
+    if (!file) return;
     setHomepageAdUploading(slot);
     try {
-      const dataUrl = await resizeImageFile(file, 1800, 0.84);
+      const optimized = await resizeHomepageHero(file, "mobile");
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "homepage-ads/posters" }),
+        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads/mobile" }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Poster upload failed");
+      if (!res.ok) throw new Error(data.error || "Mobile image upload failed");
       setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, posterUrl: data.url } : ad));
-      showToast("Video poster uploaded — click Save ad to publish it");
+      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
+      showToast(`Slide ${slot} mobile image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
     } catch (err) {
-      showToast(err.message || "Couldn't upload that poster image");
+      showToast(err.message || "Couldn't upload that mobile image");
     } finally {
       setHomepageAdUploading(null);
     }
@@ -7815,8 +7840,8 @@ export default function Stallyard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageUrl: ad.imageUrl || "",
-          mediaType: ad.slot === 1 ? (ad.mediaType || "image") : "image",
-          posterUrl: ad.slot === 1 ? (ad.posterUrl || "") : "",
+          mediaType: "image",
+          posterUrl: ad.posterUrl || "",
           linkUrl: ad.linkUrl || "",
         }),
       });
@@ -7825,7 +7850,7 @@ export default function Stallyard() {
       setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
         slot,
         imageUrl: data.ad?.image_url || "",
-        mediaType: slot === 1 && data.ad?.media_type === "video" ? "video" : "image",
+        mediaType: "image",
         posterUrl: data.ad?.poster_url || "",
         linkUrl: data.ad?.link_url || "",
       } : item));
@@ -10224,62 +10249,87 @@ export default function Stallyard() {
           <>
             {isHomeState && (
               <div className="mb-8">
-                {homepageAds.filter((ad) => ad.slot === 1).map((ad) => {
-                  const card = (
-                    <div
-                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-video"
-                      style={{
-                        borderColor: "#DDD8CC",
-                      }}
+                {(() => {
+                  const slides = homepageAds.filter((ad) => ad.imageUrl);
+                  if (!slides.length) return null;
+                  const activeIndex = Math.min(homepageHeroSlide, slides.length - 1);
+                  const ad = slides[activeIndex];
+                  const hero = (
+                    <picture>
+                      {ad.posterUrl && <source media="(max-width: 639px)" srcSet={ad.posterUrl} />}
+                      <img
+                        src={ad.imageUrl}
+                        alt={`Stallyard featured promotion ${activeIndex + 1}`}
+                        width="1600"
+                        height="600"
+                        loading={activeIndex === 0 ? "eager" : "lazy"}
+                        fetchPriority={activeIndex === 0 ? "high" : "auto"}
+                        decoding="async"
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    </picture>
+                  );
+                  return (
+                    <section
+                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-square sm:aspect-[8/3]"
+                      style={{ borderColor: "#DDD8CC" }}
+                      aria-label="Featured Stallyard promotions"
                     >
-                      {ad.imageUrl ? (
-                        ad.mediaType === "video" ? (
-                          <video
-                            src={ad.imageUrl}
-                            poster={ad.posterUrl || undefined}
-                            autoPlay
-                            muted
-                            loop
-                            playsInline
-                            preload="metadata"
-                            aria-label="Stallyard featured video promotion"
-                            className="absolute inset-0 w-full h-full object-cover"
-                          />
-                        ) : (
-                          <img
-                            src={ad.imageUrl}
-                            alt="Stallyard featured promotion"
-                            width="1600"
-                            height="900"
-                            loading="eager"
-                            fetchPriority="high"
-                            decoding="async"
-                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
-                          />
-                        )
-                      ) : (
-                        <div
-                          className="absolute inset-0 flex items-center justify-center"
-                          style={{ background: "#EFE7D6" }}
-                        >
-                          <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
-                        </div>
+                      {ad.linkUrl ? (
+                        <a href={ad.linkUrl} className="absolute inset-0 block" aria-label={`Open promotion ${activeIndex + 1}`}>
+                          {hero}
+                        </a>
+                      ) : hero}
+
+                      {slides.length > 1 && (
+                        <>
+                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/55 px-3 py-2">
+                            {slides.map((slide, index) => (
+                              <button
+                                key={slide.slot}
+                                type="button"
+                                onClick={() => setHomepageHeroSlide(index)}
+                                aria-label={`Show promotion ${index + 1}`}
+                                aria-current={index === activeIndex ? "true" : undefined}
+                                className="h-2.5 w-2.5 rounded-full border border-white"
+                                style={{ backgroundColor: index === activeIndex ? "white" : "transparent" }}
+                              />
+                            ))}
+                          </div>
+                          <div className="absolute bottom-3 right-3 z-10 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setHomepageHeroSlide((activeIndex - 1 + slides.length) % slides.length)}
+                              aria-label="Previous promotion"
+                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
+                              style={{ borderColor: "#DDD8CC", color: INK }}
+                            >
+                              ‹
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setHomepageHeroSlide((activeIndex + 1) % slides.length)}
+                              aria-label="Next promotion"
+                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
+                              style={{ borderColor: "#DDD8CC", color: INK }}
+                            >
+                              ›
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setHomepageHeroPaused((paused) => !paused)}
+                              aria-label={homepageHeroPaused ? "Play promotions" : "Pause promotions"}
+                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-sm font-bold"
+                              style={{ borderColor: "#DDD8CC", color: INK }}
+                            >
+                              {homepageHeroPaused ? "▶" : "Ⅱ"}
+                            </button>
+                          </div>
+                        </>
                       )}
-                    </div>
+                    </section>
                   );
-                  return ad.linkUrl ? (
-                    <a
-                      key={ad.slot}
-                      href={ad.linkUrl}
-                      className="block"
-                      aria-label="Open featured promotion"
-                    >
-                      {card}
-                    </a>
-                  ) : (
-                    <div key={ad.slot}>{card}</div>
-                  );
-                })}
+                })()}
               </div>
             )}
 
@@ -15889,7 +15939,7 @@ export default function Stallyard() {
                     Homepage ads
                   </h3>
                   <p className="text-sm mt-1" style={{ color: SLATE }}>
-                    Homepage Ad 1 is the single public hero. Images are automatically cropped to 16:9, converted to WebP, and optimized toward a 250 KB budget. Ads 2 and 3 remain stored but are not displayed publicly.
+                    The homepage uses one responsive carousel with up to three slides. Add a wide desktop image and an optional square mobile image to each slide. Images are automatically cropped, converted to WebP, and optimized for fast loading.
                   </p>
                 </div>
 
@@ -15900,13 +15950,13 @@ export default function Stallyard() {
                         <div>
                           <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
                           <p className="text-xs" style={{ color: SLATE }}>
-                            {ad.slot === 1 ? "Public hero — 1600 × 900 WebP" : "Stored — not shown publicly"}
+                            {`Carousel slide ${ad.slot}${ad.slot === 1 ? " — loads first" : " — deferred"}`}
                           </p>
                         </div>
-                        {ad.slot === 1 && ad.imageUrl && (
+                        {ad.imageUrl && (
                           <button
                             type="button"
-                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
+                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "", posterUrl: "" } : item))}
                             className="text-xs underline"
                             style={{ color: BERRY }}
                           >
@@ -15915,46 +15965,9 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      {ad.slot === 1 && (
-                        <div className="grid grid-cols-2 gap-2 mb-3">
-                          {["image", "video"].map((type) => (
-                            <button
-                              key={type}
-                              type="button"
-                              onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === 1 ? {
-                                ...item,
-                                mediaType: type,
-                                imageUrl: item.mediaType === type ? item.imageUrl : "",
-                              } : item))}
-                              className="px-3 py-2 rounded-lg border text-sm font-medium"
-                              style={{
-                                borderColor: ad.mediaType === type ? MARIGOLD : "#DDD8CC",
-                                backgroundColor: ad.mediaType === type ? "#FBF0DC" : "white",
-                                color: INK,
-                              }}
-                            >
-                              {type === "image" ? "Image" : "Video"}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "16 / 9" : "16 / 9" }}>
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: "8 / 3" }}>
                         {ad.imageUrl ? (
-                          ad.slot === 1 && ad.mediaType === "video" ? (
-                            <video
-                              src={ad.imageUrl}
-                              poster={ad.posterUrl || undefined}
-                              muted
-                              loop
-                              playsInline
-                              controls
-                              preload="metadata"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
-                          )
+                          <img src={ad.imageUrl} alt={`Slide ${ad.slot} desktop preview`} className="w-full h-full object-cover" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
                             <ImageIcon size={32} />
@@ -15962,83 +15975,61 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      {ad.slot === 1 && ad.mediaType === "video" ? (
-                        <>
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Video</label>
-                          <label
-                            className="mb-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change video" : "Choose video"}
-                            <input
-                              type="file"
-                              accept="video/mp4,video/webm"
-                              className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdVideoSelect(e, ad.slot)}
-                            />
-                          </label>
-                          <p className="text-xs mb-3" style={{ color: SLATE }}>MP4 or WebM, ideally 10–20 seconds, maximum 40 MB. It will autoplay muted and loop.</p>
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Desktop image — 1600 × 600</label>
+                      <label
+                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                        style={{ borderColor: "#DDD8CC", color: SLATE }}
+                      >
+                        <ImageIcon size={16} />
+                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change desktop image" : "Choose desktop image"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={homepageAdUploading === ad.slot}
+                          onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
+                        />
+                      </label>
 
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Poster image (optional)</label>
-                          {ad.posterUrl && (
-                            <div className="mb-2 rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
-                              <img src={ad.posterUrl} alt="Ad 1 video poster" className="w-full h-24 object-cover" />
-                            </div>
-                          )}
-                          <label
-                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            <ImageIcon size={16} />
-                            {ad.posterUrl ? "Change poster" : "Choose poster image"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdPosterSelect(e, ad.slot)}
-                            />
-                          </label>
-                        </>
-                      ) : (
-                        <>
-                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
-                          <label
-                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
-                            style={{ borderColor: "#DDD8CC", color: SLATE }}
-                          >
-                            <ImageIcon size={16} />
-                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={ad.slot !== 1 || homepageAdUploading === ad.slot}
-                              onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
-                            />
-                          </label>
-                        </>
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Mobile image — 800 × 800 (optional)</label>
+                      {ad.posterUrl && (
+                        <div className="mb-2 mx-auto w-28 aspect-square rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
+                          <img src={ad.posterUrl} alt={`Slide ${ad.slot} mobile preview`} className="w-full h-full object-cover" />
+                        </div>
                       )}
+                      <label
+                        className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                        style={{ borderColor: "#DDD8CC", color: SLATE }}
+                      >
+                        <ImageIcon size={16} />
+                        {homepageAdUploading === ad.slot ? "Uploading…" : ad.posterUrl ? "Change mobile image" : "Choose mobile image"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          disabled={homepageAdUploading === ad.slot}
+                          onChange={(e) => handleHomepageAdMobileImageSelect(e, ad.slot)}
+                        />
+                      </label>
+                      <p className="text-xs mb-3" style={{ color: SLATE }}>If omitted, the desktop image will be cropped automatically on phones.</p>
 
                       <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
                       <input
                         value={ad.linkUrl}
                         onChange={(e) => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, linkUrl: e.target.value } : item))}
-                        disabled={ad.slot !== 1}
                         placeholder="https://example.com or /category/..."
-                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3"
                         style={{ borderColor: "#DDD8CC" }}
                       />
 
                       <button
                         type="button"
                         onClick={() => saveHomepageAd(ad.slot)}
-                        disabled={ad.slot !== 1 || homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
+                        disabled={homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
                         className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
                         style={{ backgroundColor: MARIGOLD, color: INK }}
                       >
-                        {ad.slot !== 1 ? "Stored — inactive" : homepageAdSaving === ad.slot ? "Saving…" : "Save hero"}
+                        {homepageAdSaving === ad.slot ? "Saving…" : `Save slide ${ad.slot}`}
                       </button>
                     </div>
                   ))}
