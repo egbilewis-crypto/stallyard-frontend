@@ -1199,7 +1199,7 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
 }
 
 // Homepage hero images are the page's LCP resource. Desktop creatives use a
-// wide 8:3 frame; mobile creatives use a square frame so important content is
+// wide 4:1 frame; mobile creatives use a square frame so important content is
 // never lost to aggressive responsive cropping. Both are encoded as WebP.
 function resizeHomepageHero(file, variant = "desktop") {
   return new Promise((resolve, reject) => {
@@ -1211,7 +1211,7 @@ function resizeHomepageHero(file, variant = "desktop") {
       img.onload = async () => {
         try {
           const isMobile = variant === "mobile";
-          const targetRatio = isMobile ? 1 : 8 / 3;
+          const targetRatio = isMobile ? 1 : 4;
           const maxBytes = (isMobile ? 180 : 250) * 1024;
           const sourceRatio = img.width / img.height;
           let sx = 0;
@@ -10248,7 +10248,7 @@ export default function Stallyard() {
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="mb-8">
+              <div className="mb-8 relative left-1/2 -translate-x-1/2 w-[calc(100vw-2rem)] sm:w-[calc(100vw-4rem)] max-w-[1600px]">
                 {(() => {
                   const slides = homepageAds.filter((ad) => ad.imageUrl);
                   if (!slides.length) return null;
@@ -10261,7 +10261,7 @@ export default function Stallyard() {
                         src={ad.imageUrl}
                         alt={`Stallyard featured promotion ${activeIndex + 1}`}
                         width="1600"
-                        height="600"
+                        height="400"
                         loading={activeIndex === 0 ? "eager" : "lazy"}
                         fetchPriority={activeIndex === 0 ? "high" : "auto"}
                         decoding="async"
@@ -10271,7 +10271,7 @@ export default function Stallyard() {
                   );
                   return (
                     <section
-                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-square sm:aspect-[8/3]"
+                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-square sm:aspect-[4/1]"
                       style={{ borderColor: "#DDD8CC" }}
                       aria-label="Featured Stallyard promotions"
                     >
@@ -15965,7 +15965,7 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: "8 / 3" }}>
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: "4 / 1" }}>
                         {ad.imageUrl ? (
                           <img src={ad.imageUrl} alt={`Slide ${ad.slot} desktop preview`} className="w-full h-full object-cover" />
                         ) : (
@@ -15975,7 +15975,7 @@ export default function Stallyard() {
                         )}
                       </div>
 
-                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Desktop image — 1600 × 600</label>
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Desktop image — 1600 × 400</label>
                       <label
                         className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
                         style={{ borderColor: "#DDD8CC", color: SLATE }}
