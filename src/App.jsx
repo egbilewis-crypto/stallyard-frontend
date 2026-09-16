@@ -1198,6 +1198,70 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
   });
 }
 
+// Homepage hero images are the page's LCP resource. Crop them to a stable 16:9
+// frame and encode as WebP, progressively reducing quality/dimensions until the
+// upload is at or below the 250 KB performance budget whenever possible.
+function resizeHomepageHero(file, maxBytes = 250 * 1024) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Couldn't read file"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Couldn't read image"));
+      img.onload = async () => {
+        try {
+          const targetRatio = 16 / 9;
+          const sourceRatio = img.width / img.height;
+          let sx = 0;
+          let sy = 0;
+          let sourceWidth = img.width;
+          let sourceHeight = img.height;
+          if (sourceRatio > targetRatio) {
+            sourceWidth = Math.round(img.height * targetRatio);
+            sx = Math.round((img.width - sourceWidth) / 2);
+          } else if (sourceRatio < targetRatio) {
+            sourceHeight = Math.round(img.width / targetRatio);
+            sy = Math.round((img.height - sourceHeight) / 2);
+          }
+
+          const widths = [1600, 1440, 1280, 1120];
+          const qualities = [0.82, 0.74, 0.66, 0.58, 0.5];
+          let best = null;
+          for (const requestedWidth of widths) {
+            const width = Math.max(1, Math.min(requestedWidth, sourceWidth));
+            const height = Math.max(1, Math.round(width / targetRatio));
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext("2d").drawImage(img, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
+            for (const quality of qualities) {
+              const blob = await new Promise((done) => canvas.toBlob(done, "image/webp", quality));
+              if (!blob) continue;
+              best = { blob, width, height };
+              if (blob.size <= maxBytes) break;
+            }
+            if (best?.blob.size <= maxBytes) break;
+          }
+          if (!best) throw new Error("This browser couldn't create a WebP image");
+          const outputReader = new FileReader();
+          outputReader.onerror = () => reject(new Error("Couldn't prepare the optimized image"));
+          outputReader.onload = () => resolve({
+            dataUrl: outputReader.result,
+            sizeBytes: best.blob.size,
+            width: best.width,
+            height: best.height,
+          });
+          outputReader.readAsDataURL(best.blob);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // Used specifically for listing photos, where we need the ORIGINAL
 // dimensions too (to reject/warn on low-resolution uploads before they
 // ever get resized down) — kept separate from resizeImageFile above so
@@ -1518,6 +1582,10 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
             <img
               src={listing.images[0]}
               alt={listing.title}
+              width="640"
+              height="360"
+              loading="lazy"
+              decoding="async"
               className="w-full h-36 object-cover rounded-tr-2xl"
             />
             <span
@@ -7656,18 +7724,23 @@ export default function Stallyard() {
     const file = (e.target.files || [])[0];
     e.target.value = "";
     if (!file) return;
+    if (slot !== 1) {
+      showToast("Only Homepage Ad 1 is displayed publicly");
+      return;
+    }
     setHomepageAdUploading(slot);
     try {
-      const dataUrl = await resizeImageFile(file, 1800, 0.84);
+      const optimized = await resizeHomepageHero(file);
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "homepage-ads" }),
+        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url } : ad));
-      showToast(`Ad ${slot} image uploaded — click Save ad to publish it`);
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url, mediaType: "image", posterUrl: "" } : ad));
+      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
+      showToast(`Hero optimized to ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — click Save ad to publish it`);
     } catch (err) {
       showToast(err.message || "Couldn't upload that ad image");
     } finally {
@@ -10150,19 +10223,17 @@ export default function Stallyard() {
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] lg:grid-rows-2 gap-4">
-                {homepageAds.map((ad) => {
-                  const isPrimary = ad.slot === 1;
+              <div className="mb-8">
+                {homepageAds.filter((ad) => ad.slot === 1).map((ad) => {
                   const card = (
                     <div
-                      className={`relative overflow-hidden rounded-2xl border bg-white ${isPrimary ? "lg:row-span-2" : ""}`}
+                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-video"
                       style={{
                         borderColor: "#DDD8CC",
-                        minHeight: isPrimary ? "360px" : "172px",
                       }}
                     >
                       {ad.imageUrl ? (
-                        isPrimary && ad.mediaType === "video" ? (
+                        ad.mediaType === "video" ? (
                           <video
                             src={ad.imageUrl}
                             poster={ad.posterUrl || undefined}
@@ -10177,14 +10248,19 @@ export default function Stallyard() {
                         ) : (
                           <img
                             src={ad.imageUrl}
-                            alt={`Stallyard featured promotion ${ad.slot}`}
+                            alt="Stallyard featured promotion"
+                            width="1600"
+                            height="900"
+                            loading="eager"
+                            fetchPriority="high"
+                            decoding="async"
                             className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
                           />
                         )
                       ) : (
                         <div
                           className="absolute inset-0 flex items-center justify-center"
-                          style={{ background: ad.slot === 1 ? "#EFE7D6" : ad.slot === 2 ? "#E7EFE8" : "#F4E5E2" }}
+                          style={{ background: "#EFE7D6" }}
                         >
                           <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
                         </div>
@@ -10195,13 +10271,13 @@ export default function Stallyard() {
                     <a
                       key={ad.slot}
                       href={ad.linkUrl}
-                      className={isPrimary ? "lg:row-span-2 block" : "block"}
-                      aria-label={`Open featured promotion ${ad.slot}`}
+                      className="block"
+                      aria-label="Open featured promotion"
                     >
                       {card}
                     </a>
                   ) : (
-                    <div key={ad.slot} className={isPrimary ? "lg:row-span-2" : ""}>{card}</div>
+                    <div key={ad.slot}>{card}</div>
                   );
                 })}
               </div>
@@ -15813,7 +15889,7 @@ export default function Stallyard() {
                     Homepage ads
                   </h3>
                   <p className="text-sm mt-1" style={{ color: SLATE }}>
-                    Control the three clickable promotions shown at the top of the Stallyard homepage. Ad 1 can be an image or a short autoplay video; Ads 2 and 3 stay lightweight images.
+                    Homepage Ad 1 is the single public hero. Images are automatically cropped to 16:9, converted to WebP, and optimized toward a 250 KB budget. Ads 2 and 3 remain stored but are not displayed publicly.
                   </p>
                 </div>
 
@@ -15824,10 +15900,10 @@ export default function Stallyard() {
                         <div>
                           <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
                           <p className="text-xs" style={{ color: SLATE }}>
-                            {ad.slot === 1 ? "Large feature — image or video" : "Small feature — image"}
+                            {ad.slot === 1 ? "Public hero — 1600 × 900 WebP" : "Stored — not shown publicly"}
                           </p>
                         </div>
-                        {ad.imageUrl && (
+                        {ad.slot === 1 && ad.imageUrl && (
                           <button
                             type="button"
                             onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
@@ -15938,7 +16014,7 @@ export default function Stallyard() {
                               type="file"
                               accept="image/*"
                               className="hidden"
-                              disabled={homepageAdUploading === ad.slot}
+                              disabled={ad.slot !== 1 || homepageAdUploading === ad.slot}
                               onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
                             />
                           </label>
@@ -15949,19 +16025,20 @@ export default function Stallyard() {
                       <input
                         value={ad.linkUrl}
                         onChange={(e) => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, linkUrl: e.target.value } : item))}
+                        disabled={ad.slot !== 1}
                         placeholder="https://example.com or /category/..."
-                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
                         style={{ borderColor: "#DDD8CC" }}
                       />
 
                       <button
                         type="button"
                         onClick={() => saveHomepageAd(ad.slot)}
-                        disabled={homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
+                        disabled={ad.slot !== 1 || homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
                         className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
                         style={{ backgroundColor: MARIGOLD, color: INK }}
                       >
-                        {homepageAdSaving === ad.slot ? "Saving…" : "Save ad"}
+                        {ad.slot !== 1 ? "Stored — inactive" : homepageAdSaving === ad.slot ? "Saving…" : "Save hero"}
                       </button>
                     </div>
                   ))}
