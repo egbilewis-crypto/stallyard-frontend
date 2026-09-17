@@ -1,7 +1,17 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
-import { FaceLivenessDetectorCore } from "@aws-amplify/ui-react-liveness";
-import "@aws-amplify/ui-react-liveness/styles.css";
+
+// AWS Amplify's camera and face-liveness libraries are large and are only
+// needed when a seller opens identity verification. Keep them out of the
+// public marketplace bundle and download both the component and its CSS on
+// demand. React.lazy requires a default export, so the named AWS component is
+// adapted here without adding another source file.
+const FaceLivenessDetectorCore = lazy(() =>
+  Promise.all([
+    import("@aws-amplify/ui-react-liveness"),
+    import("@aws-amplify/ui-react-liveness/styles.css"),
+  ]).then(([module]) => ({ default: module.FaceLivenessDetectorCore }))
+);
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -1915,19 +1925,21 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
         </div>
         {!awsLivenessVerified && awsLiveness && (
           <div className="mb-5 rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
-            <FaceLivenessDetectorCore
-              sessionId={awsLiveness.sessionId}
-              region={awsLiveness.region}
-              config={{ credentialProvider: async () => ({
-                accessKeyId: awsLiveness.credentials.accessKeyId,
-                secretAccessKey: awsLiveness.credentials.secretAccessKey,
-                sessionToken: awsLiveness.credentials.sessionToken,
-                expiration: awsLiveness.credentials.expiration ? new Date(awsLiveness.credentials.expiration) : undefined,
-              }) }}
-              onAnalysisComplete={completeAwsLiveness}
-              onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
-              onUserCancel={onClose}
-            />
+            <Suspense fallback={<div className="p-8 text-center text-sm" style={{ color: SLATE }}>Loading secure face verification…</div>}>
+              <FaceLivenessDetectorCore
+                sessionId={awsLiveness.sessionId}
+                region={awsLiveness.region}
+                config={{ credentialProvider: async () => ({
+                  accessKeyId: awsLiveness.credentials.accessKeyId,
+                  secretAccessKey: awsLiveness.credentials.secretAccessKey,
+                  sessionToken: awsLiveness.credentials.sessionToken,
+                  expiration: awsLiveness.credentials.expiration ? new Date(awsLiveness.credentials.expiration) : undefined,
+                }) }}
+                onAnalysisComplete={completeAwsLiveness}
+                onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
+                onUserCancel={onClose}
+              />
+            </Suspense>
           </div>
         )}
         {awsLivenessVerified && <p className="mb-4 text-sm font-medium" style={{ color: SAGE }}>✓ AWS face-liveness verification passed</p>}
