@@ -1008,6 +1008,12 @@ function backendOrderToFrontend(row) {
       fulfillmentStatus: i.fulfillment_status || "new",
       trackingNumber: i.tracking_number || "",
       carrier: i.carrier || "",
+      selfDeliveryStatus: i.self_delivery_status || null,
+      deliveryPersonSelfieUrl: i.delivery_person_selfie_url || "",
+      selfDeliveryStartedAt: i.self_delivery_started_at ? new Date(i.self_delivery_started_at).getTime() : null,
+      selfDeliveryOnMyWayAt: i.self_delivery_on_my_way_at ? new Date(i.self_delivery_on_my_way_at).getTime() : null,
+      selfDeliveryArrivedAt: i.self_delivery_arrived_at ? new Date(i.self_delivery_arrived_at).getTime() : null,
+      selfDeliveryDeliveredAt: i.self_delivery_delivered_at ? new Date(i.self_delivery_delivered_at).getTime() : null,
       estimatedDeliveryStart: i.estimated_delivery_start ? String(i.estimated_delivery_start).slice(0, 10) : "",
       estimatedDeliveryEnd: i.estimated_delivery_end ? String(i.estimated_delivery_end).slice(0, 10) : "",
       liveLocationEnabled: !!i.live_location_enabled,
@@ -2416,6 +2422,9 @@ export default function Stallyard() {
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
+  const [uploadingDeliverySelfieKey, setUploadingDeliverySelfieKey] = useState(null);
+  const [deliverySelfieDrafts, setDeliverySelfieDrafts] = useState({});
+  const [selfDeliveryActionKey, setSelfDeliveryActionKey] = useState(null);
   const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [deliveryTokens, setDeliveryTokens] = useState({});
@@ -7676,6 +7685,84 @@ export default function Stallyard() {
     }
   };
 
+  const handleDeliveryPersonSelfieSelect = async (e, orderId, itemId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      showToast("Take or choose a clear delivery-person selfie under 5MB");
+      return;
+    }
+    const key = `${orderId}-${itemId}`;
+    setUploadingDeliverySelfieKey(key);
+    try {
+      const dataUrl = await resizeImageFile(file, 1200, 0.82);
+      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, folder: "self-delivery/selfies" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(data.error || "Couldn't upload the selfie");
+      setDeliverySelfieDrafts((drafts) => ({ ...drafts, [itemId]: data.url }));
+      await runSelfDeliveryStep(orderId, itemId, "selfie", { deliveryPersonSelfieUrl: data.url });
+    } catch (err) {
+      showToast(err.message || "Couldn't upload the selfie — try again");
+    } finally {
+      setUploadingDeliverySelfieKey(null);
+    }
+  };
+
+  const runSelfDeliveryStep = async (orderId, itemId, action, extra = {}) => {
+    const key = `${orderId}-${itemId}-${action}`;
+    setSelfDeliveryActionKey(key);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/self-delivery`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          deliveryPersonSelfieUrl: action === "selfie" ? extra.deliveryPersonSelfieUrl || deliverySelfieDrafts[itemId] || "" : undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.item) {
+        showToast(data.error || "Couldn't update Self delivery — try again");
+        return false;
+      }
+      const row = data.item;
+      setOrders((all) => all.map((order) => order.id !== orderId ? order : {
+        ...order,
+        items: order.items.map((item) => item.id !== itemId ? item : {
+          ...item,
+          carrier: row.carrier || item.carrier,
+          fulfillmentStatus: row.fulfillment_status || item.fulfillmentStatus,
+          selfDeliveryStatus: row.self_delivery_status || null,
+          deliveryPersonSelfieUrl: row.delivery_person_selfie_url || "",
+          selfDeliveryStartedAt: row.self_delivery_started_at ? new Date(row.self_delivery_started_at).getTime() : item.selfDeliveryStartedAt,
+          selfDeliveryOnMyWayAt: row.self_delivery_on_my_way_at ? new Date(row.self_delivery_on_my_way_at).getTime() : item.selfDeliveryOnMyWayAt,
+          selfDeliveryArrivedAt: row.self_delivery_arrived_at ? new Date(row.self_delivery_arrived_at).getTime() : item.selfDeliveryArrivedAt,
+          selfDeliveryDeliveredAt: row.self_delivery_delivered_at ? new Date(row.self_delivery_delivered_at).getTime() : item.selfDeliveryDeliveredAt,
+          liveLocationEnabled: !!row.live_location_enabled,
+        }),
+      }));
+      if (action === "selfie") {
+        setDeliverySelfieDrafts((drafts) => {
+          const next = { ...drafts };
+          delete next[itemId];
+          return next;
+        });
+      }
+      showToast({ start: "Self delivery started", on_my_way: "Marked On my way", selfie: "Delivery-person selfie uploaded", arrived: "Marked I’m here", delivered: "Delivery completed" }[action]);
+      return true;
+    } catch {
+      showToast("Couldn't reach the server — try again");
+      return false;
+    } finally {
+      setSelfDeliveryActionKey(null);
+    }
+  };
+
   const handleDeliveryLocationPhotos = async (e) => {
     const files = Array.from(e.target.files || []);
     e.target.value = "";
@@ -12382,6 +12469,8 @@ export default function Stallyard() {
                                         onChange={(e) => updateItemFulfillment(o.id, i.id, e.target.value)}
                                         className="px-2 py-1 rounded-lg border outline-none text-xs"
                                         style={{ borderColor: "#DDD8CC", color: INK }}
+                                        disabled={i.carrier === "Self delivery"}
+                                        title={i.carrier === "Self delivery" ? "Use the Self delivery steps below" : "Update fulfillment status"}
                                       >
                                         <option value="new">New</option>
                                         <option value="preparing">Preparing</option>
@@ -12421,7 +12510,7 @@ export default function Stallyard() {
                                       <div className="text-xs" style={{ color: SLATE }}>The token is also in Messages. Delivery photo is still required before payment release.</div>
                                     </div>
                                   )}
-                                  {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") && (
+                                  {!['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
                                     <div className="flex items-center gap-2 mt-2 flex-wrap">
                                       <select
                                         value={i.carrier || ""}
@@ -12436,29 +12525,130 @@ export default function Stallyard() {
                                           </option>
                                         ))}
                                       </select>
-                                      <input
-                                        value={trackDraft}
-                                        onChange={(e) =>
-                                          setTrackingDrafts((d) => ({ ...d, [trackKey]: e.target.value }))
-                                        }
-                                        placeholder="Tracking number (optional)"
-                                        className="flex-1 px-2 py-1 rounded-lg border outline-none text-xs"
-                                        style={{ borderColor: "#DDD8CC" }}
-                                      />
-                                      <button
-                                        onClick={async () => {
-                                          await updateItemTracking(o.id, i.id, trackDraft.trim());
-                                          setTrackingDrafts((d) => {
-                                            const next = { ...d };
-                                            delete next[trackKey];
-                                            return next;
-                                          });
-                                        }}
-                                        className="px-2 py-1 rounded-lg text-xs font-medium"
-                                        style={{ backgroundColor: MARIGOLD, color: INK }}
-                                      >
-                                        Save
-                                      </button>
+                                      {i.carrier !== "Self delivery" && (
+                                        <>
+                                          <input
+                                            value={trackDraft}
+                                            onChange={(e) =>
+                                              setTrackingDrafts((d) => ({ ...d, [trackKey]: e.target.value }))
+                                            }
+                                            placeholder="Tracking number (optional)"
+                                            className="flex-1 px-2 py-1 rounded-lg border outline-none text-xs"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                          <button
+                                            onClick={async () => {
+                                              await updateItemTracking(o.id, i.id, trackDraft.trim());
+                                              setTrackingDrafts((d) => {
+                                                const next = { ...d };
+                                                delete next[trackKey];
+                                                return next;
+                                              });
+                                            }}
+                                            className="px-2 py-1 rounded-lg text-xs font-medium"
+                                            style={{ backgroundColor: MARIGOLD, color: INK }}
+                                          >
+                                            Save
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {i.carrier === "Self delivery" && !['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}>
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <div>
+                                          <div className="text-sm font-semibold" style={{ color: INK }}>Self delivery</div>
+                                          <div className="text-xs mt-0.5" style={{ color: SLATE }}>
+                                            Complete each step in order. The buyer can follow the progress.
+                                          </div>
+                                        </div>
+                                        <Tag color={i.selfDeliveryStatus === "delivered" ? SAGE : MARIGOLD}>
+                                          {({ started: "Started", on_my_way: "On my way", arrived: "I’m here", delivered: "Delivered" }[i.selfDeliveryStatus] || "Not started")}
+                                        </Tag>
+                                      </div>
+
+                                      {!i.selfDeliveryStatus && (
+                                        <button
+                                          type="button"
+                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "start")}
+                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-start`}
+                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                          style={{ backgroundColor: INK, color: "white" }}
+                                        >
+                                          {selfDeliveryActionKey === `${o.id}-${i.id}-start` ? "Starting…" : "Start self delivery"}
+                                        </button>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "started" && (
+                                        <button
+                                          type="button"
+                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "on_my_way")}
+                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way`}
+                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                                        >
+                                          {selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way` ? "Saving…" : "On my way"}
+                                        </button>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "on_my_way" && (
+                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
+                                          {!i.deliveryPersonSelfieUrl ? (
+                                            <>
+                                              <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-person selfie</div>
+                                              <div className="text-xs mt-1" style={{ color: SLATE }}>Take a current photo of the person making this delivery before continuing.</div>
+                                              <label className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium cursor-pointer" style={{ borderColor: INK, color: INK }}>
+                                                {uploadingDeliverySelfieKey === trackKey ? "Uploading…" : "Take/upload selfie"}
+                                                <input type="file" accept="image/*" capture="user" className="hidden" disabled={uploadingDeliverySelfieKey === trackKey} onChange={(e) => handleDeliveryPersonSelfieSelect(e, o.id, i.id)} />
+                                              </label>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <div className="flex items-center gap-3 flex-wrap">
+                                                <img src={i.deliveryPersonSelfieUrl} alt="Delivery person selfie" className="w-20 h-20 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
+                                                <div>
+                                                  <div className="text-xs font-semibold" style={{ color: SAGE }}>Delivery-person selfie saved</div>
+                                                  <div className="text-xs mt-1" style={{ color: SLATE }}>GPS sharing is optional. Use the location controls below if desired.</div>
+                                                </div>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => runSelfDeliveryStep(o.id, i.id, "arrived")}
+                                                disabled={selfDeliveryActionKey === `${o.id}-${i.id}-arrived`}
+                                                className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                                style={{ backgroundColor: MARIGOLD, color: INK }}
+                                              >
+                                                {selfDeliveryActionKey === `${o.id}-${i.id}-arrived` ? "Saving…" : "I’m here"}
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "arrived" && (
+                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
+                                          <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-proof photo</div>
+                                          <div className="text-xs mt-1" style={{ color: SLATE }}>Upload the handoff photo before completing delivery.</div>
+                                          {i.proofOfDeliveryUrl ? (
+                                            <img src={i.proofOfDeliveryUrl} alt="Delivery proof" className="mt-2 w-24 h-24 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
+                                          ) : (
+                                            <label className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium cursor-pointer" style={{ borderColor: INK, color: INK }}>
+                                              {uploadingPodKey === trackKey ? "Uploading…" : "Take/upload delivery photo"}
+                                              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPodKey === trackKey} onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)} />
+                                            </label>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => runSelfDeliveryStep(o.id, i.id, "delivered")}
+                                            disabled={!i.proofOfDeliveryUrl || selfDeliveryActionKey === `${o.id}-${i.id}-delivered`}
+                                            className="block mt-2 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-40"
+                                            style={{ backgroundColor: SAGE, color: "white" }}
+                                          >
+                                            {selfDeliveryActionKey === `${o.id}-${i.id}-delivered` ? "Completing…" : "Delivered"}
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                   {!['cancelled', 'returned', 'delivered'].includes(i.fulfillmentStatus) && (
@@ -12512,7 +12702,7 @@ export default function Stallyard() {
                                       </div>
                                     </div>
                                   )}
-                                  {i.fulfillmentStatus === "shipped" && (
+                                  {i.fulfillmentStatus === "shipped" && (i.carrier !== "Self delivery" || !!i.deliveryPersonSelfieUrl) && (
                                     <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
                                       <div className="text-xs font-medium" style={{ color: INK }}>Live delivery location</div>
                                       <div className="text-xs mt-1" style={{ color: SLATE }}>
