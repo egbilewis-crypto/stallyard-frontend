@@ -672,6 +672,16 @@ function formatMoney(amount, currency) {
   return `${symbol}${num}`;
 }
 
+// New listing uploads end in "-1600.webp" and have matching 400/800/1200
+// variants. Older listing URLs safely return no srcset and continue using src.
+function responsiveListingSrcSet(url) {
+  const value = String(url || "");
+  if (!/-1600\.webp(?:\?.*)?$/i.test(value)) return undefined;
+  return [400, 800, 1200, 1600]
+    .map((width) => `${value.replace(/-1600\.webp(?=\?|$)/i, `-${width}.webp`)} ${width}w`)
+    .join(", ");
+}
+
 function formatDeliveryDate(value) {
   const date = String(value || "").slice(0, 10);
   if (!date) return "";
@@ -1583,6 +1593,8 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
           <div className="relative">
             <img
               src={listing.images[0]}
+              srcSet={responsiveListingSrcSet(listing.images[0])}
+              sizes="(max-width: 640px) calc(50vw - 24px), (max-width: 1024px) 33vw, 320px"
               alt={listing.title}
               width="640"
               height="360"
@@ -7553,7 +7565,7 @@ export default function Stallyard() {
         const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataUrl: resized.dataUrl }),
+          body: JSON.stringify({ dataUrl: resized.dataUrl, folder: "listings/products" }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -19719,6 +19731,8 @@ export default function Stallyard() {
                 >
                   <img
                     src={selected.images[activeImg]}
+                    srcSet={responsiveListingSrcSet(selected.images[activeImg])}
+                    sizes="(max-width: 640px) calc(100vw - 32px), 448px"
                     alt={`${selected.title} — photo ${activeImg + 1} of ${selected.images.length}`}
                     className="w-full h-56 object-cover rounded-xl cursor-zoom-in"
                     onClick={() => setGalleryZoomOpen(true)}
@@ -19769,7 +19783,7 @@ export default function Stallyard() {
                         aria-label={`View photo ${idx + 1}`}
                         aria-current={idx === activeImg}
                       >
-                        <img src={src} alt="" className="w-full h-full object-cover" />
+                        <img src={src} srcSet={responsiveListingSrcSet(src)} sizes="56px" alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </button>
                     ))}
                   </div>
@@ -20019,6 +20033,8 @@ export default function Stallyard() {
           </button>
           <img
             src={selected.images[activeImg]}
+            srcSet={responsiveListingSrcSet(selected.images[activeImg])}
+            sizes="100vw"
             alt={`${selected.title} — zoomed photo ${activeImg + 1} of ${selected.images.length}`}
             className="max-w-full max-h-full object-contain"
             style={{
