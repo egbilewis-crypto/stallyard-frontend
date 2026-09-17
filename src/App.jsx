@@ -2425,6 +2425,10 @@ export default function Stallyard() {
   const [uploadingDeliverySelfieKey, setUploadingDeliverySelfieKey] = useState(null);
   const [deliverySelfieDrafts, setDeliverySelfieDrafts] = useState({});
   const [selfDeliveryActionKey, setSelfDeliveryActionKey] = useState(null);
+  const [deliverySelfieCameraTarget, setDeliverySelfieCameraTarget] = useState(null);
+  const [deliverySelfieCameraReady, setDeliverySelfieCameraReady] = useState(false);
+  const deliverySelfieVideoRef = useRef(null);
+  const deliverySelfieStreamRef = useRef(null);
   const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [deliveryTokens, setDeliveryTokens] = useState({});
@@ -7685,34 +7689,6 @@ export default function Stallyard() {
     }
   };
 
-  const handleDeliveryPersonSelfieSelect = async (e, orderId, itemId) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
-      showToast("Take or choose a clear delivery-person selfie under 5MB");
-      return;
-    }
-    const key = `${orderId}-${itemId}`;
-    setUploadingDeliverySelfieKey(key);
-    try {
-      const dataUrl = await resizeImageFile(file, 1200, 0.82);
-      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "self-delivery/selfies" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) throw new Error(data.error || "Couldn't upload the selfie");
-      setDeliverySelfieDrafts((drafts) => ({ ...drafts, [itemId]: data.url }));
-      await runSelfDeliveryStep(orderId, itemId, "selfie", { deliveryPersonSelfieUrl: data.url });
-    } catch (err) {
-      showToast(err.message || "Couldn't upload the selfie — try again");
-    } finally {
-      setUploadingDeliverySelfieKey(null);
-    }
-  };
-
   const runSelfDeliveryStep = async (orderId, itemId, action, extra = {}) => {
     const key = `${orderId}-${itemId}-${action}`;
     setSelfDeliveryActionKey(key);
@@ -7760,6 +7736,87 @@ export default function Stallyard() {
       return false;
     } finally {
       setSelfDeliveryActionKey(null);
+    }
+  };
+
+  const closeDeliverySelfieCamera = () => {
+    if (deliverySelfieStreamRef.current) {
+      deliverySelfieStreamRef.current.getTracks().forEach((track) => track.stop());
+      deliverySelfieStreamRef.current = null;
+    }
+    if (deliverySelfieVideoRef.current) deliverySelfieVideoRef.current.srcObject = null;
+    setDeliverySelfieCameraReady(false);
+    setDeliverySelfieCameraTarget(null);
+  };
+
+  useEffect(() => {
+    if (!deliverySelfieCameraTarget) return undefined;
+    let cancelled = false;
+    const startCamera = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        deliverySelfieStreamRef.current = stream;
+        if (deliverySelfieVideoRef.current) {
+          deliverySelfieVideoRef.current.srcObject = stream;
+          await deliverySelfieVideoRef.current.play();
+          setDeliverySelfieCameraReady(true);
+        }
+      } catch {
+        showToast("Camera access is required for the live delivery-person selfie");
+        setDeliverySelfieCameraTarget(null);
+      }
+    };
+    startCamera();
+    return () => {
+      cancelled = true;
+      if (deliverySelfieStreamRef.current) {
+        deliverySelfieStreamRef.current.getTracks().forEach((track) => track.stop());
+        deliverySelfieStreamRef.current = null;
+      }
+    };
+  }, [deliverySelfieCameraTarget]);
+
+  const captureLiveDeliverySelfie = async () => {
+    const target = deliverySelfieCameraTarget;
+    const video = deliverySelfieVideoRef.current;
+    if (!target || !video || !deliverySelfieCameraReady || !video.videoWidth) {
+      showToast("Wait for the live camera to become ready");
+      return;
+    }
+    const key = `${target.orderId}-${target.itemId}`;
+    setUploadingDeliverySelfieKey(key);
+    try {
+      const size = Math.min(video.videoWidth, video.videoHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = 960;
+      canvas.height = 960;
+      const context = canvas.getContext("2d");
+      const sourceX = Math.max(0, (video.videoWidth - size) / 2);
+      const sourceY = Math.max(0, (video.videoHeight - size) / 2);
+      context.drawImage(video, sourceX, sourceY, size, size, 0, 0, 960, 960);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.84);
+      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dataUrl, folder: "self-delivery/live-selfies" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.url) throw new Error(data.error || "Couldn't upload the live selfie");
+      const saved = await runSelfDeliveryStep(target.orderId, target.itemId, "selfie", {
+        deliveryPersonSelfieUrl: data.url,
+      });
+      if (saved) closeDeliverySelfieCamera();
+    } catch (err) {
+      showToast(err.message || "Couldn't save the live selfie — try again");
+    } finally {
+      setUploadingDeliverySelfieKey(null);
     }
   };
 
@@ -12598,10 +12655,14 @@ export default function Stallyard() {
                                             <>
                                               <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-person selfie</div>
                                               <div className="text-xs mt-1" style={{ color: SLATE }}>Take a current photo of the person making this delivery before continuing.</div>
-                                              <label className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium cursor-pointer" style={{ borderColor: INK, color: INK }}>
-                                                {uploadingDeliverySelfieKey === trackKey ? "Uploading…" : "Take/upload selfie"}
-                                                <input type="file" accept="image/*" capture="user" className="hidden" disabled={uploadingDeliverySelfieKey === trackKey} onChange={(e) => handleDeliveryPersonSelfieSelect(e, o.id, i.id)} />
-                                              </label>
+                                              <button
+                                                type="button"
+                                                onClick={() => setDeliverySelfieCameraTarget({ orderId: o.id, itemId: i.id })}
+                                                className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium"
+                                                style={{ borderColor: INK, color: INK }}
+                                              >
+                                                Open live selfie camera
+                                              </button>
                                             </>
                                           ) : (
                                             <>
@@ -21265,6 +21326,51 @@ export default function Stallyard() {
                 {editingArticleId ? "Save changes" : "Publish article"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {deliverySelfieCameraTarget && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(10,15,22,.86)" }}
+        >
+          <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 className="text-lg font-semibold" style={{ color: INK }}>Live delivery-person selfie</h3>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>
+                  This must be taken now. Selecting a saved picture is not available.
+                </p>
+              </div>
+              <button type="button" onClick={closeDeliverySelfieCamera} aria-label="Close live selfie camera">
+                <X size={22} />
+              </button>
+            </div>
+            <div className="relative overflow-hidden rounded-xl bg-black aspect-square">
+              <video
+                ref={deliverySelfieVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full h-full object-cover -scale-x-100"
+              />
+              {!deliverySelfieCameraReady && (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-white">Starting live camera…</div>
+              )}
+              <div className="absolute inset-[12%] rounded-full border-2 border-white/80 pointer-events-none" />
+            </div>
+            <p className="text-xs mt-3" style={{ color: SLATE }}>
+              Center the delivery person’s full face inside the guide. Remove sunglasses, hats, and face coverings.
+            </p>
+            <button
+              type="button"
+              onClick={captureLiveDeliverySelfie}
+              disabled={!deliverySelfieCameraReady || uploadingDeliverySelfieKey !== null}
+              className="w-full mt-3 py-3 rounded-lg font-semibold disabled:opacity-50"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              {uploadingDeliverySelfieKey ? "Saving live selfie…" : "Take live selfie"}
+            </button>
           </div>
         </div>
       )}
