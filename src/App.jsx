@@ -1849,6 +1849,9 @@ export default function Stallyard() {
   const [editingFaqId, setEditingFaqId] = useState(null);
   const [openFaqId, setOpenFaqId] = useState(null);
   const [listings, setListings] = useState([]);
+  const [listingFeedPage, setListingFeedPage] = useState(1);
+  const [listingFeedHasMore, setListingFeedHasMore] = useState(false);
+  const [listingFeedLoading, setListingFeedLoading] = useState(false);
   const [membersLoaded, setMembersLoaded] = useState(false);
   // True only once the saved session (if any) has actually been read back
   // from storage — distinct from membersLoaded, which flips true slightly
@@ -2310,19 +2313,6 @@ export default function Stallyard() {
         const res = await window.storage.get("stallyard-listings", true);
         const localListings = res ? JSON.parse(res.value) : [];
         setListings(localListings);
-        try {
-          const listingsRes = await backendFetch(`${BACKEND_URL}/listings`);
-          if (listingsRes.ok) {
-            const { listings: rows } = await listingsRes.json();
-            const merged = rows.map((row) =>
-              backendListingToFrontend(row, localListings.find((l) => l.id === row.id))
-            );
-            setListings(merged);
-            await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
-          }
-        } catch {
-          // couldn't reach backend for listings — keep local copy
-        }
       } catch {
         setListings([]);
       }
@@ -3593,6 +3583,70 @@ export default function Stallyard() {
     }
   }, [currentMember?.isAdmin, currentMember?.adminRole, adminTab]);
 
+  const buildListingFeedUrl = useCallback((page = 1) => {
+    const params = new URLSearchParams({ page: String(page), limit: "20" });
+    if (search.trim()) params.set("search", search.trim());
+    if (categoryFilter !== "All") params.set("category", categoryFilter);
+    if (subcategoryFilter !== "All") params.set("subcategory", subcategoryFilter);
+    if (conditionFilter !== "All") params.set("condition", conditionFilter);
+    if (priceMin !== "") params.set("minPrice", priceMin);
+    if (priceMax !== "") params.set("maxPrice", priceMax);
+    params.set("sort", sortBy === "rating" ? "featured" : sortBy);
+    return `${BACKEND_URL}/listings?${params.toString()}`;
+  }, [search, categoryFilter, subcategoryFilter, conditionFilter, priceMin, priceMax, sortBy]);
+
+  useEffect(() => {
+    if (currentMember?.isAdmin || isAdminHost()) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setListingFeedLoading(true);
+      try {
+        const res = await backendFetch(buildListingFeedUrl(1));
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || cancelled || !Array.isArray(data.listings)) return;
+        const publicRows = data.listings.map((row) => backendListingToFrontend(row));
+        setListings((current) => {
+          const ownNonPublic = current.filter(
+            (listing) => currentUser && listing.ownerUsername === currentUser && listing.status !== "active"
+          );
+          return [...new Map([...publicRows, ...ownNonPublic].map((listing) => [listing.id, listing])).values()];
+        });
+        setListingFeedPage(1);
+        setListingFeedHasMore(Boolean(data.hasMore));
+        setLoaded(true);
+      } catch {
+        // Keep the most recent local copy when the feed is temporarily unavailable.
+      } finally {
+        if (!cancelled) setListingFeedLoading(false);
+      }
+    }, search.trim() ? 300 : 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [buildListingFeedUrl, currentMember?.isAdmin, currentUser]);
+
+  const loadMoreListings = async () => {
+    if (listingFeedLoading || !listingFeedHasMore) return;
+    const nextPage = listingFeedPage + 1;
+    setListingFeedLoading(true);
+    try {
+      const res = await backendFetch(buildListingFeedUrl(nextPage));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data.listings)) return;
+      const nextRows = data.listings.map((row) => backendListingToFrontend(row));
+      setListings((current) => [
+        ...new Map([...current, ...nextRows].map((listing) => [listing.id, listing])).values(),
+      ]);
+      setListingFeedPage(nextPage);
+      setListingFeedHasMore(Boolean(data.hasMore));
+    } catch {
+      showToast("Couldn't load more listings — try again");
+    } finally {
+      setListingFeedLoading(false);
+    }
+  };
+
   // The public /listings endpoint intentionally hides drafts/rejected/removed
   // records. Once a normal marketplace session is restored, refetch with the
   // token so the signed-in seller still receives their own non-public listings.
@@ -3601,15 +3655,17 @@ export default function Stallyard() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await authFetch(`${BACKEND_URL}/listings`);
+        const res = await authFetch(`${BACKEND_URL}/listings?mine=true&page=1&limit=50&sort=newest`);
         if (!res.ok) return;
         const { listings: rows } = await res.json();
         if (cancelled || !Array.isArray(rows)) return;
-        const merged = rows.map((row) =>
+        const mine = rows.map((row) =>
           backendListingToFrontend(row, listings.find((l) => l.id === row.id))
         );
-        setListings(merged);
-        await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
+        setListings((current) => [
+          ...new Map([...current.filter((listing) => listing.ownerUsername !== currentUser), ...mine]
+            .map((listing) => [listing.id, listing])).values(),
+        ]);
       } catch {
         // Keep the public/local listing copy if the authenticated refresh fails.
       }
@@ -10535,6 +10591,19 @@ export default function Stallyard() {
                 />
               ))}
             </div>
+            {(listingFeedHasMore || listingFeedLoading) && (
+              <div className="flex justify-center mt-8">
+                <button
+                  type="button"
+                  onClick={loadMoreListings}
+                  disabled={listingFeedLoading}
+                  className="px-5 py-2.5 rounded-lg border text-sm font-medium disabled:opacity-50"
+                  style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
+                >
+                  {listingFeedLoading ? "Loading listings…" : "Load more listings"}
+                </button>
+              </div>
+            )}
           </>
         )}
 
