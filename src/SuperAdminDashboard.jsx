@@ -771,9 +771,11 @@ export default function SuperAdminDashboard({ scope }) {
                         .sort((a, b) => b.createdAt - a.createdAt)
                         .slice(0, 5)
                         .map((o) => (
-                          <div
+                          <button
+                            type="button"
                             key={o.id}
-                            className="flex items-center justify-between text-sm p-2 rounded-lg border bg-white"
+                            onClick={() => { setActiveAdminOrderId(o.id); setAdminTab("orders"); }}
+                            className="w-full flex items-center justify-between text-left text-sm p-2 rounded-lg border bg-white hover:bg-gray-50"
                             style={{ borderColor: "#DDD8CC" }}
                           >
                             <span className="truncate" style={{ color: INK }}>
@@ -785,7 +787,7 @@ export default function SuperAdminDashboard({ scope }) {
                             >
                               {formatMoney(o.total, o.currency)}
                             </span>
-                          </div>
+                          </button>
                         ))}
                       {orders.length === 0 && (
                         <p className="text-sm" style={{ color: SLATE }}>
@@ -1834,12 +1836,20 @@ export default function SuperAdminDashboard({ scope }) {
                 const sellerWithdrawals = withdrawals.filter((w) => sellerUsernames.includes(w.sellerUsername));
                 const sellerPayout = Number(activeOrder.subtotal || 0) + Number(activeOrder.shippingTotal || 0) - Number(activeOrder.commissionAmount || 0);
                 const paystackCheck = paystackChecks[activeOrder.id];
+                const cancellationDeadline = Number(activeOrder.createdAt || 0) + (3 * 60 * 60 * 1000);
+                const cancellationRetryAllowed = activeOrder.refundType === "buyer_cancellation" && activeOrder.refundStatus === "failed" &&
+                  activeOrder.refundRequestedAt && activeOrder.refundRequestedAt < cancellationDeadline;
+                const deliveryHasStarted = (activeOrder.items || []).some((i) =>
+                  i.fulfillmentStatus === "delivered" || i.buyerConfirmedAt || i.proofOfDeliveryUrl || i.deliveryTokenRedeemedAt
+                );
+                const cancellationEligible = activeOrder.paymentStatus === "held" && !deliveryHasStarted &&
+                  (Date.now() < cancellationDeadline || cancellationRetryAllowed);
                 const lifecycle = [
                   { label: "Order placed", at: activeOrder.createdAt, done: true },
                   { label: "Payment held", at: activeOrder.createdAt, done: ["held", "released", "refund_pending", "refunded"].includes(activeOrder.paymentStatus) },
                   { label: "Seller shipped", at: (activeOrder.items || []).map((i) => i.shippedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => i.shippedAt || ["shipped", "delivered", "returned"].includes(i.fulfillmentStatus)) },
                   { label: "Delivery proof uploaded", at: null, done: (activeOrder.items || []).some((i) => !!i.proofOfDeliveryUrl) },
-                  { label: "Buyer confirmed delivery", at: (activeOrder.items || []).map((i) => i.buyerConfirmedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => !!i.buyerConfirmedAt) },
+                  { label: "Delivery token redeemed", at: (activeOrder.items || []).map((i) => i.deliveryTokenRedeemedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => !!i.deliveryTokenRedeemedAt) },
                   { label: "Seller payment released", at: null, done: activeOrder.paymentStatus === "released" },
                   { label: "Refund completed", at: activeOrder.refundedAt || null, done: activeOrder.paymentStatus === "refunded" || activeOrder.refundStatus === "processed" },
                 ];
@@ -1938,6 +1948,29 @@ export default function SuperAdminDashboard({ scope }) {
                       )}
                     </div>
 
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: cancellationEligible ? SAGE : "#DDD8CC" }}>
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div>
+                          <h4 className="font-semibold" style={{ color: INK }}>Cancellation eligibility</h4>
+                          <p className="text-sm mt-1" style={{ color: SLATE }}>
+                            {cancellationEligible
+                              ? "Eligible for the automatic whole-order cancellation flow with the 2% fee."
+                              : deliveryHasStarted
+                                ? "Closed because delivery evidence, receipt confirmation, or token redemption is already recorded."
+                                : activeOrder.paymentStatus !== "held"
+                                  ? `Closed because payment is ${activeOrder.paymentStatus || "not held"}.`
+                                  : "The 3-hour cancellation window has closed."}
+                          </p>
+                        </div>
+                        <Tag color={cancellationEligible ? SAGE : SLATE}>{cancellationEligible ? "Eligible" : "Closed"}</Tag>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-2 mt-3 text-xs" style={{ color: SLATE }}>
+                        <div><strong style={{ color: INK }}>Deadline:</strong> {activeOrder.createdAt ? new Date(cancellationDeadline).toLocaleString() : "Unavailable"}</div>
+                        <div><strong style={{ color: INK }}>Cancellation fee:</strong> 2% of the complete order total</div>
+                        {cancellationRetryAllowed && <div className="sm:col-span-2" style={{ color: MARIGOLD }}>An on-time Paystack cancellation failed, so the buyer may retry after the original deadline.</div>}
+                      </div>
+                    </div>
+
                     <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
                       <h4 className="font-semibold mb-3" style={{ color: INK }}>Items, shipment & delivery</h4>
                       <div className="space-y-4">
@@ -1958,15 +1991,57 @@ export default function SuperAdminDashboard({ scope }) {
                                 <div><strong style={{ color: INK }}>Tracking:</strong> {i.trackingNumber || "—"}</div>
                                 <div><strong style={{ color: INK }}>Shipped:</strong> {i.shippedAt ? new Date(i.shippedAt).toLocaleString() : "Not yet"}</div>
                                 <div><strong style={{ color: INK }}>Delivery token:</strong> {tokenStatus}</div>
-                                <div><strong style={{ color: INK }}>Buyer confirmed:</strong> {i.buyerConfirmedAt ? new Date(i.buyerConfirmedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Token generated:</strong> {i.deliveryTokenGeneratedAt ? new Date(i.deliveryTokenGeneratedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Token sent by buyer:</strong> {i.deliveryTokenSentAt ? new Date(i.deliveryTokenSentAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Token redeemed:</strong> {i.deliveryTokenRedeemedAt ? new Date(i.deliveryTokenRedeemedAt).toLocaleString() : "Not yet"}</div>
                                 <div><strong style={{ color: INK }}>Return:</strong> {i.returnStatus || "None"}</div>
                                 <div><strong style={{ color: INK }}>Return tracking:</strong> {i.returnTrackingNumber || "—"}</div>
                               </div>
+                              {i.carrier === "Self delivery" && (
+                                <div className="mt-3 p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                    <strong className="text-sm" style={{ color: INK }}>Self-delivery progress</strong>
+                                    <Tag color={i.selfDeliveryStatus === "delivered" ? SAGE : MARIGOLD}>
+                                      {({ started: "Started", on_my_way: "On my way", arrived: "I’m here", delivered: "Delivered" }[i.selfDeliveryStatus] || "Not started")}
+                                    </Tag>
+                                  </div>
+                                  <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mt-3 text-xs" style={{ color: SLATE }}>
+                                    {[
+                                      ["Start self delivery", i.selfDeliveryStartedAt],
+                                      ["On my way", i.selfDeliveryOnMyWayAt],
+                                      ["I’m here", i.selfDeliveryArrivedAt],
+                                      ["Delivered", i.selfDeliveryDeliveredAt],
+                                    ].map(([label, at]) => (
+                                      <div key={label} className="flex gap-2 items-start">
+                                        <span className="w-2 h-2 mt-1 rounded-full shrink-0" style={{ backgroundColor: at ? SAGE : "#C9C4B8" }} />
+                                        <span><strong style={{ color: at ? INK : SLATE }}>{label}</strong><br />{at ? new Date(at).toLocaleString() : "Pending"}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <div className="mt-3 flex gap-3 flex-wrap items-start">
+                                    {i.deliveryPersonSelfieUrl ? (
+                                      <a href={i.deliveryPersonSelfieUrl} target="_blank" rel="noreferrer">
+                                        <img src={i.deliveryPersonSelfieUrl} alt="Live delivery-person selfie" loading="lazy" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                        <span className="block text-[11px] mt-1" style={{ color: SLATE }}>Required live selfie</span>
+                                      </a>
+                                    ) : <span className="text-xs" style={{ color: BERRY }}>Required live delivery-person selfie is missing.</span>}
+                                    <div className="text-xs" style={{ color: SLATE }}>
+                                      <strong style={{ color: INK }}>Optional GPS:</strong> {i.liveLocationEnabled ? "Sharing active" : i.liveLocationUpdatedAt ? "Sharing stopped" : "Not shared"}<br />
+                                      {i.liveLocationUpdatedAt && <>Last update: {new Date(i.liveLocationUpdatedAt).toLocaleString()}<br /></>}
+                                      {i.liveLocationAccuracy && <>Accuracy: about {Math.round(i.liveLocationAccuracy)} m<br /></>}
+                                      {i.liveLocationLatitude !== null && i.liveLocationLongitude !== null && (
+                                        <a className="font-medium underline" href={`https://www.google.com/maps/search/?api=1&query=${i.liveLocationLatitude},${i.liveLocationLongitude}`} target="_blank" rel="noreferrer">Open last shared location</a>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                               {i.returnReason && <p className="text-xs mt-2" style={{ color: BERRY }}><strong>Return reason:</strong> {i.returnReason}{i.returnNote ? ` — ${i.returnNote}` : ""}</p>}
                               <div className="mt-3 flex gap-2 flex-wrap">
                                 {i.proofOfDeliveryUrl && (
                                   <a href={i.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
-                                    <img src={i.proofOfDeliveryUrl} alt="Proof of delivery" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                    <img src={i.proofOfDeliveryUrl} alt="Proof of delivery" loading="lazy" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                    <span className="block text-[11px] mt-1" style={{ color: SLATE }}>Delivery proof</span>
                                   </a>
                                 )}
                                 {(i.returnEvidenceUrls || []).map((url, idx) => (
@@ -3527,4 +3602,3 @@ export default function SuperAdminDashboard({ scope }) {
     </>
   );
 }
-
