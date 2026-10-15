@@ -1,3 +1,4 @@
+import { useMarketplaceRouting, readMarketplaceRoute, marketplaceRouteUrl, PRIVATE_VIEWS } from "./MarketplaceRoutes.js";
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
 
@@ -2047,8 +2048,10 @@ export default function Stallyard() {
     window.addEventListener("stallyard:server-error", handleServerError);
     return () => window.removeEventListener("stallyard:server-error", handleServerError);
   }, []);
-  const [view, setView] = useState("browse");
-  const resumableViews = ["browse", "dashboard", "buyerHome", "orders", "wallet", "messages", "watchlist", "sell", "help", "categories", "how-it-works", "shipping-delivery", "become-seller"];
+  const [route, setRoute] = useMarketplaceRouting(isAdminHost());
+  const view = route.view;
+  const setView = (value) => setRoute((previous) => ({ ...previous, view: value === "login" ? "signin" : typeof value === "function" ? value(previous.view) : value }));
+  const setRouteField = (key, value) => setRoute((previous) => ({ ...previous, [key]: typeof value === "function" ? value(previous[key]) : value }));
 
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
@@ -2157,13 +2160,6 @@ export default function Stallyard() {
   }, [categoriesMenuOpen]);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
-  useEffect(() => {
-    if (!sessionChecked || !currentUser || isAdminHost()) return;
-    try {
-      if (resumableViews.includes(view)) window.sessionStorage.setItem(`stallyard-view:${currentUser}`, view);
-    } catch { /* Storage restrictions must not interrupt navigation. */ }
-  }, [view, sessionChecked, currentUser]);
-
   const [sessionUserProfile, setSessionUserProfile] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
@@ -2305,8 +2301,10 @@ export default function Stallyard() {
   const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
   const [saveCardAtCheckout, setSaveCardAtCheckout] = useState(false);
   const [orders, setOrders] = useState([]);
-  const [buyerOrderSearch, setBuyerOrderSearch] = useState("");
-  const [buyerOrderStatusFilter, setBuyerOrderStatusFilter] = useState("all");
+  const buyerOrderSearch = route.orderSearch;
+  const setBuyerOrderSearch = (value) => setRouteField("orderSearch", value);
+  const buyerOrderStatusFilter = route.orderStatus;
+  const setBuyerOrderStatusFilter = (value) => setRouteField("orderStatus", value);
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [homepageAds, setHomepageAds] = useState([
@@ -2463,10 +2461,12 @@ export default function Stallyard() {
   const [editingStoreProfile, setEditingStoreProfile] = useState(false);
   const [storeProfileDraft, setStoreProfileDraft] = useState({ storeBio: "", storePolicies: "" });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [activeThreadId, setActiveThreadId] = useState(null);
+  const activeThreadId = route.thread;
+  const setActiveThreadId = (value) => setRouteField("thread", value);
   const [activeThreadOrderId, setActiveThreadOrderId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
-  const [viewingSeller, setViewingSeller] = useState(null);
+  const viewingSeller = route.seller;
+  const setViewingSeller = (value) => setRouteField("seller", value);
   const [bidAmount, setBidAmount] = useState("");
   const [nowTick, setNowTick] = useState(Date.now());
   const [messageInput, setMessageInput] = useState("");
@@ -2505,7 +2505,8 @@ export default function Stallyard() {
   // be collected before actually confirming — { listingId, url } | null.
   const [hidingImageDraft, setHidingImageDraft] = useState(null);
   const [hideImageReason, setHideImageReason] = useState("");
-  const [salesTab, setSalesTab] = useState("all");
+  const salesTab = route.salesTab;
+  const setSalesTab = (value) => setRouteField("salesTab", value);
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
   const [uploading, setUploading] = useState(false);
@@ -2555,6 +2556,18 @@ export default function Stallyard() {
   // complete yet, so they can always resume where they left off.
   const [profileStageOpen, setProfileStageOpen] = useState(false);
   const [profileStageError, setProfileStageError] = useState("");
+
+  useEffect(() => {
+    if (!sessionChecked || isAdminHost() || currentUser || !PRIVATE_VIEWS.has(view)) return;
+    setAuthReturnView(view);
+    setRoute((previous) => ({ ...previous, view: "signin", next: marketplaceRouteUrl(previous) }));
+  }, [sessionChecked, currentUser, view]);
+  useEffect(() => {
+    if (view !== "dashboard" || !sessionChecked || !currentUser) return;
+    const target = route.sellerSection === "orders" ? "seller-sales" : route.sellerSection === "listings" ? "seller-listings" : "seller-overview";
+    const timer = setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: "auto" }), 0);
+    return () => clearTimeout(timer);
+  }, [view, route.sellerSection, sessionChecked, currentUser, orders.length]);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -2617,12 +2630,6 @@ export default function Stallyard() {
           if (sessionData.user?.username) {
             setSessionUserProfile(sessionData.user);
             setCurrentUser(sessionData.user.username);
-            if (!isAdminHost() && !sessionData.user.is_admin) {
-              try {
-                const savedView = window.sessionStorage.getItem(`stallyard-view:${sessionData.user.username}`);
-                if (resumableViews.includes(savedView)) setView(savedView);
-              } catch { /* Navigation storage is optional. */ }
-            }
             await window.storage.set("stallyard-session", sessionData.user.username, false);
           }
         } else {
@@ -3666,7 +3673,10 @@ export default function Stallyard() {
       setProfileStageOpen(true);
       showToast(`Welcome back, ${member.displayName} — let's finish your profile`);
     } else {
-      setView(authReturnView);
+      if (route.next) {
+        const destination = new URL(route.next, window.location.origin);
+        setRoute(readMarketplaceRoute(destination));
+      } else setView(authReturnView);
       showToast(`Welcome back, ${member.displayName}`);
     }
   };
@@ -9347,6 +9357,10 @@ export default function Stallyard() {
     );
   }
 
+  if (PRIVATE_VIEWS.has(view) && (!sessionChecked || !currentUser)) {
+    return <div role="status" className="min-h-screen flex items-center justify-center" style={{ backgroundColor: CANVAS, color: INK }}>Checking your session…</div>;
+  }
+
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
     return (
@@ -11835,9 +11849,9 @@ export default function Stallyard() {
             {currentUser && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
                 {[
-                  { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
-                  { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Overview", action: () => setRouteField("sellerSection", "overview") },
+                  { label: "Listings", action: () => setRouteField("sellerSection", "listings") },
+                  { label: "Orders & delivery", action: () => setRouteField("sellerSection", "orders") },
                   { label: "Seller wallet", action: () => setView("wallet") },
                   { label: "Messages", action: () => setView("messages") },
                   { label: "My Stall", action: () => openStorefront(currentUser) },
@@ -12533,7 +12547,7 @@ export default function Stallyard() {
                       return (
                         <button
                           key={t.key}
-                          onClick={() => setSalesTab(t.key)}
+                          onClick={() => setRoute((previous) => ({ ...previous, sellerSection: "orders", salesTab: t.key }))}
                           className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
                           style={{
                             backgroundColor: salesTab === t.key ? INK : "white",
