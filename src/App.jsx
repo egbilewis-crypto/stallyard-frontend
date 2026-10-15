@@ -6,16 +6,16 @@ import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, Shoppi
 // public marketplace bundle and download both the component and its CSS on
 // demand. React.lazy requires a default export, so the named AWS component is
 // adapted here without adding another source file.
-
+const FaceLivenessDetectorCore = lazy(() =>
+  Promise.all([
+    import("@aws-amplify/ui-react-liveness"),
+    import("@aws-amplify/ui-react-liveness/styles.css"),
+  ]).then(([module]) => ({ default: module.FaceLivenessDetectorCore }))
+);
 
 // The complete privileged dashboard is kept out of the public marketplace
 // bundle and fetched only after an authenticated admin opens the admin view.
 const SuperAdminDashboard = lazy(() => import("./SuperAdminDashboard.jsx"));
-const SellerDashboard = lazy(() => import("./SellerDashboard.jsx"));
-const BuyerDashboard = lazy(() => import("./BuyerDashboard.jsx"));
-const VerificationScreens = lazy(() => import("./VerificationScreens.jsx"));
-const Messages = lazy(() => import("./Messages.jsx"));
-const Checkout = lazy(() => import("./Checkout.jsx"));
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -1105,6 +1105,7 @@ function backendUserToMember(user, existing) {
     isApproved: !!user.is_approved,
     isVerified: !!user.is_verified,
     isSuspended: !!user.is_suspended,
+    isPreview: !!(user.is_preview ?? existing?.isPreview),
     joinedAt: user.created_at ? new Date(user.created_at).getTime() : existing?.joinedAt || Date.now(),
     accountType: user.account_type || existing?.accountType || "personal",
     onboardingIntent: user.onboarding_intent || existing?.onboardingIntent || "buy",
@@ -1134,27 +1135,16 @@ function backendUserToMember(user, existing) {
   };
 }
 
-const APPROVED_PRE_DRAFTED_MESSAGES = new Set([
-  "Is this item still available?",
-  "What condition is the item in?",
-  "Does it have any damage or faults?",
-  "What accessories are included?",
-  "Is the price negotiable?",
-  "Can you deliver to my location?",
-  "When can you deliver it?",
-  "I have placed my order.",
-  "I’m ready to inspect the item.",
-  "Yes, the item is available.",
-  "The price is firm.",
-  "I can accept a reasonable offer.",
-  "The item is in the condition shown.",
-  "I can deliver to your location.",
-  "Your order is being prepared.",
-  "I’m on my way.",
-  "I have arrived.",
-  "Please inspect the item carefully.",
-  "Only release your delivery token when you are satisfied.",
-]);
+// Basic, non-exhaustive filter to discourage sharing emails/phone numbers in chat.
+// It catches common patterns but a determined user could still obfuscate around it
+// (e.g. "call me at five five five..."), so this is a nudge, not a guarantee.
+function containsContactInfo(text) {
+  const emailPattern = /[a-z0-9._%+-]+\s*(@|\bat\b)\s*[a-z0-9.-]+\s*(\.|\bdot\b)\s*[a-z]{2,}/i;
+  const digitsOnly = text.replace(/[^0-9]/g, "");
+  const phonePattern = /(\+?\d[\s.\-()]*){7,}/;
+  const hasManyDigitsClustered = phonePattern.test(text) && digitsOnly.length >= 7;
+  return emailPattern.test(text) || hasManyDigitsClustered;
+}
 
 // Best-effort carrier detection from common tracking number formats.
 // Falls back to a general web search if the format isn't recognized —
@@ -1768,7 +1758,222 @@ function StallyardErrorScreen({ onRetry }) {
   );
 }
 
+function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToast }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const detectorRef = useRef(null);
+  const neutralFaceSizeRef = useRef(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({ legalName: "", dateOfBirth: "", consent: false });
+  const [captures, setCaptures] = useState({ liveSelfie: "", holdingIdSelfie: "", challengeFrames: [] });
+  const [faceChecks, setFaceChecks] = useState([]);
+  const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
+  const [challenges, setChallenges] = useState([]);
+  const [challengeToken, setChallengeToken] = useState("");
+  const [challengeLoading, setChallengeLoading] = useState(true);
+  const [awsLiveness, setAwsLiveness] = useState(null);
+  const [awsLivenessVerified, setAwsLivenessVerified] = useState(false);
+  const [rekognitionVerificationToken, setRekognitionVerificationToken] = useState("");
 
+  const labels = {
+    blink: "Blink slowly, then look at the camera",
+    turn_left: "Turn your head to the left",
+    turn_right: "Turn your head to the right",
+    smile: "Smile while looking at the camera",
+    move_closer: "Move your face slightly closer",
+  };
+
+  useEffect(() => () => {
+    if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
+    if (detectorRef.current?.close) detectorRef.current.close();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [challengeResponse, awsResponse] = await Promise.all([
+          authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" }),
+          authFetch(`${BACKEND_URL}/casual-seller/rekognition/session`, { method: "POST" }),
+        ]);
+        const [data, awsData] = await Promise.all([challengeResponse.json(), awsResponse.json()]);
+        if (!challengeResponse.ok) throw new Error(data.error || "Couldn't start secure verification");
+        if (!awsResponse.ok) throw new Error(awsData.error || "Couldn't start AWS face verification");
+        if (!cancelled) {
+          setChallenges(data.challenges || []); setChallengeToken(data.token || "");
+          setAwsLiveness(awsData);
+        }
+      } catch (err) {
+        if (!cancelled) setError(err.message || "Couldn't start secure verification");
+      } finally {
+        if (!cancelled) setChallengeLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const completeAwsLiveness = async () => {
+    const response = await authFetch(`${BACKEND_URL}/casual-seller/rekognition/complete`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: awsLiveness.sessionId }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "AWS could not verify liveness");
+    setAwsLivenessVerified(true);
+    setRekognitionVerificationToken(data.verificationToken || "");
+    showToast(`Secure liveness verified (${Math.round(Number(data.confidence || 0))}%)`);
+  };
+
+  const initializeFaceDetector = async () => {
+    const vision = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm");
+    const files = await vision.FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm");
+    const detector = await vision.FaceLandmarker.createFromOptions(files, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task" },
+      runningMode: "IMAGE", numFaces: 2, outputFaceBlendshapes: true,
+    });
+    return detector;
+  };
+
+  const startCamera = async () => {
+    setError("");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("This browser cannot securely open the camera. Use an updated phone browser.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+      detectorRef.current = await initializeFaceDetector();
+      setCameraReady(true);
+      setFaceDetectionSupported(true);
+    } catch {
+      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
+      setError("The secure camera or on-device face checker could not start. Check camera permission and your connection, then try again.");
+    }
+  };
+
+  const captureCamera = async (kind, requestedChallenge = null) => {
+    const video = videoRef.current;
+    if (!video || !cameraReady || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    const size = Math.min(video.videoWidth, video.videoHeight);
+    const sx = Math.floor((video.videoWidth - size) / 2), sy = Math.floor((video.videoHeight - size) / 2);
+    canvas.width = 900; canvas.height = 900;
+    canvas.getContext("2d").drawImage(video, sx, sy, size, size, 0, 0, 900, 900);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+    let facePresent = false;
+    if (detectorRef.current) {
+      try {
+        const result = detectorRef.current.detect(canvas);
+        facePresent = result.faceLandmarks?.length === 1;
+        if (facePresent) {
+          const landmarks = result.faceLandmarks[0];
+          const xs = landmarks.map((point) => point.x), ys = landmarks.map((point) => point.y);
+          const faceWidth = Math.max(...xs) - Math.min(...xs), faceHeight = Math.max(...ys) - Math.min(...ys);
+          if (kind === "live") neutralFaceSizeRef.current = faceWidth * faceHeight;
+          if (requestedChallenge) {
+            const scores = Object.fromEntries((result.faceBlendshapes?.[0]?.categories || []).map((item) => [item.categoryName, item.score]));
+            const noseRatio = (landmarks[1].x - Math.min(...xs)) / Math.max(faceWidth, 0.001);
+            const challengePassed = requestedChallenge === "blink" ? Math.max(scores.eyeBlinkLeft || 0, scores.eyeBlinkRight || 0) > 0.45
+              : requestedChallenge === "smile" ? Math.max(scores.mouthSmileLeft || 0, scores.mouthSmileRight || 0) > 0.45
+              : requestedChallenge === "turn_left" || requestedChallenge === "turn_right" ? Math.abs(noseRatio - 0.5) > 0.06
+              : requestedChallenge === "move_closer" ? neutralFaceSizeRef.current && faceWidth * faceHeight > neutralFaceSizeRef.current * 1.18
+              : false;
+            if (!challengePassed) { setError(`The “${labels[requestedChallenge]}” movement was not detected. Hold the position and capture again.`); return; }
+          }
+        }
+      } catch { facePresent = false; }
+      if (!facePresent) { setError("Exactly one clear face must be visible. Adjust the lighting and try again."); return; }
+    }
+    setFaceChecks((current) => [...current, facePresent]);
+    setError("");
+    if (kind === "live") setCaptures((current) => ({ ...current, liveSelfie: dataUrl }));
+    else if (kind === "holding") setCaptures((current) => ({ ...current, holdingIdSelfie: dataUrl }));
+    else setCaptures((current) => ({ ...current, challengeFrames: [...current.challengeFrames, dataUrl].slice(0, 3) }));
+  };
+
+  const submit = async () => {
+    setError("");
+    if (!awsLivenessVerified || !rekognitionVerificationToken) { setError("Complete the secure AWS face-liveness check first."); return; }
+    if (!faceDetectionSupported) { setError("Automatic face detection is unavailable on this browser. Use an updated supported phone or browser so Stallyard does not approve an unverified person."); return; }
+    if (!form.legalName.trim() || !form.dateOfBirth) { setError("Enter your legal name and date of birth."); return; }
+    if (!captures.liveSelfie || !captures.holdingIdSelfie || captures.challengeFrames.length !== 3) { setError("Complete the live selfie, all three challenges, and the selfie holding your ID."); return; }
+    if (!form.consent) { setError("You must accept the identity-record consent before submitting."); return; }
+    setSubmitting(true);
+    try {
+      const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, rekognitionVerificationToken }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Verification could not be completed");
+      onApproved(data);
+      showToast(data.status === "approved" ? "Identity verified — you can now publish up to ₦500,000 in active listings" : "Verification needs attention — review the result and try again");
+      onClose();
+    } catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 overflow-y-auto" style={{ backgroundColor: "rgba(27,36,48,.72)" }} onClick={onClose}>
+      <div className="w-full max-w-3xl rounded-2xl p-5 my-6" style={{ backgroundColor: CANVAS }} onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div><h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Automatic casual-seller verification</h2><p className="text-sm" style={{ color: SLATE }}>Verify once to publish up to ₦500,000 in combined active listings.</p></div>
+          <button onClick={onClose} aria-label="Close"><X size={22} /></button>
+        </div>
+        <div className="mb-4 p-3 rounded-lg border text-xs leading-5" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8", color: SLATE }}>
+          <strong style={{ color: INK }}>Identity-check attempt limit:</strong> You may start up to 3 AWS face-liveness checks in a rolling 24-hour period. Closing, restarting or abandoning a started check still uses an attempt.
+          {awsLiveness && <span className="block mt-1 font-medium" style={{ color: INK }}>{Number(awsLiveness.remainingAttempts || 0)} attempt{Number(awsLiveness.remainingAttempts || 0) === 1 ? "" : "s"} remaining after this session.</span>}
+        </div>
+        {!awsLivenessVerified && awsLiveness && (
+          <div className="mb-5 rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
+            <Suspense fallback={<div className="p-8 text-center text-sm" style={{ color: SLATE }}>Loading secure face verification…</div>}>
+              <FaceLivenessDetectorCore
+                sessionId={awsLiveness.sessionId}
+                region={awsLiveness.region}
+                config={{ credentialProvider: async () => ({
+                  accessKeyId: awsLiveness.credentials.accessKeyId,
+                  secretAccessKey: awsLiveness.credentials.secretAccessKey,
+                  sessionToken: awsLiveness.credentials.sessionToken,
+                  expiration: awsLiveness.credentials.expiration ? new Date(awsLiveness.credentials.expiration) : undefined,
+                }) }}
+                onAnalysisComplete={completeAwsLiveness}
+                onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
+                onUserCancel={onClose}
+              />
+            </Suspense>
+          </div>
+        )}
+        {awsLivenessVerified && <p className="mb-4 text-sm font-medium" style={{ color: SAGE }}>✓ AWS face-liveness verification passed</p>}
+        <div className="grid md:grid-cols-2 gap-5">
+          <div className="space-y-3">
+            <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
+            <label className="block text-xs" style={{ color: SLATE }}>Date of birth<input type="date" className="block w-full mt-1 px-3 py-2 rounded-lg border" value={form.dateOfBirth} onChange={(e) => setForm({ ...form, dateOfBirth: e.target.value })} /></label>
+            <div className="p-3 rounded-lg border text-xs" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE", color: SLATE }}>
+              You do not need to enter an ID number or upload separate ID photographs for Casual Seller verification. You will only take a selfie while holding your identification.
+            </div>
+          </div>
+          <div>
+            <div className="aspect-square rounded-xl overflow-hidden bg-black mb-2"><video ref={videoRef} muted playsInline className="w-full h-full object-cover" /></div>
+            {!cameraReady ? <button disabled={challengeLoading || !challengeToken || !awsLivenessVerified} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : !awsLivenessVerified ? "Complete AWS liveness first" : "Open secure camera"}</button> : (
+              <div className="space-y-2 text-sm">
+                <button onClick={() => captureCamera("live")} className="w-full py-2 rounded-lg border">{captures.liveSelfie ? "✓ Retake neutral live selfie" : "Capture neutral live selfie"}</button>
+                {challenges.map((challenge, index) => <button key={challenge} disabled={captures.challengeFrames.length !== index} onClick={() => captureCamera("challenge", challenge)} className="w-full py-2 px-2 rounded-lg border disabled:opacity-40 text-left">{captures.challengeFrames[index] ? "✓ " : `${index + 1}. `}{labels[challenge]}</button>)}
+                <button onClick={() => captureCamera("holding")} className="w-full py-2 rounded-lg border">{captures.holdingIdSelfie ? "✓ Retake selfie holding ID" : "Hold your ID beside your face and capture"}</button>
+              </div>
+            )}
+          </div>
+        </div>
+        <label className="flex gap-2 mt-5 text-xs" style={{ color: SLATE }}><input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} /><span>I consent to Stallyard collecting and securely retaining my identity images and verification results for fraud prevention, account security, seller accountability, transaction investigations, and legal recordkeeping. They may be accessed only by authorized Stallyard verification personnel.</span></label>
+        {error && <p className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
+        <button disabled={submitting} onClick={submit} className="w-full mt-4 py-3 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{submitting ? "Securely checking and saving…" : "Submit for automatic verification"}</button>
+      </div>
+    </div>
+  );
+}
 
 export default function Stallyard() {
   useFonts();
@@ -1849,9 +2054,6 @@ export default function Stallyard() {
   const [editingFaqId, setEditingFaqId] = useState(null);
   const [openFaqId, setOpenFaqId] = useState(null);
   const [listings, setListings] = useState([]);
-  const [listingFeedPage, setListingFeedPage] = useState(1);
-  const [listingFeedHasMore, setListingFeedHasMore] = useState(false);
-  const [listingFeedLoading, setListingFeedLoading] = useState(false);
   const [membersLoaded, setMembersLoaded] = useState(false);
   // True only once the saved session (if any) has actually been read back
   // from storage — distinct from membersLoaded, which flips true slightly
@@ -2194,6 +2396,7 @@ export default function Stallyard() {
   const [viewingSeller, setViewingSeller] = useState(null);
   const [bidAmount, setBidAmount] = useState("");
   const [nowTick, setNowTick] = useState(Date.now());
+  const [messageInput, setMessageInput] = useState("");
   const [messageError, setMessageError] = useState("");
   const [sendingDeliveryTokenId, setSendingDeliveryTokenId] = useState(null);
   const [offerModalOpen, setOfferModalOpen] = useState(false);
@@ -2261,6 +2464,7 @@ export default function Stallyard() {
   const [generatingTokenKey, setGeneratingTokenKey] = useState(null);
   const [redeemTokenDrafts, setRedeemTokenDrafts] = useState({});
   const [redeemingTokenKey, setRedeemingTokenKey] = useState(null);
+  const [uploadingMessagePhoto, setUploadingMessagePhoto] = useState(false);
   const [reportMessageId, setReportMessageId] = useState(null);
   const [reportReasonDraft, setReportReasonDraft] = useState("");
   const [rejectModalUsername, setRejectModalUsername] = useState(null);
@@ -2313,6 +2517,19 @@ export default function Stallyard() {
         const res = await window.storage.get("stallyard-listings", true);
         const localListings = res ? JSON.parse(res.value) : [];
         setListings(localListings);
+        try {
+          const listingsRes = await backendFetch(`${BACKEND_URL}/listings`);
+          if (listingsRes.ok) {
+            const { listings: rows } = await listingsRes.json();
+            const merged = rows.map((row) =>
+              backendListingToFrontend(row, localListings.find((l) => l.id === row.id))
+            );
+            setListings(merged);
+            await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
+          }
+        } catch {
+          // couldn't reach backend for listings — keep local copy
+        }
       } catch {
         setListings([]);
       }
@@ -3583,70 +3800,6 @@ export default function Stallyard() {
     }
   }, [currentMember?.isAdmin, currentMember?.adminRole, adminTab]);
 
-  const buildListingFeedUrl = useCallback((page = 1) => {
-    const params = new URLSearchParams({ page: String(page), limit: "20" });
-    if (search.trim()) params.set("search", search.trim());
-    if (categoryFilter !== "All") params.set("category", categoryFilter);
-    if (subcategoryFilter !== "All") params.set("subcategory", subcategoryFilter);
-    if (conditionFilter !== "All") params.set("condition", conditionFilter);
-    if (priceMin !== "") params.set("minPrice", priceMin);
-    if (priceMax !== "") params.set("maxPrice", priceMax);
-    params.set("sort", sortBy === "rating" ? "featured" : sortBy);
-    return `${BACKEND_URL}/listings?${params.toString()}`;
-  }, [search, categoryFilter, subcategoryFilter, conditionFilter, priceMin, priceMax, sortBy]);
-
-  useEffect(() => {
-    if (currentMember?.isAdmin || isAdminHost()) return undefined;
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      setListingFeedLoading(true);
-      try {
-        const res = await backendFetch(buildListingFeedUrl(1));
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || cancelled || !Array.isArray(data.listings)) return;
-        const publicRows = data.listings.map((row) => backendListingToFrontend(row));
-        setListings((current) => {
-          const ownNonPublic = current.filter(
-            (listing) => currentUser && listing.ownerUsername === currentUser && listing.status !== "active"
-          );
-          return [...new Map([...publicRows, ...ownNonPublic].map((listing) => [listing.id, listing])).values()];
-        });
-        setListingFeedPage(1);
-        setListingFeedHasMore(Boolean(data.hasMore));
-        setLoaded(true);
-      } catch {
-        // Keep the most recent local copy when the feed is temporarily unavailable.
-      } finally {
-        if (!cancelled) setListingFeedLoading(false);
-      }
-    }, search.trim() ? 300 : 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [buildListingFeedUrl, currentMember?.isAdmin, currentUser]);
-
-  const loadMoreListings = async () => {
-    if (listingFeedLoading || !listingFeedHasMore) return;
-    const nextPage = listingFeedPage + 1;
-    setListingFeedLoading(true);
-    try {
-      const res = await backendFetch(buildListingFeedUrl(nextPage));
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !Array.isArray(data.listings)) return;
-      const nextRows = data.listings.map((row) => backendListingToFrontend(row));
-      setListings((current) => [
-        ...new Map([...current, ...nextRows].map((listing) => [listing.id, listing])).values(),
-      ]);
-      setListingFeedPage(nextPage);
-      setListingFeedHasMore(Boolean(data.hasMore));
-    } catch {
-      showToast("Couldn't load more listings — try again");
-    } finally {
-      setListingFeedLoading(false);
-    }
-  };
-
   // The public /listings endpoint intentionally hides drafts/rejected/removed
   // records. Once a normal marketplace session is restored, refetch with the
   // token so the signed-in seller still receives their own non-public listings.
@@ -3655,17 +3808,15 @@ export default function Stallyard() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await authFetch(`${BACKEND_URL}/listings?mine=true&page=1&limit=50&sort=newest`);
+        const res = await authFetch(`${BACKEND_URL}/listings`);
         if (!res.ok) return;
         const { listings: rows } = await res.json();
         if (cancelled || !Array.isArray(rows)) return;
-        const mine = rows.map((row) =>
+        const merged = rows.map((row) =>
           backendListingToFrontend(row, listings.find((l) => l.id === row.id))
         );
-        setListings((current) => [
-          ...new Map([...current.filter((listing) => listing.ownerUsername !== currentUser), ...mine]
-            .map((listing) => [listing.id, listing])).values(),
-        ]);
+        setListings(merged);
+        await window.storage.set("stallyard-listings", JSON.stringify(merged), true);
       } catch {
         // Keep the public/local listing copy if the authenticated refresh fails.
       }
@@ -4191,11 +4342,11 @@ export default function Stallyard() {
     setView("messages");
   };
 
-  const sendMessage = async (threadId, text) => {
+  const sendMessage = async (threadId, text, imageUrl = null) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    if (!APPROVED_PRE_DRAFTED_MESSAGES.has(trimmed)) {
-      setMessageError("Only Stallyard’s approved pre-written messages can be sent.");
+    if (!trimmed && !imageUrl) return;
+    if (trimmed && containsContactInfo(trimmed)) {
+      setMessageError("Messages can't include email addresses or phone numbers — keep contact on Stallyard.");
       return;
     }
     setMessageError("");
@@ -4208,6 +4359,7 @@ export default function Stallyard() {
           threadId,
           body: trimmed,
           messageType: "text",
+          imageUrl: imageUrl || undefined,
           orderId: activeThreadOrderId || undefined,
         }),
       });
@@ -4226,6 +4378,26 @@ export default function Stallyard() {
         t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
       )
     );
+    setMessageInput("");
+  };
+
+  const handleMessagePhotoSelect = async (e, threadId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
+      return;
+    }
+    setUploadingMessagePhoto(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 1200, 0.8);
+      await sendMessage(threadId, "", dataUrl);
+    } catch {
+      showToast("Couldn't send that photo — try again");
+    } finally {
+      setUploadingMessagePhoto(false);
+    }
   };
 
   const reportMessage = async (messageId, reason) => {
@@ -8255,6 +8427,21 @@ export default function Stallyard() {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
+        if (target.isPreview) {
+          if (!window.confirm(`Delete preview account @${username} and all of its isolated test data? This cannot affect real accounts or transactions.`)) {
+            return;
+          }
+          const res = await authFetch(`${BACKEND_URL}/admin/preview-users/${target.backendId}`, { method: "DELETE" });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(body.error || "Couldn't delete that preview account");
+            return;
+          }
+          await persistMembers(members.filter((m) => m.username !== username));
+          await persistListings(listings.filter((l) => l.ownerUsername !== username));
+          showToast("Preview account and isolated test data deleted");
+          return;
+        }
         await authFetch(`${BACKEND_URL}/listings/by-owner/${target.backendId}`, { method: "DELETE" });
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
         if (!res.ok) {
@@ -8281,6 +8468,31 @@ export default function Stallyard() {
     await persistMembers(members.filter((m) => m.username !== username));
     await persistListings(listings.filter((l) => l.ownerUsername !== username));
     showToast("Member removed");
+  };
+
+  const adminSetPreviewPhoneVerification = async (username, isVerified) => {
+    const target = members.find((m) => m.username === username);
+    if (!target?.backendId || !target.isPreview) {
+      showToast("Only preview accounts can use admin test-phone verification");
+      return;
+    }
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/preview-users/${target.backendId}/phone-verification`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isVerified }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't update the preview phone verification");
+        return;
+      }
+      const updated = backendUserToMember(data.user, target);
+      await persistMembers(members.map((m) => (m.username === username ? updated : m)));
+      showToast(isVerified ? "Preview phone marked verified" : "Preview phone verification removed");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const adminSetRole = async (username, role, reason = "") => {
@@ -10591,19 +10803,6 @@ export default function Stallyard() {
                 />
               ))}
             </div>
-            {(listingFeedHasMore || listingFeedLoading) && (
-              <div className="flex justify-center mt-8">
-                <button
-                  type="button"
-                  onClick={loadMoreListings}
-                  disabled={listingFeedLoading}
-                  className="px-5 py-2.5 rounded-lg border text-sm font-medium disabled:opacity-50"
-                  style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
-                >
-                  {listingFeedLoading ? "Loading listings…" : "Load more listings"}
-                </button>
-              </div>
-            )}
           </>
         )}
 
@@ -11524,170 +11723,1676 @@ export default function Stallyard() {
         )}
 
         {view === "dashboard" && !currentMember?.isAdmin && (
-          <Suspense
-            fallback={
-              <div className="max-w-6xl mx-auto px-4 py-10 text-sm" style={{ color: SLATE }}>
-                Loading seller dashboard…
+          <div>
+            <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+              <div>
+                <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                  Seller dashboard
+                </h2>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  Manage your listings, orders, deliveries, payouts, messages, and seller performance.
+                </p>
               </div>
-            }
-          >
-            <SellerDashboard
-              scope={{
-              BERRY,
-              CANVAS,
-              FULFILLMENT_COLOR,
-              FULFILLMENT_LABEL,
-              INK,
-              LISTING_MANAGE_TABS,
-              MARIGOLD,
-              Pencil,
-              Plus,
-              SAGE,
-              SALES_TABS,
-              SHIPPING_CARRIERS,
-              SLATE,
-              Tag,
-              TrackingTimeline,
-              Trash2,
-              activeReturnsDisputes,
-              approveReturn,
-              buildTrackingUrl,
-              cancellationRate,
-              casualSellerContactReady,
-              casualSellerStatus,
-              completedOrdersCount,
-              currentMember,
-              currentUser,
-              deleteListing,
-              deliveryEstimateDrafts,
-              denyReturn,
-              disputeRate,
-              duplicateListing,
-              endVacation,
-              filteredMyListings,
-              filteredMySales,
-              formatMoney,
-              getMyDisputeForOrder,
-              getSellerOrderStatus,
-              handleProofOfDeliverySelect,
-              hasSellerListingAccess,
-              manageListingsTab,
-              markListingInStock,
-              markListingSoldOut,
-              myListings,
-              myRecentActivity,
-              mySales,
-              mySoldItems,
-              myWarnings,
-              myWithdrawals,
-              needsIdVerification,
-              onTimeShippingRate,
-              openStorefront,
-              orderNumber,
-              ordersInTransit,
-              ordersWaitingToShip,
-              pauseListing,
-              quickEditDraft,
-              quickEditId,
-              quickUpdateListing,
-              redeemDeliveryToken,
-              redeemTokenDrafts,
-              redeemingTokenKey,
-              refundOrder,
-              requestWithdrawal,
-              resetForm,
-              respondToCancellation,
-              respondToDispute,
-              resumeListing,
-              returnRate,
-              runSelfDeliveryStep,
-              salesTab,
-              selfDeliveryActionKey,
-              setCasualVerificationOpen,
-              setDeliveryEstimateDrafts,
-              setDeliverySelfieCameraTarget,
-              setIdVerifyOpen,
-              setManageListingsTab,
-              setPackingSlipOrder,
-              setQuickEditDraft,
-              setQuickEditId,
-              setRedeemTokenDrafts,
-              setSalesTab,
-              setTrackingDrafts,
-              setVacationForm,
-              setVacationOpen,
-              setView,
-              setWithdrawAmount,
-              startEdit,
-              startSellerLocationSharing,
-              stopSellerLocationSharing,
-              trackingDrafts,
-              updateEstimatedDelivery,
-              updateItemCarrier,
-              updateItemFulfillment,
-              updateItemTracking,
-              uploadingPodKey,
-              walletHeld,
-              walletNetAvailable,
-              withdrawAmount,
-              }}
-            />
-          </Suspense>
+              {currentUser && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setView("wallet")}
+                    className="px-3 py-1.5 rounded-lg border text-sm font-medium bg-white"
+                    style={{ borderColor: SAGE, color: INK }}
+                  >
+                    Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+                  </button>
+                  {hasSellerListingAccess && (
+                    <button
+                      onClick={() => {
+                        resetForm();
+                        setView("sell");
+                      }}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      <Plus size={16} />
+                      Create a listing
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {currentUser && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
+                {[
+                  { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Seller wallet", action: () => setView("wallet") },
+                  { label: "Messages", action: () => setView("messages") },
+                  { label: "My Stall", action: () => openStorefront(currentUser) },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={item.action}
+                    className="px-3 py-2 rounded-lg border text-xs sm:text-sm font-medium bg-white text-left sm:text-center"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {currentUser && !hasSellerListingAccess && (
+              <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
+                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your email and phone first, then complete your live selfie and Nigerian ID check to publish up to ₦500,000 in combined active listings.</p></div>
+                <button disabled={!casualSellerContactReady} title={!casualSellerContactReady ? "Verify both your email and phone number first" : undefined} onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" style={{ backgroundColor: SAGE, color: "white" }}>{casualSellerContactReady ? "Start verification" : "Verify email and phone first"}</button>
+              </div>
+            )}
+            {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
+              <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: INK }}>Casual Seller allowance</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Number(casualSellerStatus?.remainingValue ?? 500000), "NGN")} remaining
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setView("sell")}
+                    className="px-3 py-2 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    Upgrade to Verified Seller
+                  </button>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden mt-3" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: SAGE,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 500000) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦20,000,000.
+                </p>
+              </div>
+            )}
+            {currentUser && currentMember?.isApproved && currentMember?.sellerTier !== "premium" && (
+              <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller allowance</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 20000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                    </p>
+                  </div>
+                  <Tag color={MARIGOLD}>Verified Seller</Tag>
+                </div>
+                <div className="h-2 rounded-full overflow-hidden mt-3" style={{ backgroundColor: "#E8E5DC" }}>
+                  <div
+                    className="h-full rounded-full"
+                    style={{
+                      backgroundColor: MARIGOLD,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 20000000) * 100))}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  ₦20,000,000 combined active-listing limit. Only active listings count. Premium Seller approval is required above ₦20,000,000.
+                </p>
+              </div>
+            )}
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
+              <div
+                className="mb-4 p-4 rounded-lg border"
+                style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
+              >
+                <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={MARIGOLD}>Pending</Tag>
+                  Your seller application is under review.
+                </p>
+              </div>
+            )}
+            {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "rejected" && (
+              <div
+                className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
+                style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}
+              >
+                <p className="text-sm flex items-center gap-2" style={{ color: INK }}>
+                  <Tag color={BERRY}>Rejected</Tag>
+                  Your seller application wasn't approved.
+                </p>
+                <button
+                  onClick={() => setView("sell")}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Review requirements and re-apply
+                </button>
+              </div>
+            )}
+            {currentUser && needsIdVerification && (
+              <div
+                className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap"
+                style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}
+              >
+                <p className="text-sm" style={{ color: INK }}>
+                  Complete seller verification before listing items.
+                </p>
+                <button
+                  onClick={() => setIdVerifyOpen(true)}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  Add ID verification
+                </button>
+              </div>
+            )}
+            {!currentUser ? (
+              <p className="text-sm mt-2" style={{ color: SLATE }}>
+                Register or log in from the Sell tab to open your stall.
+              </p>
+            ) : (
+              <>
+                {currentMember?.idCountry ? (
+                  <p className="text-xs mt-1" style={{ color: SAGE }}>
+                    ID on file: {currentMember.idType} ({currentMember.idCountry})
+                  </p>
+                ) : currentMember?.idVerificationExempt ? (
+                  <p className="text-xs mt-1" style={{ color: SLATE }}>
+                    ID verification exemption on file
+                  </p>
+                ) : null}
+                <h3 id="seller-overview" className="text-sm font-semibold mb-3 mt-4 scroll-mt-24" style={{ color: INK }}>
+                  Overview
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      {myListings.length}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      active listings
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}>
+                      {(() => {
+                        // Stallyard is Nigeria-only, so marketplace values are NGN.
+                        const byCurrency = {};
+                        myListings.forEach((l) => {
+                          const cur = l.currency || "NGN";
+                          byCurrency[cur] = (byCurrency[cur] || 0) + Number(l.price || 0);
+                        });
+                        const entries = Object.entries(byCurrency);
+                        return entries.length
+                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
+                          : formatMoney(0, "NGN");
+                      })()}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      total inventory value
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      {(() => {
+                        // Stallyard is Nigeria-only, so marketplace values are NGN.
+                        const byCurrency = {};
+                        mySoldItems
+                          .filter((i) => i.fulfillmentStatus !== "cancelled")
+                          .forEach((i) => {
+                            const cur = i.currency || "NGN";
+                            byCurrency[cur] = (byCurrency[cur] || 0) + Number(i.price || 0) * (i.qty || 1);
+                          });
+                        const entries = Object.entries(byCurrency);
+                        return entries.length
+                          ? entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ")
+                          : formatMoney(0, "NGN");
+                      })()}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      total sales ({mySales.length} order{mySales.length === 1 ? "" : "s"})
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#3B6E8F" }}>
+                      {ordersWaitingToShip}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      waiting to ship
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#6B8F71" }}>
+                      {ordersInTransit}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      in transit
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#2F6B3A" }}>
+                      {completedOrdersCount}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      completed
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: BERRY }}>
+                      {activeReturnsDisputes}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      returns/disputes
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                    Seller performance
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: cancellationRate === null || cancellationRate <= 5 ? SAGE : cancellationRate <= 15 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {cancellationRate === null ? "—" : `${cancellationRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        cancellation rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: returnRate === null || returnRate <= 5 ? SAGE : returnRate <= 15 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {returnRate === null ? "—" : `${returnRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        return rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: disputeRate === null || disputeRate === 0 ? SAGE : disputeRate <= 10 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {disputeRate === null ? "—" : `${disputeRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        dispute rate
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{
+                          fontFamily: "'IBM Plex Mono', monospace",
+                          color: onTimeShippingRate === null || onTimeShippingRate >= 90 ? SAGE : onTimeShippingRate >= 70 ? MARIGOLD : BERRY,
+                        }}
+                      >
+                        {onTimeShippingRate === null ? "—" : `${onTimeShippingRate}%`}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        on-time shipping
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs mt-3" style={{ color: SLATE }}>
+                    On-time shipping counts items marked Shipped within 48 hours of the sale.
+                  </p>
+                </div>
+
+                {myWarnings.length > 0 && (
+                  <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: BERRY }}>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2" style={{ color: INK }}>
+                      Warnings <Tag color={BERRY}>{myWarnings.length}</Tag>
+                    </h3>
+                    <div className="space-y-2">
+                      {myWarnings.map((w) => (
+                        <div key={w.id} className="text-sm p-3 rounded-lg" style={{ backgroundColor: "#FBEAEA", color: INK }}>
+                          {w.message}
+                          <div className="text-xs mt-1" style={{ color: SLATE }}>
+                            {new Date(w.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                    <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                      Balance
+                    </h3>
+                    <button
+                      onClick={() => setView("wallet")}
+                      className="text-xs font-medium underline"
+                      style={{ color: SLATE }}
+                    >
+                      View full wallet →
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{ fontFamily: "'IBM Plex Mono', monospace", color: SAGE }}
+                      >
+                        {formatMoney(walletNetAvailable, "NGN")}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        available
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
+                      >
+                        {formatMoney(walletHeld, "NGN")}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        on hold
+                      </div>
+                    </div>
+                    <div>
+                      <div
+                        className="text-xl font-semibold"
+                        style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                      >
+                        {myWithdrawals.filter((w) => w.status === "processing").length}
+                      </div>
+                      <div className="text-xs" style={{ color: SLATE }}>
+                        pending requests
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span style={{ color: SLATE }}>₦</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max={walletNetAvailable}
+                      step="0.01"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      placeholder={walletNetAvailable.toFixed(2)}
+                      className="w-28 px-3 py-1.5 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={async () => {
+                        await requestWithdrawal(withdrawAmount || walletNetAvailable);
+                        setWithdrawAmount("");
+                      }}
+                      disabled={walletNetAvailable <= 0}
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      Request withdrawal
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <h3 className="text-sm font-semibold mb-2" style={{ color: INK }}>
+                    Upcoming payouts
+                  </h3>
+                  {myWithdrawals.filter((w) => w.status === "processing").length === 0 ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      No payouts in progress right now.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {myWithdrawals
+                        .filter((w) => w.status === "processing")
+                        .slice(0, 5)
+                        .map((w) => (
+                          <div key={w.id} className="flex items-center justify-between text-sm">
+                            <span style={{ color: INK }}>
+                              {formatMoney(Number(w.amount), "NGN")} to your bank
+                            </span>
+                            <span className="text-xs" style={{ color: SLATE }}>
+                              Requested {new Date(w.requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold" style={{ color: INK }}>
+                      Recent activity
+                    </h3>
+                    <button
+                      onClick={() => setView("orders")}
+                      className="text-xs font-medium underline"
+                      style={{ color: SLATE }}
+                    >
+                      View all orders →
+                    </button>
+                  </div>
+                  {myRecentActivity.length === 0 ? (
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      Nothing to show yet — activity will appear here once you make a sale.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {myRecentActivity.map((n) => (
+                        <div key={n.id} className="text-sm" style={{ color: INK }}>
+                          {n.message}
+                          <span className="text-xs ml-2" style={{ color: SLATE }}>
+                            {new Date(n.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: INK }}>
+                        🌴 Vacation mode
+                        {currentMember?.vacationMode && <Tag color={MARIGOLD}>On</Tag>}
+                      </h3>
+                      {currentMember?.vacationMode ? (
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>
+                          Buyers see a notice on your listings
+                          {currentMember.vacationReturnDate
+                            ? ` that you're back on ${new Date(currentMember.vacationReturnDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+                            : ""}
+                          .
+                        </p>
+                      ) : (
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>
+                          Let buyers know if you'll be slow to ship.
+                        </p>
+                      )}
+                    </div>
+                    {currentMember?.vacationMode ? (
+                      <button
+                        onClick={endVacation}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium border"
+                        style={{ borderColor: "#DDD8CC", color: SLATE }}
+                      >
+                        Turn off
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setVacationForm({ returnDate: "", message: "" });
+                          setVacationOpen(true);
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Turn on
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div id="seller-listings" className="flex items-center gap-2 mb-3 overflow-x-auto scroll-mt-24">
+                  {LISTING_MANAGE_TABS.map((t) => {
+                    const count =
+                      t.key === "all" ? myListings.length : myListings.filter((l) => l.status === t.key).length;
+                    if (t.key !== "all" && count === 0) return null;
+                    return (
+                      <button
+                        key={t.key}
+                        onClick={() => setManageListingsTab(t.key)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                        style={{
+                          backgroundColor: manageListingsTab === t.key ? INK : "white",
+                          color: manageListingsTab === t.key ? "white" : SLATE,
+                          border: `1px solid ${manageListingsTab === t.key ? INK : "#DDD8CC"}`,
+                        }}
+                      >
+                        {t.label} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {myListings.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Your stall is empty.{" "}
+                    <button onClick={() => setView("sell")} className="underline" style={{ color: INK }}>
+                      List your first item
+                    </button>
+                    .
+                  </p>
+                ) : filteredMyListings.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Nothing in this tab.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredMyListings.map((l) => (
+                      <div
+                        key={l.id}
+                        className="p-3 rounded-lg border bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-2xl">{l.emoji}</span>
+                            <div className="min-w-0">
+                              <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
+                                {l.title}
+                                {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
+                                {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
+                                {l.status === "pending" && <Tag color={MARIGOLD}>Pending review</Tag>}
+                                {l.status === "paused" && <Tag color={SLATE}>Paused</Tag>}
+                                {l.status === "sold" && <Tag color={BERRY}>Sold out</Tag>}
+                                {l.status === "rejected" && <Tag color={BERRY}>Rejected</Tag>}
+                                {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
+                              </div>
+                              <div className="text-xs" style={{ color: SLATE }}>
+                                {l.category}
+                                {l.condition && l.condition !== "New" ? ` · ${l.condition}` : ""}
+                                {l.quantity !== "" && l.quantity != null ? ` · Qty: ${l.quantity}` : ""}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                            <span
+                              style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                              className="font-medium"
+                            >
+                              ${Number(l.price).toFixed(2)}
+                            </span>
+                            <button
+                              onClick={() => {
+                                if (quickEditId === l.id) {
+                                  setQuickEditId(null);
+                                } else {
+                                  setQuickEditId(l.id);
+                                  setQuickEditDraft({
+                                    price: String(l.price ?? ""),
+                                    quantity: l.quantity != null ? String(l.quantity) : "",
+                                  });
+                                }
+                              }}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              {quickEditId === l.id ? "Close" : "Quick edit"}
+                            </button>
+                            {l.status === "active" && (
+                              <button
+                                onClick={() => pauseListing(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Pause
+                              </button>
+                            )}
+                            {l.status === "paused" && (
+                              <button
+                                onClick={() => resumeListing(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SAGE }}
+                              >
+                                Resume
+                              </button>
+                            )}
+                            {l.status === "active" && (
+                              <button
+                                onClick={() => markListingSoldOut(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SLATE }}
+                              >
+                                Mark out of stock
+                              </button>
+                            )}
+                            {l.status === "sold" && (
+                              <button
+                                onClick={() => markListingInStock(l.id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: SAGE }}
+                              >
+                                Mark in stock
+                              </button>
+                            )}
+                            <button
+                              onClick={() => duplicateListing(l)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              Duplicate
+                            </button>
+                            <button onClick={() => startEdit(l)} aria-label="Edit">
+                              <Pencil size={16} style={{ color: SLATE }} />
+                            </button>
+                            <button onClick={() => deleteListing(l.id)} aria-label="Delete">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          </div>
+                        </div>
+                        {quickEditId === l.id && (
+                          <div
+                            className="mt-3 pt-3 flex items-end gap-3 flex-wrap"
+                            style={{ borderTop: "1px solid #EFEBE0" }}
+                          >
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                                Price
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={quickEditDraft.price}
+                                onChange={(e) => setQuickEditDraft((d) => ({ ...d, price: e.target.value }))}
+                                className="w-28 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                                style={{ borderColor: "#DDD8CC" }}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium mb-1" style={{ color: INK }}>
+                                Quantity
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={quickEditDraft.quantity}
+                                onChange={(e) => setQuickEditDraft((d) => ({ ...d, quantity: e.target.value }))}
+                                className="w-24 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                                style={{ borderColor: "#DDD8CC" }}
+                              />
+                            </div>
+                            <button
+                              onClick={async () => {
+                                await quickUpdateListing(l.id, {
+                                  price: quickEditDraft.price,
+                                  quantity: quickEditDraft.quantity,
+                                });
+                                setQuickEditId(null);
+                              }}
+                              className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                              style={{ backgroundColor: MARIGOLD, color: INK }}
+                            >
+                              Save
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <h3 id="seller-sales" className="text-lg font-semibold mt-10 mb-3 scroll-mt-24" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+                  Orders & delivery
+                </h3>
+                {mySales.length > 0 && (
+                  <div className="flex items-center gap-2 mb-3 overflow-x-auto">
+                    {SALES_TABS.map((t) => {
+                      const count =
+                        t.key === "all"
+                          ? mySales.length
+                          : mySales.filter((o) => getSellerOrderStatus(o, currentUser) === t.key).length;
+                      if (t.key !== "all" && count === 0) return null;
+                      return (
+                        <button
+                          key={t.key}
+                          onClick={() => setSalesTab(t.key)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
+                          style={{
+                            backgroundColor: salesTab === t.key ? INK : "white",
+                            color: salesTab === t.key ? "white" : SLATE,
+                            border: `1px solid ${salesTab === t.key ? INK : "#DDD8CC"}`,
+                          }}
+                        >
+                          {t.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {mySales.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No sales yet.
+                  </p>
+                ) : filteredMySales.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    Nothing in this tab.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredMySales.map((o) => {
+                      const myItems = o.items.filter((i) => i.ownerUsername === currentUser);
+                      const myRevenue = myItems.reduce((s, i) => s + i.price * i.qty, 0);
+                      return (
+                        <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                              {o.buyerName}
+                              {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
+                              {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
+                              {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                              {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
+                            </span>
+                            <span
+                              className="text-sm font-semibold"
+                              style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                            >
+                              ${myRevenue.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
+                            <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                              {orderNumber(o.id)}
+                            </span>
+                            · {new Date(o.createdAt).toLocaleString()}
+                            <button
+                              onClick={() => setPackingSlipOrder(o)}
+                              className="text-xs font-medium underline ml-auto"
+                              style={{ color: INK }}
+                            >
+                              Print packing slip
+                            </button>
+                          </div>
+                          {o.shippingAddress && (
+                            <div
+                              className="text-xs mb-3 p-2 rounded-lg"
+                              style={{ backgroundColor: CANVAS, color: INK }}
+                            >
+                              <div><span className="font-medium">Deliver to:</span> {o.shippingAddress.fullName}</div>
+                              <div>{o.shippingAddress.street}, {o.shippingAddress.city}{o.shippingAddress.state ? `, ${o.shippingAddress.state}` : ""} {o.shippingAddress.zip}, {o.shippingAddress.country}</div>
+                              {o.shippingAddress.phone && <div className="mt-1"><span className="font-medium">Contact:</span> <a href={`tel:${o.shippingAddress.phone}`} className="underline">{o.shippingAddress.phone}</a></div>}
+                              {o.shippingAddress.deliveryInstructions && <div className="mt-1"><span className="font-medium">Private instructions:</span> {o.shippingAddress.deliveryInstructions}</div>}
+                              {o.shippingAddress.preferredDeliveryTime && <div className="mt-1"><span className="font-medium">Preferred time:</span> {o.shippingAddress.preferredDeliveryTime}</div>}
+                              <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([o.shippingAddress.street, o.shippingAddress.city, o.shippingAddress.state, o.shippingAddress.country].filter(Boolean).join(", "))}`} target="_blank" rel="noopener noreferrer" className="inline-block mt-1 underline font-medium">Open address in map</a>
+                              {(o.shippingAddress.locationPhotos || []).length > 0 && (
+                                <div className="mt-2"><div className="font-medium mb-1">Private location photos</div><div className="flex gap-2 flex-wrap">{o.shippingAddress.locationPhotos.map((photo, index) => <img key={index} src={photo} alt={`Delivery location ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />)}</div></div>
+                              )}
+                            </div>
+                          )}
+                          {(o.payouts || []).length > 0 && (() => {
+                            const payout = o.payouts[0];
+                            const label = { queued: "Payout queued", processing: "Payout processing", paid: "Paid to bank", failed: "Payout failed", reversed: "Payout reversed", request_unknown: "Payout being verified", needs_bank: "Bank details required" }[payout.status] || payout.status;
+                            return <div className="text-xs mb-3 p-2 rounded-lg border" style={{ borderColor: payout.status === "paid" ? SAGE : payout.status === "failed" || payout.status === "reversed" ? BERRY : MARIGOLD }}><span className="font-semibold">{label}</span> · {formatMoney(payout.amount, "NGN")}{payout.failureReason ? <div className="mt-1">{payout.failureReason}</div> : null}</div>;
+                          })()}
+                          {o.isDisputed && getMyDisputeForOrder(o.id) && (
+                            <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FFF7F5" }}>
+                              <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
+                                <span className="text-xs font-semibold" style={{ color: BERRY }}>Active dispute — payment locked</span>
+                                <Tag color={MARIGOLD}>
+                                  {getMyDisputeForOrder(o.id).status === "in_review" ? "Under review" : "Open"}
+                                </Tag>
+                              </div>
+                              <p className="text-xs mb-1" style={{ color: INK }}>
+                                <span className="font-medium">Reason:</span> {getMyDisputeForOrder(o.id).reason || "Not specified"}
+                              </p>
+                              {getMyDisputeForOrder(o.id).buyer_statement && (
+                                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                                  <span className="font-medium" style={{ color: INK }}>Buyer statement:</span> {getMyDisputeForOrder(o.id).buyer_statement}
+                                </p>
+                              )}
+                              <button
+                                onClick={() => respondToDispute(getMyDisputeForOrder(o.id).id)}
+                                className="text-xs font-medium underline"
+                                style={{ color: INK }}
+                              >
+                                {getMyDisputeForOrder(o.id).seller_statement ? "Update my response" : "Respond to dispute"}
+                              </button>
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            {myItems.map((i) => {
+                              const trackKey = `${o.id}-${i.id}`;
+                              const trackDraft =
+                                trackingDrafts[trackKey] !== undefined
+                                  ? trackingDrafts[trackKey]
+                                  : i.trackingNumber || "";
+                              const estimateDraft = deliveryEstimateDrafts[trackKey] || {
+                                start: i.estimatedDeliveryStart || "",
+                                end: i.estimatedDeliveryEnd || "",
+                              };
+                              return (
+                                <div
+                                  key={i.id}
+                                  className="text-xs pt-2 border-t"
+                                  style={{ borderColor: "#EFEBE0", color: SLATE }}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span>
+                                      {i.title} × {i.qty}
+                                    </span>
+                                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                      <Tag color={FULFILLMENT_COLOR[i.fulfillmentStatus] || FULFILLMENT_COLOR.new}>
+                                        {FULFILLMENT_LABEL[i.fulfillmentStatus] || "New"}
+                                      </Tag>
+                                      {i.buyerConfirmedAt && <Tag color={SAGE}>Buyer confirmed</Tag>}
+                                      {i.deliveryTokenSentAt && <Tag color={MARIGOLD}>Token received</Tag>}
+                                      <select
+                                        value={i.fulfillmentStatus || "new"}
+                                        onChange={(e) => updateItemFulfillment(o.id, i.id, e.target.value)}
+                                        className="px-2 py-1 rounded-lg border outline-none text-xs"
+                                        style={{ borderColor: "#DDD8CC", color: INK }}
+                                        disabled={i.carrier === "Self delivery"}
+                                        title={i.carrier === "Self delivery" ? "Use the Self delivery steps below" : "Update fulfillment status"}
+                                      >
+                                        <option value="new">New</option>
+                                        <option value="preparing">Preparing</option>
+                                        <option value="shipped">Shipped</option>
+                                        <option value="delivered">Delivered</option>
+                                        <option value="cancelled">Cancelled</option>
+                                        <option value="returned">Returned</option>
+                                      </select>
+                                    </div>
+                                  </div>
+                                  <div className="mt-3 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                    <TrackingTimeline
+                                      item={i}
+                                      orderCreatedAt={o.createdAt}
+                                      ink={INK}
+                                      slate={SLATE}
+                                      sage={SAGE}
+                                      berry={BERRY}
+                                    />
+                                  </div>
+                                  {i.cancellationStatus === "requested" && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: CANVAS }}>
+                                      <div className="font-medium" style={{ color: INK }}>Buyer requested cancellation</div>
+                                      <div className="mt-1">Reason: {i.cancellationReason}</div>
+                                      <div className="flex gap-3 mt-2">
+                                        <button onClick={() => respondToCancellation(o.id, i.id, "approved")} className="font-medium underline" style={{ color: SAGE }}>Approve</button>
+                                        <button onClick={() => respondToCancellation(o.id, i.id, "denied")} className="font-medium underline" style={{ color: BERRY }}>Deny</button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.cancellationStatus === "approved" && <div className="mt-2"><Tag color={SAGE}>Cancellation approved — refund review</Tag></div>}
+                                  {i.cancellationStatus === "denied" && <div className="mt-2"><Tag color={BERRY}>Cancellation denied</Tag></div>}
+                                  {i.deliveryTokenSentAt && i.deliveryToken && !["shipped", "delivered"].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium" style={{ color: INK }}>Buyer sent delivery token</div>
+                                      <div className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{i.deliveryToken}</div>
+                                      <div className="text-xs" style={{ color: SLATE }}>The token is also in Messages. Delivery photo is still required before payment release.</div>
+                                    </div>
+                                  )}
+                                  {!['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                      <select
+                                        value={i.carrier || ""}
+                                        onChange={(e) => updateItemCarrier(o.id, i.id, e.target.value)}
+                                        className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                                        style={{ borderColor: "#DDD8CC", color: INK }}
+                                      >
+                                        <option value="">Carrier (optional)</option>
+                                        {SHIPPING_CARRIERS.map((c) => (
+                                          <option key={c} value={c}>
+                                            {c}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {i.carrier !== "Self delivery" && (
+                                        <>
+                                          <input
+                                            value={trackDraft}
+                                            onChange={(e) =>
+                                              setTrackingDrafts((d) => ({ ...d, [trackKey]: e.target.value }))
+                                            }
+                                            placeholder="Tracking number (optional)"
+                                            className="flex-1 px-2 py-1 rounded-lg border outline-none text-xs"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                          <button
+                                            onClick={async () => {
+                                              await updateItemTracking(o.id, i.id, trackDraft.trim());
+                                              setTrackingDrafts((d) => {
+                                                const next = { ...d };
+                                                delete next[trackKey];
+                                                return next;
+                                              });
+                                            }}
+                                            className="px-2 py-1 rounded-lg text-xs font-medium"
+                                            style={{ backgroundColor: MARIGOLD, color: INK }}
+                                          >
+                                            Save
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {i.carrier === "Self delivery" && !['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}>
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <div>
+                                          <div className="text-sm font-semibold" style={{ color: INK }}>Self delivery</div>
+                                          <div className="text-xs mt-0.5" style={{ color: SLATE }}>
+                                            Complete each step in order. The buyer can follow the progress.
+                                          </div>
+                                        </div>
+                                        <Tag color={i.selfDeliveryStatus === "delivered" ? SAGE : MARIGOLD}>
+                                          {({ started: "Started", on_my_way: "On my way", arrived: "I’m here", delivered: "Delivered" }[i.selfDeliveryStatus] || "Not started")}
+                                        </Tag>
+                                      </div>
+
+                                      {!i.selfDeliveryStatus && (
+                                        <button
+                                          type="button"
+                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "start")}
+                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-start`}
+                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                          style={{ backgroundColor: INK, color: "white" }}
+                                        >
+                                          {selfDeliveryActionKey === `${o.id}-${i.id}-start` ? "Starting…" : "Start self delivery"}
+                                        </button>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "started" && (
+                                        <button
+                                          type="button"
+                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "on_my_way")}
+                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way`}
+                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                                        >
+                                          {selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way` ? "Saving…" : "On my way"}
+                                        </button>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "on_my_way" && (
+                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
+                                          {!i.deliveryPersonSelfieUrl ? (
+                                            <>
+                                              <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-person selfie</div>
+                                              <div className="text-xs mt-1" style={{ color: SLATE }}>Take a current photo of the person making this delivery before continuing.</div>
+                                              <button
+                                                type="button"
+                                                onClick={() => setDeliverySelfieCameraTarget({ orderId: o.id, itemId: i.id })}
+                                                className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium"
+                                                style={{ borderColor: INK, color: INK }}
+                                              >
+                                                Open live selfie camera
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <div className="flex items-center gap-3 flex-wrap">
+                                                <img src={i.deliveryPersonSelfieUrl} alt="Delivery person selfie" className="w-20 h-20 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
+                                                <div>
+                                                  <div className="text-xs font-semibold" style={{ color: SAGE }}>Delivery-person selfie saved</div>
+                                                  <div className="text-xs mt-1" style={{ color: SLATE }}>GPS sharing is optional. Use the location controls below if desired.</div>
+                                                </div>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                onClick={() => runSelfDeliveryStep(o.id, i.id, "arrived")}
+                                                disabled={selfDeliveryActionKey === `${o.id}-${i.id}-arrived`}
+                                                className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                                style={{ backgroundColor: MARIGOLD, color: INK }}
+                                              >
+                                                {selfDeliveryActionKey === `${o.id}-${i.id}-arrived` ? "Saving…" : "I’m here"}
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {i.selfDeliveryStatus === "arrived" && (
+                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
+                                          <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-proof photo</div>
+                                          <div className="text-xs mt-1" style={{ color: SLATE }}>Upload the handoff photo before completing delivery.</div>
+                                          {i.proofOfDeliveryUrl ? (
+                                            <img src={i.proofOfDeliveryUrl} alt="Delivery proof" className="mt-2 w-24 h-24 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
+                                          ) : (
+                                            <label className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium cursor-pointer" style={{ borderColor: INK, color: INK }}>
+                                              {uploadingPodKey === trackKey ? "Uploading…" : "Take/upload delivery photo"}
+                                              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPodKey === trackKey} onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)} />
+                                            </label>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => runSelfDeliveryStep(o.id, i.id, "delivered")}
+                                            disabled={!i.proofOfDeliveryUrl || selfDeliveryActionKey === `${o.id}-${i.id}-delivered`}
+                                            className="block mt-2 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-40"
+                                            style={{ backgroundColor: SAGE, color: "white" }}
+                                          >
+                                            {selfDeliveryActionKey === `${o.id}-${i.id}-delivered` ? "Completing…" : "Delivered"}
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {!['cancelled', 'returned', 'delivered'].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium mb-1" style={{ color: INK }}>Estimated delivery</div>
+                                      <div className="text-xs mb-2" style={{ color: SLATE }}>
+                                        Enter one date for “expected by,” or add an end date to show a delivery range.
+                                      </div>
+                                      <div className="flex items-end gap-2 flex-wrap">
+                                        <label className="text-xs">
+                                          <span className="block mb-1">Start date</span>
+                                          <input
+                                            type="date"
+                                            value={estimateDraft.start}
+                                            onChange={(e) => setDeliveryEstimateDrafts((drafts) => ({
+                                              ...drafts,
+                                              [trackKey]: { ...estimateDraft, start: e.target.value },
+                                            }))}
+                                            className="px-2 py-1 rounded-lg border outline-none bg-white"
+                                            style={{ borderColor: "#DDD8CC", color: INK }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1">End date (optional)</span>
+                                          <input
+                                            type="date"
+                                            min={estimateDraft.start || undefined}
+                                            value={estimateDraft.end}
+                                            onChange={(e) => setDeliveryEstimateDrafts((drafts) => ({
+                                              ...drafts,
+                                              [trackKey]: { ...estimateDraft, end: e.target.value },
+                                            }))}
+                                            className="px-2 py-1 rounded-lg border outline-none bg-white"
+                                            style={{ borderColor: "#DDD8CC", color: INK }}
+                                          />
+                                        </label>
+                                        <button
+                                          onClick={async () => {
+                                            const saved = await updateEstimatedDelivery(o.id, i.id, estimateDraft.start, estimateDraft.end);
+                                            if (saved) setDeliveryEstimateDrafts((drafts) => {
+                                              const next = { ...drafts };
+                                              delete next[trackKey];
+                                              return next;
+                                            });
+                                          }}
+                                          className="px-3 py-1 rounded-lg text-xs font-medium"
+                                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                                        >
+                                          Save estimate
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.fulfillmentStatus === "shipped" && (i.carrier !== "Self delivery" || !!i.deliveryPersonSelfieUrl) && (
+                                    <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
+                                      <div className="text-xs font-medium" style={{ color: INK }}>Live delivery location</div>
+                                      <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                        Optional. The buyer can see your phone’s location only for this delivery. Keep this page open for live updates.
+                                      </div>
+                                      {i.liveLocationEnabled && i.liveLocationUpdatedAt && (
+                                        <div className="text-xs mt-1" style={{ color: SAGE }}>
+                                          Sharing active · Last updated {new Date(i.liveLocationUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                        </div>
+                                      )}
+                                      <div className="flex gap-2 mt-2 flex-wrap">
+                                        <button
+                                          onClick={() => startSellerLocationSharing(o.id, i.id)}
+                                          className="px-3 py-1 rounded-lg text-xs font-medium"
+                                          style={{ backgroundColor: SAGE, color: "white" }}
+                                        >
+                                          {i.liveLocationEnabled ? "Resume phone updates" : "Start sharing location"}
+                                        </button>
+                                        {i.liveLocationEnabled && (
+                                          <button
+                                            onClick={() => stopSellerLocationSharing(o.id, i.id)}
+                                            className="px-3 py-1 rounded-lg border text-xs font-medium bg-white"
+                                            style={{ borderColor: BERRY, color: BERRY }}
+                                          >
+                                            Stop sharing
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.fulfillmentStatus === "delivered" && (
+                                    <div className="mt-2">
+                                      <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                        Proof of delivery
+                                      </div>
+                                      {i.proofOfDeliveryUrl ? (
+                                        <a href={i.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
+                                          <img
+                                            src={i.proofOfDeliveryUrl}
+                                            alt="Proof of delivery"
+                                            className="w-20 h-20 object-cover rounded-lg border"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </a>
+                                      ) : (
+                                        <label
+                                          className="inline-block px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer"
+                                          style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
+                                        >
+                                          {uploadingPodKey === trackKey ? "Uploading…" : "Upload delivery photo"}
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)}
+                                            className="hidden"
+                                            disabled={uploadingPodKey === trackKey}
+                                          />
+                                        </label>
+                                      )}
+                                    </div>
+                                  )}
+                                  {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") &&
+                                    (o.paymentStatus === "released" ? (
+                                      <div className="mt-2">
+                                        <Tag color={SAGE}>Delivery completed — payment released</Tag>
+                                      </div>
+                                    ) : (
+                                      <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                        <div className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                          Buyer's delivery code
+                                        </div>
+                                        <div className="text-xs mb-2" style={{ color: SLATE }}>
+                                          At handoff, ask the buyer for the 10-digit token, upload the delivery photo, then enter the token below.
+                                        </div>
+                                        {i.deliveryTokenSentAt && i.deliveryToken && (
+                                          <div className="mb-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "white" }}>
+                                            <div className="text-xs font-medium" style={{ color: INK }}>Buyer sent this token</div>
+                                            <div className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{i.deliveryToken}</div>
+                                            <div className="text-xs" style={{ color: SLATE }}>It was also added to your Messages.</div>
+                                          </div>
+                                        )}
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <input
+                                            value={redeemTokenDrafts[i.id] || ""}
+                                            onChange={(e) =>
+                                              setRedeemTokenDrafts((d) => ({ ...d, [i.id]: e.target.value }))
+                                            }
+                                            placeholder="10-digit code from buyer"
+                                            maxLength={10}
+                                            className="px-2 py-1 rounded-lg border outline-none text-xs w-36"
+                                            style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                                          />
+                                          <button
+                                            onClick={() =>
+                                              redeemDeliveryToken(o.id, i.id, (redeemTokenDrafts[i.id] || "").trim())
+                                            }
+                                            disabled={
+                                              redeemingTokenKey === i.id ||
+                                              !(redeemTokenDrafts[i.id] || "").trim() ||
+                                              !i.proofOfDeliveryUrl
+                                            }
+                                            className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
+                                            style={{ backgroundColor: MARIGOLD, color: INK }}
+                                          >
+                                            {redeemingTokenKey === i.id ? "Checking…" : "Release payment"}
+                                          </button>
+                                        </div>
+                                        <p className="text-xs mt-1" style={{ color: SLATE }}>
+                                          Upload the delivery picture first, then enter the 10-digit token the buyer gives you after receiving and inspecting the item. Both are required to release payment.
+                                        </p>
+                                      </div>
+                                    ))}
+                                  {i.returnStatus === "requested" && (
+                                    <div
+                                      className="mt-2 p-2 rounded-lg"
+                                      style={{ backgroundColor: "#FBF0DC" }}
+                                    >
+                                      <div className="mb-1" style={{ color: INK }}>
+                                        <span className="font-medium">Return requested:</span> {i.returnReason}
+                                        {i.returnNote ? ` — "${i.returnNote}"` : ""}
+                                      </div>
+                                      {i.returnEvidenceUrls && i.returnEvidenceUrls.length > 0 && (
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                          {i.returnEvidenceUrls.map((url, idx) => (
+                                            <a key={idx} href={url} target="_blank" rel="noreferrer">
+                                              <img
+                                                src={url}
+                                                alt={`Evidence ${idx + 1}`}
+                                                className="w-14 h-14 object-cover rounded-lg border"
+                                                style={{ borderColor: "#DDD8CC" }}
+                                              />
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-3">
+                                        <button
+                                          onClick={() => approveReturn(o.id, i.id)}
+                                          className="text-xs font-medium underline"
+                                          style={{ color: SAGE }}
+                                        >
+                                          Approve return
+                                        </button>
+                                        <button
+                                          onClick={() => denyReturn(o.id, i.id)}
+                                          className="text-xs font-medium underline"
+                                          style={{ color: BERRY }}
+                                        >
+                                          Deny
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {i.returnStatus === "approved" && (
+                                    <div className="mt-2">
+                                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                                        <Tag color={SAGE}>Return approved</Tag>
+                                        {["held", "released"].includes(o.paymentStatus) && (
+                                          <button
+                                            onClick={() => refundOrder(o.id)}
+                                            className="text-xs font-medium underline"
+                                            style={{ color: BERRY }}
+                                          >
+                                            Refund buyer
+                                          </button>
+                                        )}
+                                      </div>
+                                      {i.returnTrackingNumber ? (
+                                        <div className="text-xs" style={{ color: SLATE }}>
+                                          Buyer's return tracking:{" "}
+                                          <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                                            {i.returnTrackingNumber}
+                                          </span>{" "}
+                                          <a
+                                            href={buildTrackingUrl(i.returnTrackingNumber)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="underline font-medium"
+                                            style={{ color: MARIGOLD }}
+                                          >
+                                            Track →
+                                          </a>
+                                        </div>
+                                      ) : (
+                                        <div className="text-xs" style={{ color: SLATE }}>
+                                          Waiting on buyer to add return tracking.
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {i.returnStatus === "denied" && (
+                                    <div className="mt-2">
+                                      <Tag color={BERRY}>Return denied</Tag>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <p className="text-xs pt-1" style={{ color: SLATE }}>
+                      Amounts shown are your gross sales before the marketplace commission. Payout status is tracked per order in the admin dashboard.
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         )}
 
         {view === "buyerHome" && currentUser && (
-          <Suspense
-            fallback={
-              <div className="max-w-6xl mx-auto px-4 py-10 text-sm" style={{ color: SLATE }}>
-                Loading buyer dashboard…
+          <div>
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
+              <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                Dashboard
+              </h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                {!currentMember?.isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelected(null);
+                      setView("dashboard");
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                    style={{ backgroundColor: INK }}
+                  >
+                    <Store size={17} />
+                    Seller Dashboard
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setView("wallet")}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
+                  style={{ borderColor: SAGE, color: INK }}
+                >
+                  <Wallet size={17} />
+                  Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+                </button>
               </div>
-            }
-          >
-            <BuyerDashboard
-              scope={{
-                BERRY,
-                CANVAS,
-                INK,
-                MARIGOLD,
-                SAGE,
-                SLATE,
-                Store,
-                Tag,
-                Wallet,
-                buyerActiveOrdersCount,
-                buyerCompletedCount,
-                buyerOpenDisputesCount,
-                buyerOrdersInTransit,
-                buyerOrdersWaitingToShip,
-                buyerTokensReadyCount,
-                currentMember,
-                currentUser,
-                formatMoney,
-                listings,
-                markThreadRead,
-                messageReadState,
-                myOrders,
-                myPaymentMethods,
-                myThreads,
-                orderNumber,
-                paymentMethodLabel,
-                recentlyViewedIds,
-                sellerReports,
-                setActiveThreadId,
-                setActiveThreadOrderId,
-                setBuyerOrderSearch,
-                setBuyerOrderStatusFilter,
-                setNotifPanelOpen,
-                setSelected,
-                setShowAllSellerReports,
-                setView,
-                showAllSellerReports,
-                unreadNotifCount,
-                unreadThreadsCount,
-                walletNetAvailable,
-              }}
-            />
-          </Suspense>
+            </div>
+            <p className="text-sm mb-5" style={{ color: SLATE }}>
+              Everything about your orders, messages, and alerts in one place.
+            </p>
+
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+              Needs your attention
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+              <button
+                onClick={() => setView("orders")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: buyerTokensReadyCount ? MARIGOLD : "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerTokensReadyCount ? MARIGOLD : INK }}
+                >
+                  {buyerTokensReadyCount}
+                </div>
+                <div className="text-xs font-medium" style={{ color: INK }}>
+                  delivery token{buyerTokensReadyCount === 1 ? "" : "s"} ready
+                </div>
+                {buyerTokensReadyCount > 0 && (
+                  <div className="text-xs mt-1" style={{ color: SLATE }}>
+                    Review the order and send only after accepting the item →
+                  </div>
+                )}
+              </button>
+              <button
+                onClick={() => setView("messages")}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: unreadThreadsCount ? MARIGOLD : INK }}
+                >
+                  {unreadThreadsCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  unread messages
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  setBuyerOrderSearch("");
+                  setBuyerOrderStatusFilter("disputed");
+                  setView("orders");
+                }}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: buyerOpenDisputesCount ? BERRY : INK }}
+                >
+                  {buyerOpenDisputesCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  open disputes
+                </div>
+              </button>
+              <button
+                onClick={() => setNotifPanelOpen(true)}
+                className="p-3 rounded-lg border bg-white text-left"
+                style={{ borderColor: "#DDD8CC" }}
+              >
+                <div
+                  className="text-2xl font-semibold"
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", color: unreadNotifCount ? MARIGOLD : INK }}
+                >
+                  {unreadNotifCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  new alerts
+                </div>
+              </button>
+            </div>
+
+            {sellerReports.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>My seller reports</h3>
+                <div className="space-y-2">{(showAllSellerReports ? sellerReports : sellerReports.slice(0, 3)).map((report) => (
+                  <div key={report.id} className="p-3 rounded-lg border bg-white text-xs" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2"><span className="font-medium" style={{ color: INK }}>{report.reference}</span><Tag color={report.status === "resolved" ? SAGE : report.status === "dismissed" ? SLATE : MARIGOLD}>{String(report.status).replace("_", " ")}</Tag></div>
+                    <div className="mt-1" style={{ color: SLATE }}>{report.seller_display_name || report.seller_username} · {String(report.reason).replaceAll("_", " ")}{report.order_id ? ` · ${orderNumber(report.order_id)}` : ""}</div>
+                  </div>
+                ))}</div>
+                {sellerReports.length > 3 && <button onClick={() => setShowAllSellerReports((shown) => !shown)} className="text-xs font-medium underline mt-2" style={{ color: SLATE }}>{showAllSellerReports ? "Show less" : `View all ${sellerReports.length} reports`}</button>}
+              </div>
+            )}
+
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+              Orders
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#3B6E8F" }}>
+                  {buyerOrdersWaitingToShip}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  waiting to ship
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#6B8F71" }}>
+                  {buyerOrdersInTransit}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  in transit
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#2F6B3A" }}>
+                  {buyerCompletedCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  completed
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                  {buyerActiveOrdersCount}
+                </div>
+                <div className="text-xs" style={{ color: SLATE }}>
+                  active orders
+                </div>
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-6">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: SLATE }}>
+                    Recent orders
+                  </h3>
+                  <button
+                    onClick={() => setView("orders")}
+                    className="text-xs font-medium underline"
+                    style={{ color: SLATE }}
+                  >
+                    View all →
+                  </button>
+                </div>
+                {myOrders.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No orders yet. Anything you buy will show up here.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {myOrders.slice(0, 3).map((o) => (
+                      <button
+                        key={o.id}
+                        onClick={() => {
+                          setBuyerOrderSearch(orderNumber(o.id));
+                          setBuyerOrderStatusFilter("all");
+                          setView("orders");
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="w-full text-left p-3 rounded-lg border bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className="text-xs font-medium"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {orderNumber(o.id)}
+                          </span>
+                          <span
+                            className="text-sm font-semibold"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {formatMoney(o.total, o.currency)}
+                          </span>
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {new Date(o.createdAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: SLATE }}>
+                    Recent messages
+                  </h3>
+                  <button
+                    onClick={() => setView("messages")}
+                    className="text-xs font-medium underline"
+                    style={{ color: SLATE }}
+                  >
+                    View all →
+                  </button>
+                </div>
+                {myThreads.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No messages yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {myThreads.slice(0, 3).map((t) => {
+                      const otherName = t.buyerUsername === currentUser ? t.sellerName : t.buyerName;
+                      const lastMsg = t.messages[t.messages.length - 1];
+                      const isUnread =
+                        lastMsg &&
+                        lastMsg.senderUsername !== currentUser &&
+                        lastMsg.createdAt > (messageReadState[t.id] || 0);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            setActiveThreadId(t.id);
+                            setActiveThreadOrderId(null);
+                            markThreadRead(t.id);
+                            setView("messages");
+                          }}
+                          className="w-full text-left flex items-center gap-2 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: isUnread ? MARIGOLD : "#DDD8CC" }}
+                        >
+                          <span className="text-xl shrink-0">{t.listingEmoji}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate" style={{ color: INK, fontWeight: isUnread ? 700 : 500 }}>
+                              {otherName}
+                            </div>
+                            <div className="text-xs truncate" style={{ color: SLATE }}>
+                              {lastMsg ? (lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text) : ""}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {recentlyViewedIds.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+                  Recently viewed
+                </h3>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {recentlyViewedIds
+                    .map((id) => listings.find((l) => l.id === id))
+                    .filter(Boolean)
+                    .map((l) => (
+                      <button
+                        key={l.id}
+                        onClick={() => {
+                          setSelected(l);
+                          setView("browse");
+                        }}
+                        className="w-32 shrink-0 text-left rounded-lg border bg-white overflow-hidden"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        {l.images && l.images.length > 0 ? (
+                          <img src={l.images[0]} alt={l.title} className="w-full h-24 object-cover" />
+                        ) : (
+                          <div className="w-full h-24 flex items-center justify-center text-3xl" style={{ backgroundColor: CANVAS }}>
+                            {l.emoji}
+                          </div>
+                        )}
+                        <div className="p-2">
+                          <div className="text-xs truncate" style={{ color: INK }}>
+                            {l.title}
+                          </div>
+                          <div
+                            className="text-xs font-semibold"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {formatMoney(l.price, l.currency)}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {myPaymentMethods.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: SLATE }}>
+                  Payment methods used
+                </h3>
+                <div className="space-y-2">
+                  {myPaymentMethods.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-3 rounded-lg border bg-white"
+                      style={{ borderColor: "#DDD8CC" }}
+                    >
+                      <span className="text-sm" style={{ color: INK }}>
+                        {paymentMethodLabel(m)}
+                      </span>
+                      <span className="text-xs" style={{ color: SLATE }}>
+                        Last used{" "}
+                        {new Date(m.lastUsedAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>
+                  Shown for your reference only — payments are handled securely by Paystack, and Stallyard never sees or stores full card numbers.
+                </p>
+              </div>
+            )}
+          </div>
         )}
 
         {view === "orders" && (
@@ -13744,50 +15449,336 @@ export default function Stallyard() {
           </div>
         )}
 
-        {(view === "messages" || reportMessageId) && (
-        <Suspense fallback={null}>
-          <Messages
-            scope={{
-              BERRY,
-              Flag,
-              INK,
-              MARIGOLD,
-              SAGE,
-              SLATE,
-              Tag,
-              X,
-              activeThread,
-              activeThreadOrderId,
-              addToCartAtPrice,
-              currentUser,
-              formatMoney,
-              listings,
-              markThreadRead,
-              members,
-              messageError,
-              messageReadState,
-              myThreads,
-              offerAmount,
-              offerModalOpen,
-              openSellerReport,
-              reportMessage,
-              reportMessageId,
-              reportReasonDraft,
-              respondToOffer,
-              sendMessage,
-              sendOffer,
-              setActiveThreadId,
-              setActiveThreadOrderId,
-              setMessageError,
-              setOfferAmount,
-              setOfferModalOpen,
-              setReportMessageId,
-              setReportReasonDraft,
-              view,
-            }}
-          />
-        </Suspense>
-      )}
+        {view === "messages" && (
+          <div>
+            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Messages
+            </h2>
+            {!currentUser ? (
+              <p className="text-sm mt-2" style={{ color: SLATE }}>
+                Log in to see your conversations.
+              </p>
+            ) : !activeThread ? (
+              <>
+                <p className="text-sm mb-6" style={{ color: SLATE }}>
+                  Chat with buyers and sellers about a listing. For everyone's safety, email addresses and phone
+                  numbers can't be sent here — keep contact on Stallyard.
+                </p>
+                {myThreads.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No conversations yet. Message a seller from any listing to start one.
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-w-xl">
+                    {myThreads.map((t) => {
+                      const otherName = t.buyerUsername === currentUser ? t.sellerName : t.buyerName;
+                      const lastMsg = t.messages[t.messages.length - 1];
+                      const isUnread =
+                        lastMsg &&
+                        lastMsg.senderUsername !== currentUser &&
+                        lastMsg.createdAt > (messageReadState[t.id] || 0);
+                      return (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            setActiveThreadId(t.id);
+                            setActiveThreadOrderId(null);
+                            markThreadRead(t.id);
+                          }}
+                          className="w-full text-left flex items-center gap-3 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: isUnread ? MARIGOLD : "#DDD8CC" }}
+                        >
+                          {isUnread && (
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: MARIGOLD }} />
+                          )}
+                          <span className="text-2xl shrink-0">{t.listingEmoji}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate" style={{ color: INK, fontWeight: isUnread ? 700 : 500 }}>
+                                {otherName}
+                              </span>
+                              <span className="text-xs shrink-0" style={{ color: SLATE }}>
+                                {new Date(t.updatedAt).toLocaleDateString(undefined, {
+                                  month: "short",
+                                  day: "numeric",
+                                })}
+                              </span>
+                            </div>
+                            <div className="text-xs truncate" style={{ color: SLATE }}>
+                              {t.listingTitle}
+                              {lastMsg
+                                ? ` — ${lastMsg.type === "offer" ? `Offer: ${formatMoney(lastMsg.amount, "NGN")}` : lastMsg.text}`
+                                : ""}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="max-w-xl">
+                <button
+                  onClick={() => {
+                    setActiveThreadId(null);
+                    setActiveThreadOrderId(null);
+                    setMessageError("");
+                  }}
+                  className="text-xs font-medium underline mb-3"
+                  style={{ color: SLATE }}
+                >
+                  ← Back to conversations
+                </button>
+                <div className="flex items-center gap-2 mb-4">
+                  <span className="text-2xl">{activeThread.listingEmoji}</span>
+                  <div>
+                    <div className="font-medium" style={{ color: INK }}>
+                      {activeThread.buyerUsername === currentUser
+                        ? activeThread.sellerName
+                        : activeThread.buyerName}
+                    </div>
+                    <div className="text-xs" style={{ color: SLATE }}>
+                      About: {activeThread.listingTitle}
+                    </div>
+                  </div>
+                  {activeThread.buyerUsername === currentUser && (
+                    <button
+                      onClick={() => {
+                        const seller = members.find((member) => member.username === activeThread.sellerUsername);
+                        openSellerReport(seller?.backendId, activeThread.sellerName || activeThread.sellerUsername, activeThreadOrderId || null);
+                      }}
+                      className="ml-auto text-xs font-medium underline"
+                      style={{ color: BERRY }}
+                    >
+                      Report seller
+                    </button>
+                  )}
+                </div>
+
+                <div
+                  className="rounded-lg border bg-white p-4 mb-3 space-y-3 overflow-y-auto"
+                  style={{ borderColor: "#DDD8CC", maxHeight: "50vh", minHeight: "200px" }}
+                >
+                  {activeThread.messages.length === 0 && (
+                    <p className="text-sm" style={{ color: SLATE }}>
+                      Say hello — no messages yet.
+                    </p>
+                  )}
+                  {activeThread.messages.map((m) => {
+                    const mine = m.senderUsername === currentUser;
+                    if (m.type === "offer") {
+                      const isBuyer = activeThread.buyerUsername === currentUser;
+                      const listingForOffer = listings.find((l) => l.id === activeThread.listingId);
+                      return (
+                        <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                          <div
+                            className="max-w-[75%] px-3 py-2.5 rounded-lg text-sm border"
+                            style={{
+                              backgroundColor: mine ? "#FBF0DC" : "white",
+                              borderColor: MARIGOLD,
+                              color: INK,
+                            }}
+                          >
+                            <div className="font-medium mb-1">
+                              Offer: ${m.amount.toFixed(2)}
+                            </div>
+                            {m.status === "pending" && !mine && (
+                              <div className="flex items-center gap-3 mt-1">
+                                <button
+                                  onClick={() => respondToOffer(activeThread.id, m.id, "accepted")}
+                                  className="text-xs font-medium underline"
+                                  style={{ color: SAGE }}
+                                >
+                                  Accept
+                                </button>
+                                <button
+                                  onClick={() => respondToOffer(activeThread.id, m.id, "declined")}
+                                  className="text-xs font-medium underline"
+                                  style={{ color: BERRY }}
+                                >
+                                  Decline
+                                </button>
+                              </div>
+                            )}
+                            {m.status === "pending" && mine && (
+                              <div className="text-xs" style={{ color: SLATE }}>
+                                Waiting for a response...
+                              </div>
+                            )}
+                            {m.status === "accepted" && (
+                              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <Tag color={SAGE}>Accepted</Tag>
+                                {isBuyer && listingForOffer && (
+                                  <button
+                                    onClick={() => addToCartAtPrice(listingForOffer, m.amount)}
+                                    className="text-xs font-medium underline"
+                                    style={{ color: INK }}
+                                  >
+                                    Add to cart at ${m.amount.toFixed(2)}
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {m.status === "declined" && (
+                              <Tag color={BERRY}>Declined</Tag>
+                            )}
+                            <div className="text-[10px] mt-1" style={{ color: SLATE }}>
+                              {new Date(m.createdAt).toLocaleTimeString(undefined, {
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                        <div
+                          className="max-w-[75%] px-3 py-2 rounded-lg text-sm"
+                          style={{
+                            backgroundColor: mine ? INK : "#F1EFE7",
+                            color: mine ? "white" : INK,
+                          }}
+                        >
+                          {m.imageUrl && (
+                            <a href={m.imageUrl} target="_blank" rel="noreferrer">
+                              <img
+                                src={m.imageUrl}
+                                alt="Attachment"
+                                className="rounded-lg mb-1 max-w-full"
+                                style={{ maxHeight: "200px" }}
+                              />
+                            </a>
+                          )}
+                          {m.text}
+                          <div
+                            className="flex items-center gap-2 text-[10px] mt-1"
+                            style={{ color: mine ? "#C9CCD3" : SLATE }}
+                          >
+                            {new Date(m.createdAt).toLocaleTimeString(undefined, {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                            {!mine && (
+                              <button
+                                onClick={() => {
+                                  setReportMessageId(m.id);
+                                  setReportReasonDraft("");
+                                }}
+                                className="underline flex items-center gap-0.5"
+                                style={{ color: mine ? "#C9CCD3" : SLATE }}
+                                title="Report this message"
+                              >
+                                <Flag size={10} />
+                                Report
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {messageError && (
+                  <p className="text-xs mb-2" style={{ color: BERRY }}>
+                    {messageError}
+                  </p>
+                )}
+
+                {offerModalOpen && (
+                  <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD }}>
+                    <span style={{ color: SLATE }}>$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={offerAmount}
+                      onChange={(e) => setOfferAmount(e.target.value)}
+                      placeholder="Your offer"
+                      autoFocus
+                      className="flex-1 px-2 py-1.5 rounded-lg border outline-none text-sm"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <button
+                      onClick={async () => {
+                        await sendOffer(activeThread.id, offerAmount);
+                        setOfferAmount("");
+                        setOfferModalOpen(false);
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: MARIGOLD, color: INK }}
+                    >
+                      Send offer
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOfferModalOpen(false);
+                        setOfferAmount("");
+                      }}
+                      aria-label="Cancel offer"
+                    >
+                      <X size={16} style={{ color: SLATE }} />
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  {!offerModalOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setOfferModalOpen(true)}
+                      className="p-2.5 rounded-lg border shrink-0"
+                      style={{ borderColor: MARIGOLD, color: MARIGOLD }}
+                      aria-label="Make an offer"
+                      title="Make an offer"
+                    >
+                      $
+                    </button>
+                  )}
+                  <label
+                    className="p-2.5 rounded-lg border shrink-0 cursor-pointer flex items-center justify-center"
+                    style={{ borderColor: "#DDD8CC", color: SLATE }}
+                    title="Attach a photo"
+                  >
+                    <ImageIcon size={16} />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleMessagePhotoSelect(e, activeThread.id)}
+                      className="hidden"
+                      disabled={uploadingMessagePhoto}
+                    />
+                  </label>
+                  <input
+                    value={messageInput}
+                    onChange={(e) => {
+                      setMessageInput(e.target.value);
+                      if (messageError) setMessageError("");
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") sendMessage(activeThread.id, messageInput);
+                    }}
+                    placeholder="Type a message..."
+                    className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                    style={{ borderColor: "#DDD8CC" }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => sendMessage(activeThread.id, messageInput)}
+                    className="p-2.5 rounded-lg"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                    aria-label="Send"
+                  >
+                    <Send size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {view === "help" && activeTicketId && (
           <div className="max-w-2xl">
@@ -14161,6 +16152,7 @@ export default function Stallyard() {
               adminResolveReviewReport,
               adminRestoreListing,
               adminSetRole,
+              adminSetPreviewPhoneVerification,
               adminStaff,
               adminStaffError,
               adminStaffFilter,
@@ -14954,67 +16946,402 @@ export default function Stallyard() {
       )}
 
       {/* Cart drawer */}
+      {cartOpen && (
+        <div
+          className="fixed inset-0 z-40 flex justify-end"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setCartOpen(false)}
+        >
+          <div
+            className="bg-white h-full w-full max-w-sm p-6 overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                Your cart
+              </h3>
+              <button onClick={() => setCartOpen(false)} aria-label="Close cart">
+                <X size={20} style={{ color: SLATE }} />
+              </button>
+            </div>
 
+            {cartItems.length === 0 ? (
+              <div className="text-center py-16">
+                <ShoppingBag size={32} className="mx-auto mb-3" style={{ color: SLATE }} />
+                <p className="text-sm" style={{ color: SLATE }}>
+                  Your cart is empty.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4 mb-6">
+                  {cartItems.map((item) => (
+                    <div key={item.id} className="flex gap-3">
+                      <div className="text-2xl">{item.emoji}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm truncate" style={{ color: INK }}>
+                          {item.title}
+                        </div>
+                        <div
+                          className="text-xs mt-0.5 flex items-center gap-2"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: SLATE }}
+                        >
+                          {formatMoney(item.price, item.currency)} each
+                          {item.isOfferPrice && <Tag color={MARIGOLD}>Offer price</Tag>}
+                        </div>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            onClick={() => updateCartQty(item.id, item.qty - 1)}
+                            className="w-6 h-6 rounded-md border flex items-center justify-center"
+                            style={{ borderColor: "#DDD8CC" }}
+                            aria-label="Decrease quantity"
+                          >
+                            <Minus size={12} style={{ color: SLATE }} />
+                          </button>
+                          <span
+                            className="text-sm w-5 text-center"
+                            style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          >
+                            {item.qty}
+                          </span>
+                          <button
+                            onClick={() => updateCartQty(item.id, item.qty + 1)}
+                            className="w-6 h-6 rounded-md border flex items-center justify-center"
+                            style={{ borderColor: "#DDD8CC" }}
+                            aria-label="Increase quantity"
+                          >
+                            <Plus size={12} style={{ color: SLATE }} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end justify-between">
+                        <span
+                          className="text-sm font-medium"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                        >
+                          {formatMoney(item.price * item.qty, item.currency)}
+                        </span>
+                        <button onClick={() => removeFromCart(item.id)} aria-label="Remove item">
+                          <Trash2 size={14} style={{ color: BERRY }} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t pt-4 mb-4" style={{ borderColor: "#DDD8CC" }}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span style={{ color: SLATE }}>Subtotal</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      {formatMoney(cartSubtotal, cartCurrency)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span style={{ color: SLATE }}>Shipping</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                      {cartShipping > 0 ? formatMoney(cartShipping, cartCurrency) : "Free"}
+                    </span>
+                  </div>
+                  {cartTax > 0 && (
+                    <div className="flex items-center justify-between text-sm mb-2">
+                      <span style={{ color: SLATE }}>Tax ({Math.round((settings.taxRate || 0) * 1000) / 10}%)</span>
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                        {formatMoney(cartTax, cartCurrency)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: "#EFEBE0" }}>
+                    <span className="text-sm" style={{ color: SLATE }}>
+                      Total
+                    </span>
+                    <span
+                      className="text-xl"
+                      style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                    >
+                      {formatMoney(cartTotal, cartCurrency)}
+                    </span>
+                  </div>
+                </div>
+
+                {currentUser && (
+                  <div className="border-t pt-4 mb-4" style={{ borderColor: "#DDD8CC" }}>
+                    <h4 className="text-sm font-semibold mb-2" style={{ color: INK }}>
+                      Shipping address
+                    </h4>
+                    {savedAddresses.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {savedAddresses.map((a) => (
+                          <button
+                            key={a.id}
+                            onClick={() =>
+                              setShippingForm({
+                                ...shippingForm,
+                                fullName: a.full_name || shippingForm.fullName,
+                                phone: a.phone || shippingForm.phone,
+                                street: a.street,
+                                city: a.city,
+                                state: a.state,
+                                zip: a.zip,
+                                country: "Nigeria",
+                                deliveryInstructions: a.delivery_instructions || "",
+                                preferredDeliveryTime: a.preferred_delivery_time || "",
+                                locationPhotos: a.location_photos || [],
+                              })
+                            }
+                            className="text-xs px-2 py-1 rounded-full border"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
+                          >
+                            {a.label || `${a.city}, ${a.country}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <input
+                        value={shippingForm.fullName}
+                        onChange={(e) => setShippingForm({ ...shippingForm, fullName: e.target.value })}
+                        placeholder="Full name"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <input
+                        value={shippingForm.phone}
+                        onChange={(e) => setShippingForm({ ...shippingForm, phone: e.target.value })}
+                        placeholder="Recipient phone number"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <input
+                        value={shippingForm.street}
+                        onChange={(e) => setShippingForm({ ...shippingForm, street: e.target.value })}
+                        placeholder="Street address"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={shippingForm.city}
+                          onChange={(e) => setShippingForm({ ...shippingForm, city: e.target.value })}
+                          placeholder="City"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <input
+                          value={shippingForm.state}
+                          onChange={(e) => setShippingForm({ ...shippingForm, state: e.target.value })}
+                          placeholder="State"
+                          className="w-28 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                      </div>
+                      <textarea
+                        value={shippingForm.deliveryInstructions}
+                        onChange={(e) => setShippingForm({ ...shippingForm, deliveryInstructions: e.target.value.slice(0, 1000) })}
+                        placeholder="Private delivery instructions or nearby landmark (optional)"
+                        rows={3}
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <input
+                        value={shippingForm.preferredDeliveryTime}
+                        onChange={(e) => setShippingForm({ ...shippingForm, preferredDeliveryTime: e.target.value.slice(0, 200) })}
+                        placeholder="Preferred delivery time (optional)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-xs font-medium" style={{ color: INK }}>Private location photos (up to 5)</span>
+                          <label className="text-xs font-medium underline cursor-pointer" style={{ color: SLATE }}>
+                            {uploadingLocationPhotos ? "Processing…" : "Add photos"}
+                            <input type="file" accept="image/*" multiple className="hidden" onChange={handleDeliveryLocationPhotos} disabled={uploadingLocationPhotos || (shippingForm.locationPhotos || []).length >= 5} />
+                          </label>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          {(shippingForm.locationPhotos || []).map((photo, index) => (
+                            <div key={index} className="relative">
+                              <img src={photo} alt={`Delivery location ${index + 1}`} className="w-16 h-16 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                              <button type="button" onClick={() => setShippingForm((form) => ({ ...form, locationPhotos: form.locationPhotos.filter((_, i) => i !== index) }))} className="absolute -top-1 -right-1 bg-white border rounded-full" aria-label="Remove location photo"><X size={13} /></button>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Visible only to the seller handling this paid order and authorized support staff.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          value={shippingForm.zip}
+                          onChange={(e) => setShippingForm({ ...shippingForm, zip: e.target.value })}
+                          placeholder="Postal code"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <input
+                          value="Nigeria"
+                          readOnly
+                          aria-label="Country"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm bg-gray-50"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 text-xs pt-1" style={{ color: SLATE }}>
+                        <input
+                          type="checkbox"
+                          checked={saveShippingAddress}
+                          onChange={(e) => setSaveShippingAddress(e.target.checked)}
+                        />
+                        Save this address to my account for next time
+                      </label>
+                      {shippingError && (
+                        <p className="text-xs" style={{ color: BERRY }}>
+                          {shippingError}
+                        </p>
+                      )}
+                      <p className="text-xs" style={{ color: SLATE }}>Your delivery details are shared only with the seller handling the paid order and authorized support staff.</p>
+                    </div>
+                  </div>
+                )}
+
+                {savedCards.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-xs font-medium mb-2" style={{ color: SLATE }}>
+                      Pay with a saved card
+                    </p>
+                    <div className="space-y-2">
+                      {savedCards.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => payWithSavedCard(c.id)}
+                          disabled={checkoutSubmitting}
+                          className="w-full text-left px-3 py-2 rounded-lg border bg-white text-sm disabled:opacity-50"
+                          style={{ borderColor: "#DDD8CC", color: INK }}
+                        >
+                          {c.card_type ? c.card_type.charAt(0).toUpperCase() + c.card_type.slice(1) : "Card"}
+                          {c.last4 ? ` ending in ${c.last4}` : ""}
+                          {c.is_default ? " (default)" : ""}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-center mt-2" style={{ color: SLATE }}>
+                      Or pay with a new card below
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={checkout}
+                  disabled={checkoutSubmitting}
+                  className="w-full py-2.5 rounded-lg font-medium disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {checkoutSubmitting ? "Starting checkout…" : "Checkout"}
+                </button>
+                <label className="flex items-center gap-2 text-xs mt-2 justify-center" style={{ color: SLATE }}>
+                  <input
+                    type="checkbox"
+                    checked={saveCardAtCheckout}
+                    onChange={(e) => setSaveCardAtCheckout(e.target.checked)}
+                  />
+                  Save this card for future purchases
+                </label>
+                <p className="text-xs text-center mt-2" style={{ color: SLATE }}>
+                  You'll be taken to Paystack to pay securely.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Shown right after Paystack redirects back, while /checkout/verify
           confirms the payment actually succeeded. */}
+      {checkoutVerifying && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.5)" }}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm text-center">
+            <p className="text-sm" style={{ color: INK }}>
+              Confirming your payment…
+            </p>
+          </div>
+        </div>
+      )}
 
-
-
+      {checkoutVerifyError && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(27,36,48,0.5)" }}>
+          <div className="bg-white rounded-2xl p-6 max-w-sm text-center">
+            <h2 className="text-xl mb-2" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Couldn't confirm payment
+            </h2>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              {checkoutVerifyError}
+            </p>
+            <button
+              onClick={() => setCheckoutVerifyError("")}
+              className="px-4 py-2 rounded-lg text-sm font-medium"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Order confirmation modal */}
-      {(cartOpen || checkoutVerifying || checkoutVerifyError || confirmedOrder) && (
-        <Suspense fallback={null}>
-          <Checkout
-            scope={{
-              BERRY,
-              CANVAS,
-              INK,
-              MARIGOLD,
-              Minus,
-              Plus,
-              SLATE,
-              ShoppingBag,
-              Tag,
-              Trash2,
-              X,
-              cartCurrency,
-              cartItems,
-              cartOpen,
-              cartShipping,
-              cartSubtotal,
-              cartTax,
-              cartTotal,
-              checkout,
-              checkoutSubmitting,
-              checkoutVerifyError,
-              checkoutVerifying,
-              confirmedOrder,
-              currentUser,
-              formatMoney,
-              handleDeliveryLocationPhotos,
-              orderNumber,
-              payWithSavedCard,
-              removeFromCart,
-              saveCardAtCheckout,
-              saveShippingAddress,
-              savedAddresses,
-              savedCards,
-              setCartOpen,
-              setCheckoutVerifyError,
-              setConfirmedOrder,
-              setSaveCardAtCheckout,
-              setSaveShippingAddress,
-              setShippingForm,
-              setView,
-              settings,
-              shippingError,
-              shippingForm,
-              updateCartQty,
-              uploadingLocationPhotos,
-            }}
-          />
-        </Suspense>
+      {confirmedOrder && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setConfirmedOrder(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative text-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setConfirmedOrder(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <div
+              className="w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center text-2xl"
+              style={{ backgroundColor: "#E7EFE8" }}
+            >
+              ✓
+            </div>
+            <h3 className="text-xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Order confirmed
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              Thanks! Your order has been placed.
+            </p>
+            <div className="p-3 rounded-lg mb-4" style={{ backgroundColor: CANVAS }}>
+              <div className="text-xs uppercase tracking-wide mb-1" style={{ color: SLATE }}>
+                Confirmation number
+              </div>
+              <div
+                className="text-lg font-semibold"
+                style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+              >
+                {orderNumber(confirmedOrder.id)}
+              </div>
+            </div>
+            <div className="text-sm mb-4" style={{ color: SLATE }}>
+              Total charged:{" "}
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                {formatMoney(confirmedOrder.total, confirmedOrder.currency)}
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setConfirmedOrder(null);
+                setView("orders");
+              }}
+              className="w-full py-2.5 rounded-lg font-medium"
+              style={{ backgroundColor: MARIGOLD, color: INK }}
+            >
+              View my orders
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Vacation mode settings modal */}
@@ -15087,7 +17414,87 @@ export default function Stallyard() {
       )}
 
       {/* Retroactive ID verification modal (US sellers past the sales threshold) */}
-
+      {idVerifyOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setIdVerifyOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setIdVerifyOpen(false)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Add ID verification
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              Stallyard requires approved seller verification to keep selling.
+            </p>
+            <div className="space-y-3">
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    ID type
+                  </label>
+                  <select
+                    value={idVerifyForm.idType}
+                    onChange={(e) => setIdVerifyForm({ ...idVerifyForm, idType: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                    style={{ borderColor: "#DDD8CC" }}
+                  >
+                    <option>Passport</option>
+                    <option>National ID</option>
+                    <option>Driver's License</option>
+                    <option>Residence/Work Permit (CERPAC)</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    Issuing country
+                  </label>
+                  <input
+                    value={idVerifyForm.idCountry}
+                    onChange={(e) => setIdVerifyForm({ ...idVerifyForm, idCountry: e.target.value })}
+                    placeholder="Nigeria"
+                    className="w-full px-3 py-2 rounded-lg border outline-none"
+                    style={{ borderColor: "#DDD8CC" }}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  License number{" "}
+                  <span className="font-normal" style={{ color: SLATE }}>
+                    (self-reported, not verified)
+                  </span>
+                </label>
+                <input
+                  value={idVerifyForm.licenseNumber}
+                  onChange={(e) => setIdVerifyForm({ ...idVerifyForm, licenseNumber: e.target.value })}
+                  placeholder="Optional"
+                  className="w-full px-3 py-2 rounded-lg border outline-none"
+                  style={{ borderColor: "#DDD8CC" }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={submitIdVerification}
+                className="w-full py-2.5 rounded-lg font-medium mt-1"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                Save & continue selling
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {rejectModalUsername && (
         <div
@@ -15322,7 +17729,51 @@ export default function Stallyard() {
         </div>
       )}
 
-
+      {reportMessageId && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          style={{ backgroundColor: "rgba(27,36,48,0.6)" }}
+          onClick={() => setReportMessageId(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-sm w-full p-6 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setReportMessageId(null)}
+              className="absolute top-4 right-4"
+              aria-label="Close"
+            >
+              <X size={20} style={{ color: SLATE }} />
+            </button>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: INK, fontFamily: "'DM Serif Display', serif" }}>
+              Report this message
+            </h3>
+            <p className="text-sm mb-4" style={{ color: SLATE }}>
+              An admin will review it. This doesn't notify the other person.
+            </p>
+            <textarea
+              value={reportReasonDraft}
+              onChange={(e) => setReportReasonDraft(e.target.value)}
+              placeholder="What's wrong with this message? (optional)"
+              rows={3}
+              className="w-full px-3 py-2 rounded-lg border outline-none mb-3"
+              style={{ borderColor: "#DDD8CC" }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                reportMessage(reportMessageId, reportReasonDraft.trim());
+                setReportMessageId(null);
+              }}
+              className="w-full py-2.5 rounded-lg font-medium"
+              style={{ backgroundColor: BERRY, color: "white" }}
+            >
+              Submit report
+            </button>
+          </div>
+        </div>
+      )}
 
       {reportReviewId && (
         <div
@@ -15806,32 +18257,19 @@ export default function Stallyard() {
           </div>
         </div>
       )}
-      {(idVerifyOpen || casualVerificationOpen) && (
-        <Suspense fallback={null}>
-          <VerificationScreens
-            scope={{
-              BACKEND_URL,
-              BERRY,
-              CANVAS,
-              INK,
-              MARIGOLD,
-              SAGE,
-              SLATE,
-              X,
-              authFetch,
-              casualVerificationOpen,
-              idVerifyForm,
-              idVerifyOpen,
-              setCasualSellerStatus,
-              setCasualVerificationOpen,
-              setIdVerifyForm,
-              setIdVerifyOpen,
-              setSessionUserProfile,
-              showToast,
-              submitIdVerification,
-            }}
-          />
-        </Suspense>
+      {casualVerificationOpen && (
+        <CasualSellerVerificationModal
+          onClose={() => setCasualVerificationOpen(false)}
+          authFetch={authFetch}
+          showToast={showToast}
+          onApproved={(result) => {
+            setCasualSellerStatus((current) => ({
+              ...(current || {}), status: result.status, limit: result.limit,
+              application: { reference: result.reference, status: result.status, automatic_checks: result.checks },
+            }));
+            setSessionUserProfile((current) => current ? { ...current, casual_seller_status: result.status, casual_seller_limit: result.limit } : current);
+          }}
+        />
       )}
       {selectedCasualApplication && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 overflow-y-auto" style={{ backgroundColor: "rgba(27,36,48,.78)" }} onClick={() => setSelectedCasualApplication(null)}>
