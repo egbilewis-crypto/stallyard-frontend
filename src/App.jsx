@@ -2050,7 +2050,7 @@ export default function Stallyard() {
   }, []);
   const [route, setRoute] = useMarketplaceRouting(isAdminHost());
   const view = route.view;
-  const setView = (value) => setRoute((previous) => ({ ...previous, view: value === "login" ? "signin" : typeof value === "function" ? value(previous.view) : value }));
+  const setView = (value) => setRoute((previous) => ({ ...previous, listingId: null, cart: false, view: value === "login" ? "signin" : typeof value === "function" ? value(previous.view) : value }));
   const setRouteField = (key, value) => setRoute((previous) => ({ ...previous, [key]: typeof value === "function" ? value(previous[key]) : value }));
 
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
@@ -2131,15 +2131,22 @@ export default function Stallyard() {
   // for this, not just membersLoaded, or it acts on a stale null.
   const [sessionChecked, setSessionChecked] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("All");
-  const [subcategoryFilter, setSubcategoryFilter] = useState("All");
+  const search = route.search;
+  const setSearch = (value) => setRouteField("search", value);
+  const categoryFilter = route.category;
+  const setCategoryFilter = (value) => setRouteField("category", value);
+  const subcategoryFilter = route.subcategory;
+  const setSubcategoryFilter = (value) => setRouteField("subcategory", value);
   const [categoriesMenuOpen, setCategoriesMenuOpen] = useState(false);
   const categoriesMenuRef = useRef(null);
-  const [conditionFilter, setConditionFilter] = useState("All");
-  const [sortBy, setSortBy] = useState("featured");
-  const [priceMin, setPriceMin] = useState("");
-  const [priceMax, setPriceMax] = useState("");
+  const conditionFilter = route.condition;
+  const setConditionFilter = (value) => setRouteField("condition", value);
+  const sortBy = route.sort;
+  const setSortBy = (value) => setRouteField("sort", value);
+  const priceMin = route.priceMin;
+  const setPriceMin = (value) => setRouteField("priceMin", value);
+  const priceMax = route.priceMax;
+  const setPriceMax = (value) => setRouteField("priceMax", value);
   const [filtersOpen, setFiltersOpen] = useState(false);
   useEffect(() => {
     if (!categoriesMenuOpen) return;
@@ -2210,7 +2217,12 @@ export default function Stallyard() {
     accountType: "personal",
     licensePhotos: [],
   });
-  const [selected, setSelected] = useState(null);
+  const [selectedListingCache, setSelectedListingCache] = useState(null);
+  const selected = route.listingId ? listings.find((listing) => String(listing.id) === String(route.listingId)) || (String(selectedListingCache?.id) === String(route.listingId) ? selectedListingCache : null) : null;
+  const setSelected = (listing) => {
+    setSelectedListingCache(listing);
+    setRouteField("listingId", listing?.id || null);
+  };
   const [activeImg, setActiveImg] = useState(0);
   const [galleryZoomOpen, setGalleryZoomOpen] = useState(false);
   // Pinch-to-zoom state for the full-screen gallery — scale/offset are what
@@ -2279,7 +2291,8 @@ export default function Stallyard() {
   const [watchlist, setWatchlist] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
-  const [cartOpen, setCartOpen] = useState(false);
+  const cartOpen = route.cart;
+  const setCartOpen = (value) => setRouteField("cart", value);
   const [shippingForm, setShippingForm] = useState({
     fullName: "",
     phone: "",
@@ -2322,7 +2335,8 @@ export default function Stallyard() {
   });
   const [myTickets, setMyTickets] = useState([]);
   const [adminTickets, setAdminTickets] = useState([]);
-  const [activeTicketId, setActiveTicketId] = useState(null);
+  const activeTicketId = route.ticket;
+  const setActiveTicketId = (value) => setRouteField("ticket", value);
   const [ticketMessages, setTicketMessages] = useState([]);
   const [loadingTicketMessages, setLoadingTicketMessages] = useState(false);
   const [newTicketForm, setNewTicketForm] = useState({ subject: "", message: "" });
@@ -2499,7 +2513,8 @@ export default function Stallyard() {
     vin: "",
   });
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [manageListingsTab, setManageListingsTab] = useState("all");
+  const manageListingsTab = route.listingsTab;
+  const setManageListingsTab = (value) => setRouteField("listingsTab", value);
   const [expandedListingImagesId, setExpandedListingImagesId] = useState(null);
   // Which photo (if any) is mid-way through being hidden, so a reason can
   // be collected before actually confirming — { listingId, url } | null.
@@ -5524,21 +5539,24 @@ export default function Stallyard() {
     }
   };
 
-  const openTicketThread = async (ticketId) => {
-    setActiveTicketId(ticketId);
+  const openTicketThread = (ticketId) => setActiveTicketId(ticketId);
+  useEffect(() => {
+    if (!activeTicketId || !currentUser || !sessionChecked) return;
+    let cancelled = false;
+    setTicketMessages([]);
     setLoadingTicketMessages(true);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/support-tickets/${ticketId}/messages`);
-      if (res.ok) {
-        const { messages } = await res.json();
-        setTicketMessages(messages);
-      }
-    } catch {
-      showToast("Couldn't load that conversation — try again");
-    } finally {
-      setLoadingTicketMessages(false);
-    }
-  };
+    (async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/support-tickets/${activeTicketId}/messages`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setTicketMessages(data.messages || []);
+        } else if (!cancelled) showToast("This support conversation is unavailable");
+      } catch { if (!cancelled) showToast("Couldn't load that conversation — try again"); }
+      finally { if (!cancelled) setLoadingTicketMessages(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTicketId, currentUser, sessionChecked]);
 
   const sendTicketMessage = async () => {
     if (!newTicketMessageInput.trim() || !activeTicketId) return;
@@ -12350,7 +12368,7 @@ export default function Stallyard() {
                     return (
                       <button
                         key={t.key}
-                        onClick={() => setManageListingsTab(t.key)}
+                        onClick={() => setRoute((previous) => ({ ...previous, sellerSection: "listings", listingsTab: t.key }))}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
                         style={{
                           backgroundColor: manageListingsTab === t.key ? INK : "white",
