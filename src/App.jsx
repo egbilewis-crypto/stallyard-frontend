@@ -1975,6 +1975,70 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   );
 }
 
+function LiveDeliveryPhotoCamera({ onSave, onClose, busy }) {
+  const videoRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [facing, setFacing] = useState("environment");
+  useEffect(() => {
+    let cancelled = false;
+    let stream;
+    setReady(false);
+    setError("");
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera unavailable");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1400 } }, audio: false });
+        if (cancelled) { stream.getTracks().forEach((track) => track.stop()); return; }
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await video.play();
+        if (!cancelled) setReady(true);
+      } catch {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (!cancelled) setError("Camera access is required. Allow camera access in your browser settings, then reopen this camera. Saved pictures cannot be used.");
+      }
+    })();
+    return () => { cancelled = true; stream?.getTracks().forEach((track) => track.stop()); };
+  }, [facing]);
+  const capture = () => {
+    const video = videoRef.current;
+    if (!ready || !video?.videoWidth || !video.videoHeight || video.readyState < 2) return;
+    try {
+      const scale = Math.min(1, 1400 / Math.max(video.videoWidth, video.videoHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+      setPhoto(canvas.toDataURL("image/jpeg", 0.85));
+    } catch { setError("Couldn't capture the photo. Please try again."); }
+  };
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(10,15,22,.86)" }}>
+      <div role="dialog" aria-modal="true" aria-label="Take delivery photo" className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-xl">
+        <div className="flex justify-between gap-3 mb-3">
+          <div><h3 className="text-lg font-semibold">Take delivery photo</h3><p className="text-xs mt-1">Take a fresh picture of the handoff. Saved pictures cannot be selected.</p></div>
+          <button type="button" disabled={busy} onClick={onClose} aria-label="Close delivery camera"><X size={22} /></button>
+        </div>
+        <video ref={videoRef} autoPlay muted playsInline className={photo ? "hidden" : "w-full rounded-xl bg-black aspect-video object-contain"} />
+        {photo && <img src={photo} alt="Review captured delivery photo" className="w-full rounded-xl" />}
+        {error && <p role="alert" className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
+        {!photo && !error && !ready && <p className="text-sm mt-2">Starting live camera…</p>}
+        <div className="flex gap-2 mt-3">
+          {photo ? <>
+            <button type="button" disabled={busy} onClick={() => setPhoto(null)} className="px-4 py-2 rounded-lg border disabled:opacity-50">Retake</button>
+            <button type="button" disabled={busy} onClick={() => onSave(photo)} className="px-4 py-2 rounded-lg disabled:opacity-50" style={{ backgroundColor: MARIGOLD }}>{busy ? "Saving…" : "Use photo"}</button>
+          </> : <>
+            <button type="button" disabled={!ready || !!error} onClick={capture} className="px-4 py-2 rounded-lg disabled:opacity-50" style={{ backgroundColor: MARIGOLD }}>Take photo</button>
+            <button type="button" disabled={!ready} onClick={() => setFacing((value) => value === "environment" ? "user" : "environment")} className="px-4 py-2 rounded-lg border disabled:opacity-50">Switch camera</button>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Stallyard() {
   useFonts();
   const [fatalServerError, setFatalServerError] = useState(false);
@@ -1984,6 +2048,8 @@ export default function Stallyard() {
     return () => window.removeEventListener("stallyard:server-error", handleServerError);
   }, []);
   const [view, setView] = useState("browse");
+  const resumableViews = ["browse", "dashboard", "buyerHome", "orders", "wallet", "messages", "watchlist", "sell", "help", "categories", "how-it-works", "shipping-delivery", "become-seller"];
+
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
   const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email" | "new-password"
@@ -2061,6 +2127,12 @@ export default function Stallyard() {
   // Anything that redirects based on "is someone logged in" needs to wait
   // for this, not just membersLoaded, or it acts on a stale null.
   const [sessionChecked, setSessionChecked] = useState(false);
+  useEffect(() => {
+    if (!sessionChecked || !currentUser || isAdminHost()) return;
+    try {
+      if (resumableViews.includes(view)) window.sessionStorage.setItem(`stallyard-view:${currentUser}`, view);
+    } catch { /* Storage restrictions must not interrupt navigation. */ }
+  }, [view, sessionChecked, currentUser]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -2451,6 +2523,7 @@ export default function Stallyard() {
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
+  const [deliveryPhotoTarget, setDeliveryPhotoTarget] = useState(null);
   const [uploadingDeliverySelfieKey, setUploadingDeliverySelfieKey] = useState(null);
   const [deliverySelfieDrafts, setDeliverySelfieDrafts] = useState({});
   const [selfDeliveryActionKey, setSelfDeliveryActionKey] = useState(null);
@@ -2543,6 +2616,12 @@ export default function Stallyard() {
           if (sessionData.user?.username) {
             setSessionUserProfile(sessionData.user);
             setCurrentUser(sessionData.user.username);
+            if (!isAdminHost() && !sessionData.user.is_admin) {
+              try {
+                const savedView = window.sessionStorage.getItem(`stallyard-view:${sessionData.user.username}`);
+                if (resumableViews.includes(savedView)) setView(savedView);
+              } catch { /* Navigation storage is optional. */ }
+            }
             await window.storage.set("stallyard-session", sessionData.user.username, false);
           }
         } else {
@@ -6303,7 +6382,7 @@ export default function Stallyard() {
 
   const updateItemProofOfDelivery = async (orderId, itemId, proofOfDeliveryUrl) => {
     const ok = await patchOrderItemOnBackend(itemId, { proofOfDeliveryUrl });
-    if (!ok) return;
+    if (!ok) return false;
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -6315,6 +6394,7 @@ export default function Stallyard() {
       )
     );
     showToast("Proof of delivery saved");
+    return true;
   };
 
   // Optional receipt confirmation records that the buyer received and accepted
@@ -6431,7 +6511,7 @@ export default function Stallyard() {
             : {
                 ...o,
                 paymentStatus: data.order ? "released" : o.paymentStatus,
-                items: o.items.map((i) => (i.id === itemId ? { ...i, buyerConfirmedAt: i.buyerConfirmedAt || Date.now(), deliveryToken: null } : i)),
+                items: o.items.map((i) => (i.id === itemId ? { ...i, fulfillmentStatus: data.item?.fulfillment_status || i.fulfillmentStatus, deliveryTokenRedeemedAt: data.item?.delivery_token_redeemed_at ? new Date(data.item.delivery_token_redeemed_at).getTime() : Date.now(), deliveryToken: null } : i)),
               }
         )
       );
@@ -7698,24 +7778,16 @@ export default function Stallyard() {
     }
   };
 
-  const handleProofOfDeliverySelect = async (e, orderId, itemId) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      showToast("That photo is too large — please upload something under 5MB");
-      return;
-    }
-    const key = `${orderId}-${itemId}`;
-    setUploadingPodKey(key);
+  const saveLiveDeliveryPhoto = async (dataUrl) => {
+    if (!deliveryPhotoTarget || uploadingPodKey) return;
+    const { orderId, itemId } = deliveryPhotoTarget;
+    setUploadingPodKey(`${orderId}-${itemId}`);
     try {
-      const dataUrl = await resizeImageFile(file, 1400, 0.85);
-      await updateItemProofOfDelivery(orderId, itemId, dataUrl);
+      const saved = await updateItemProofOfDelivery(orderId, itemId, dataUrl);
+      if (saved) setDeliveryPhotoTarget(null);
     } catch {
-      showToast("Couldn't read that photo — try a different one");
-    } finally {
-      setUploadingPodKey(null);
-    }
+      showToast("Couldn't save the delivery photo — try again");
+    } finally { setUploadingPodKey(null); }
   };
 
   const runSelfDeliveryStep = async (orderId, itemId, action, extra = {}) => {
@@ -12759,14 +12831,11 @@ export default function Stallyard() {
                                       {i.selfDeliveryStatus === "arrived" && (
                                         <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
                                           <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-proof photo</div>
-                                          <div className="text-xs mt-1" style={{ color: SLATE }}>Upload the handoff photo before completing delivery.</div>
+                                          <div className="text-xs mt-1" style={{ color: SLATE }}>Take a live handoff photo before completing delivery.</div>
                                           {i.proofOfDeliveryUrl ? (
                                             <img src={i.proofOfDeliveryUrl} alt="Delivery proof" className="mt-2 w-24 h-24 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
                                           ) : (
-                                            <label className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium cursor-pointer" style={{ borderColor: INK, color: INK }}>
-                                              {uploadingPodKey === trackKey ? "Uploading…" : "Take/upload delivery photo"}
-                                              <input type="file" accept="image/*" capture="environment" className="hidden" disabled={uploadingPodKey === trackKey} onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)} />
-                                            </label>
+                                            <button type="button" onClick={() => setDeliveryPhotoTarget({ orderId: o.id, itemId: i.id })} disabled={uploadingPodKey === trackKey} className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium disabled:opacity-50" style={{ borderColor: INK, color: INK }}>Take delivery photo</button>
                                           )}
                                           <button
                                             type="button"
@@ -12878,19 +12947,7 @@ export default function Stallyard() {
                                           />
                                         </a>
                                       ) : (
-                                        <label
-                                          className="inline-block px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer"
-                                          style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
-                                        >
-                                          {uploadingPodKey === trackKey ? "Uploading…" : "Upload delivery photo"}
-                                          <input
-                                            type="file"
-                                            accept="image/*"
-                                            onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)}
-                                            className="hidden"
-                                            disabled={uploadingPodKey === trackKey}
-                                          />
-                                        </label>
+                                        <button type="button" onClick={() => setDeliveryPhotoTarget({ orderId: o.id, itemId: i.id })} disabled={uploadingPodKey === trackKey} className="inline-block px-2 py-1 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>Take delivery photo</button>
                                       )}
                                     </div>
                                   )}
@@ -12932,7 +12989,7 @@ export default function Stallyard() {
                                             disabled={
                                               redeemingTokenKey === i.id ||
                                               !(redeemTokenDrafts[i.id] || "").trim() ||
-                                              !i.proofOfDeliveryUrl
+                                              !i.proofOfDeliveryUrl || !i.deliveryTokenSentAt || !!i.deliveryTokenRedeemedAt || i.fulfillmentStatus !== "delivered"
                                             }
                                             className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
                                             style={{ backgroundColor: MARIGOLD, color: INK }}
@@ -18212,6 +18269,7 @@ export default function Stallyard() {
           </div>
         </div>
       )}
+      {deliveryPhotoTarget && <LiveDeliveryPhotoCamera onSave={saveLiveDeliveryPhoto} onClose={() => setDeliveryPhotoTarget(null)} busy={uploadingPodKey !== null} />}
       {deliverySelfieCameraTarget && (
         <div
           className="fixed inset-0 z-[110] flex items-center justify-center p-4"
