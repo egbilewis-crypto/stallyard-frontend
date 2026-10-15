@@ -2127,12 +2127,6 @@ export default function Stallyard() {
   // Anything that redirects based on "is someone logged in" needs to wait
   // for this, not just membersLoaded, or it acts on a stale null.
   const [sessionChecked, setSessionChecked] = useState(false);
-  useEffect(() => {
-    if (!sessionChecked || !currentUser || isAdminHost()) return;
-    try {
-      if (resumableViews.includes(view)) window.sessionStorage.setItem(`stallyard-view:${currentUser}`, view);
-    } catch { /* Storage restrictions must not interrupt navigation. */ }
-  }, [view, sessionChecked, currentUser]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -2163,6 +2157,13 @@ export default function Stallyard() {
   }, [categoriesMenuOpen]);
   const [members, setMembers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+    if (!sessionChecked || !currentUser || isAdminHost()) return;
+    try {
+      if (resumableViews.includes(view)) window.sessionStorage.setItem(`stallyard-view:${currentUser}`, view);
+    } catch { /* Storage restrictions must not interrupt navigation. */ }
+  }, [view, sessionChecked, currentUser]);
+
   const [sessionUserProfile, setSessionUserProfile] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
