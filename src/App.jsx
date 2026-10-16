@@ -4266,10 +4266,10 @@ export default function Stallyard() {
     }
   };
 
-  const persistSettings = async (next) => {
+  const persistSettings = async (next, field = null) => {
     const body = {};
-    if (next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
-    if (next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
+    if (field === "commissionRate" || next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
+    if (field === "taxRate" || next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
       setSettings(next);
