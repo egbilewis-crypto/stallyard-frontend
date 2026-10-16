@@ -2152,7 +2152,7 @@ export default function SuperAdminDashboard({ scope }) {
                       />
                       <span style={{ color: SLATE }}>%</span>
                       <button
-                        onClick={() => persistSettings(settings)}
+                        onClick={() => persistSettings(settings, "commissionRate")}
                         className="px-4 py-2 rounded-lg text-sm font-medium"
                         style={{ backgroundColor: MARIGOLD, color: INK }}
                       >
@@ -2183,7 +2183,7 @@ export default function SuperAdminDashboard({ scope }) {
                       />
                       <span style={{ color: SLATE }}>%</span>
                       <button
-                        onClick={() => persistSettings(settings)}
+                        onClick={() => persistSettings(settings, "taxRate")}
                         className="px-4 py-2 rounded-lg text-sm font-medium"
                         style={{ backgroundColor: MARIGOLD, color: INK }}
                       >
