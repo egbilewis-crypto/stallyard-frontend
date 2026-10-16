@@ -4272,9 +4272,16 @@ export default function Stallyard() {
     if (field === "taxRate" || next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
-      setSettings(next);
-      return;
+      // Older admin buttons pass the already-edited state without a field.
+      if (hasAdminPermission(currentMember, "finance")) {
+        body.commissionRate = next.commissionRate;
+        body.taxRate = next.taxRate;
+      } else {
+        showToast("No settings changes to save");
+        return false;
+      }
     }
+    showToast("Saving settings…");
     try {
       const res = await authFetch(`${BACKEND_URL}/settings`, {
         method: "PATCH",
@@ -4284,12 +4291,14 @@ export default function Stallyard() {
       const data = await res.json();
       if (!res.ok) {
         showToast(data.error || "Couldn't save settings — try again");
-        return;
+        return false;
       }
       setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "" });
       showToast("Settings saved");
+      return true;
     } catch {
       showToast("Couldn't reach the server — try again");
+      return false;
     }
   };
 
@@ -12363,7 +12372,7 @@ export default function Stallyard() {
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                               className="font-medium"
                             >
-                              ${Number(l.price).toFixed(2)}
+                              {formatMoney(Number(l.price))}
                             </span>
                             <button
                               onClick={() => {
@@ -12541,7 +12550,7 @@ export default function Stallyard() {
                               className="text-sm font-semibold"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              ${myRevenue.toFixed(2)}
+                              {formatMoney(myRevenue)}
                             </span>
                           </div>
                           <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
@@ -15327,7 +15336,7 @@ export default function Stallyard() {
                     Request a withdrawal
                   </h3>
                   <div className="flex items-center gap-2 mb-2">
-                    <span style={{ color: SLATE }}>$</span>
+                    <span style={{ color: SLATE }}>₦</span>
                     <input
                       type="number"
                       min="0"
@@ -15387,7 +15396,7 @@ export default function Stallyard() {
                               className="font-medium"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              ${w.amount.toFixed(2)}
+                              {formatMoney(w.amount)}
                             </span>
                           </div>
                         </div>
@@ -15449,7 +15458,7 @@ export default function Stallyard() {
                               className="font-medium"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              ${t.payout.toFixed(2)}
+                              {formatMoney(t.payout)}
                             </span>
                           </div>
                         </div>
@@ -15593,7 +15602,7 @@ export default function Stallyard() {
                             }}
                           >
                             <div className="font-medium mb-1">
-                              Offer: ${m.amount.toFixed(2)}
+                              Offer: {formatMoney(m.amount)}
                             </div>
                             {m.status === "pending" && !mine && (
                               <div className="flex items-center gap-3 mt-1">
@@ -15627,7 +15636,7 @@ export default function Stallyard() {
                                     className="text-xs font-medium underline"
                                     style={{ color: INK }}
                                   >
-                                    Add to cart at ${m.amount.toFixed(2)}
+                                    Add to cart at {formatMoney(m.amount)}
                                   </button>
                                 )}
                               </div>
@@ -15702,7 +15711,7 @@ export default function Stallyard() {
 
                 {offerModalOpen && (
                   <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD }}>
-                    <span style={{ color: SLATE }}>$</span>
+                    <span style={{ color: SLATE }}>₦</span>
                     <input
                       type="number"
                       min="0"
@@ -15747,7 +15756,7 @@ export default function Stallyard() {
                       aria-label="Make an offer"
                       title="Make an offer"
                     >
-                      $
+                      ₦
                     </button>
                   )}
                   <label
@@ -16678,7 +16687,7 @@ export default function Stallyard() {
               className="text-2xl mb-3"
               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
             >
-              ${Number(selected.price).toFixed(2)}
+              {formatMoney(Number(selected.price))}
             </div>
             <p className="text-sm mb-4" style={{ color: SLATE }}>
               {selected.description || "No description provided."}
@@ -17719,7 +17728,7 @@ export default function Stallyard() {
                           {i.title} × {i.qty}
                         </span>
                         <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
-                          ${(i.price * i.qty).toFixed(2)}
+                          {formatMoney((i.price * i.qty))}
                         </span>
                       </div>
                     ))}
