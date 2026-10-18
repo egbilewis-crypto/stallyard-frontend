@@ -606,9 +606,9 @@ const RECOMMENDED_LISTING_PHOTO_DIM = 1200; // warn (not block) below this
 const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
 
 const SHIPPING_METHODS = [
-  { value: "self_delivery", label: "Self delivery" },
   { value: "dhl", label: "DHL" },
-  { value: "sea_shipping", label: "Sea shipping" },
+  { value: "self_delivery", label: "Self delivery" },
+  { value: "local_delivery_driver", label: "Local Delivery Driver" },
 ];
 
 const RETURN_POLICIES = ["No returns", "7-day returns", "14-day returns", "30-day returns"];
@@ -798,7 +798,7 @@ const FULFILLMENT_COLOR = {
   returned: "#B8862E",
 };
 
-const SHIPPING_CARRIERS = ["Self delivery", "DHL", "GIG Logistics", "NIPOST", "UPS", "FedEx", "Other"];
+const SHIPPING_CARRIERS = ["DHL", "Self delivery", "Local Delivery Driver"];
 
 const RETURN_REASONS = [
   "Not as described",
@@ -18308,3 +18308,4 @@ export default function Stallyard() {
     </div>
   );
 }
+
