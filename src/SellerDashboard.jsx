@@ -1275,6 +1275,9 @@ export default function SellerDashboard({ scope }) {
                                     </div>
                                   )}
                                   {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") &&
+                                    (i.carrier !== "Self delivery" ||
+                                      (!!i.proofOfDeliveryUrl &&
+                                        ["arrived", "delivered"].includes(i.selfDeliveryStatus))) &&
                                     (o.paymentStatus === "released" ? (
                                       <div className="mt-2">
                                         <Tag color={SAGE}>Delivery completed — payment released</Tag>
@@ -1425,3 +1428,4 @@ export default function SellerDashboard({ scope }) {
           </div>
   );
 }
+
