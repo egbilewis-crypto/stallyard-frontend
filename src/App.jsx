@@ -697,6 +697,14 @@ function responsiveListingSrcSet(url) {
     .join(", ");
 }
 
+function toLocalDateTimeInput(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function formatDeliveryDate(value) {
   const date = String(value || "").slice(0, 10);
   if (!date) return "";
@@ -2399,6 +2407,10 @@ export default function Stallyard() {
   const [returnTrackingDrafts, setReturnTrackingDrafts] = useState({});
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [deliveryEstimateDrafts, setDeliveryEstimateDrafts] = useState({});
+  const [deliveryAssignments, setDeliveryAssignments] = useState({});
+  const [deliveryAssignmentDrafts, setDeliveryAssignmentDrafts] = useState({});
+  const [deliveryAssignmentSecrets, setDeliveryAssignmentSecrets] = useState({});
+  const [deliveryAssignmentSavingKey, setDeliveryAssignmentSavingKey] = useState(null);
   const locationWatchersRef = useRef({});
   const locationLastSentRef = useRef({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -2832,6 +2844,9 @@ export default function Stallyard() {
         setAdminDisputes([]);
         setSellerReports([]);
         setMyDisputes([]);
+        setDeliveryAssignments({});
+        setDeliveryAssignmentDrafts({});
+        setDeliveryAssignmentSecrets({});
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -2862,12 +2877,13 @@ export default function Stallyard() {
         // dispute cases are supplementary to the order view
       }
       try {
-        const [mineRes, sellingRes, adminRes] = await Promise.all([
+        const [mineRes, sellingRes, adminRes, assignmentRes] = await Promise.all([
           authFetch(`${BACKEND_URL}/orders/mine`),
           authFetch(`${BACKEND_URL}/orders/selling`),
           isAdmin && hasAdminPermission(members.find((m) => m.username === currentUser), "order_access")
             ? authFetch(`${BACKEND_URL}/orders`)
             : Promise.resolve(null),
+          !isAdmin ? authFetch(`${BACKEND_URL}/delivery-assignments/mine`) : Promise.resolve(null),
         ]);
         const byId = new Map();
         for (const res of [mineRes, sellingRes, adminRes]) {
@@ -2876,6 +2892,12 @@ export default function Stallyard() {
           for (const row of rows) byId.set(row.id, backendOrderToFrontend(row));
         }
         setOrders([...byId.values()].sort((a, b) => b.createdAt - a.createdAt));
+        if (assignmentRes?.ok) {
+          const data = await assignmentRes.json();
+          const byItem = {};
+          for (const assignment of data.assignments || []) byItem[assignment.orderItemId] = assignment;
+          setDeliveryAssignments(byItem);
+        }
       } catch {
         // couldn't reach backend for orders — leave empty rather than show stale/fake data
       }
@@ -6403,6 +6425,117 @@ export default function Stallyard() {
     Object.values(locationWatchersRef.current).forEach((watchId) => navigator.geolocation?.clearWatch(watchId));
   }, []);
 
+  const saveLocalDriverAssignment = async (itemId, draft) => {
+    const driverName = String(draft?.driverName || "").trim();
+    const driverPhone = String(draft?.driverPhone || "").trim();
+    const deliveryFee = Number(draft?.deliveryFee);
+    if (driverName.length < 2) {
+      showToast("Enter the driver's full name");
+      return;
+    }
+    if (!driverPhone) {
+      showToast("Enter the driver's Nigerian phone number");
+      return;
+    }
+    if (!Number.isFinite(deliveryFee) || deliveryFee <= 0) {
+      showToast("Enter a delivery fee greater than ₦0");
+      return;
+    }
+    setDeliveryAssignmentSavingKey(itemId);
+    try {
+      const body = {
+        driverName,
+        driverPhone,
+        deliveryFee,
+        paymentMethod: draft?.paymentMethod || "cash",
+        pickupAt: draft?.pickupAt ? new Date(draft.pickupAt).toISOString() : null,
+        deliveryDueAt: draft?.deliveryDueAt ? new Date(draft.deliveryDueAt).toISOString() : null,
+        packageDescription: String(draft?.packageDescription || "").trim(),
+      };
+      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/delivery-assignment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.assignment) {
+        showToast(data.error || "Couldn't create the driver assignment");
+        return;
+      }
+      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
+      setDeliveryAssignmentSecrets((all) => ({
+        ...all,
+        [itemId]: {
+          accessUrl: `${window.location.origin}${data.accessPath}`,
+          activationCode: data.activationCode,
+        },
+      }));
+      showToast("Driver assignment created — copy the link and activation code");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setDeliveryAssignmentSavingKey(null);
+    }
+  };
+
+  const regenerateLocalDriverAccess = async (itemId, assignmentId) => {
+    setDeliveryAssignmentSavingKey(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignmentId}/regenerate-access`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.assignment) {
+        showToast(data.error || "Couldn't regenerate driver access");
+        return;
+      }
+      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
+      setDeliveryAssignmentSecrets((all) => ({
+        ...all,
+        [itemId]: {
+          accessUrl: `${window.location.origin}${data.accessPath}`,
+          activationCode: data.activationCode,
+        },
+      }));
+      showToast("A new driver link and activation code were created");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setDeliveryAssignmentSavingKey(null);
+    }
+  };
+
+  const revokeLocalDriverAccess = async (itemId, assignmentId) => {
+    if (!window.confirm("Revoke this driver's access to the delivery?")) return;
+    setDeliveryAssignmentSavingKey(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignmentId}/revoke`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.assignment) {
+        showToast(data.error || "Couldn't revoke driver access");
+        return;
+      }
+      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
+      setDeliveryAssignmentSecrets((all) => {
+        const next = { ...all };
+        delete next[itemId];
+        return next;
+      });
+      showToast("Driver access revoked");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setDeliveryAssignmentSavingKey(null);
+    }
+  };
+
+  const copyDeliveryAccessValue = async (value, label) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast(`${label} copied`);
+    } catch {
+      window.prompt(`Copy the ${label.toLowerCase()}:`, value);
+    }
+  };
+
   const updateItemCarrier = async (orderId, itemId, carrier) => {
     const ok = await patchOrderItemOnBackend(itemId, { carrier });
     if (!ok) return;
@@ -6416,6 +6549,17 @@ export default function Stallyard() {
             }
       )
     );
+    if (carrier !== "Local Delivery Driver") {
+      setDeliveryAssignments((all) => {
+        if (!all[itemId]) return all;
+        return { ...all, [itemId]: { ...all[itemId], status: "revoked", revokedAt: new Date().toISOString() } };
+      });
+      setDeliveryAssignmentSecrets((all) => {
+        const next = { ...all };
+        delete next[itemId];
+        return next;
+      });
+    }
   };
 
   const updateItemProofOfDelivery = async (orderId, itemId, proofOfDeliveryUrl) => {
@@ -11830,6 +11974,30 @@ export default function Stallyard() {
                 ))}
               </div>
             )}
+            {currentUser && (
+              <section
+                className="mb-4 p-4 rounded-xl border"
+                style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}
+                aria-labelledby="seller-delivery-return-responsibility"
+              >
+                <h3 id="seller-delivery-return-responsibility" className="text-sm font-semibold" style={{ color: INK }}>
+                  Seller delivery and return responsibility
+                </h3>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>
+                  You are responsible for the original delivery and return-delivery costs when a return is approved for any of these reasons:
+                </p>
+                <ol className="mt-2 pl-5 list-decimal space-y-1 text-xs" style={{ color: INK }}>
+                  <li>You sent the wrong item.</li>
+                  <li>The item is counterfeit.</li>
+                  <li>The item is damaged during delivery.</li>
+                  <li>The item arrives defective or becomes defective during delivery.</li>
+                  <li>The item does not match its listing description or pictures.</li>
+                </ol>
+                <p className="text-xs mt-2 font-medium" style={{ color: BERRY }}>
+                  Describe items accurately, verify their condition, and package them securely before dispatch.
+                </p>
+              </section>
+            )}
             {currentUser && !hasSellerListingAccess && (
               <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
                 <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your email and phone first, then complete your live selfie and Nigerian ID check to publish up to ₦500,000 in combined active listings.</p></div>
@@ -12623,6 +12791,17 @@ export default function Stallyard() {
                                 start: i.estimatedDeliveryStart || "",
                                 end: i.estimatedDeliveryEnd || "",
                               };
+                              const driverAssignment = deliveryAssignments[i.id] || null;
+                              const driverDraft = deliveryAssignmentDrafts[i.id] || {
+                                driverName: driverAssignment?.driverName || "",
+                                driverPhone: driverAssignment?.driverPhone || "",
+                                deliveryFee: driverAssignment?.deliveryFee ? String(driverAssignment.deliveryFee) : "",
+                                paymentMethod: driverAssignment?.paymentMethod || "cash",
+                                pickupAt: toLocalDateTimeInput(driverAssignment?.pickupAt),
+                                deliveryDueAt: toLocalDateTimeInput(driverAssignment?.deliveryDueAt),
+                                packageDescription: driverAssignment?.packageDescription || i.title || "",
+                              };
+                              const driverSecret = deliveryAssignmentSecrets[i.id] || null;
                               return (
                                 <div
                                   key={i.id}
@@ -12726,6 +12905,166 @@ export default function Stallyard() {
                                             Save
                                           </button>
                                         </>
+                                      )}
+                                    </div>
+                                  )}
+                                  {i.carrier === "Local Delivery Driver" && !['delivered', 'cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                    <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: SAGE, backgroundColor: "#F3F8F4" }}>
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                        <div>
+                                          <div className="text-sm font-semibold" style={{ color: INK }}>Assign a Local Delivery Driver</div>
+                                          <div className="text-xs mt-0.5" style={{ color: SLATE }}>
+                                            The driver receives restricted access to this delivery only. Never share your Stallyard password.
+                                          </div>
+                                        </div>
+                                        {driverAssignment && (
+                                          <Tag color={driverAssignment.status === "revoked" ? BERRY : SAGE}>
+                                            {driverAssignment.status === "revoked" ? "Access revoked" : "Assigned"}
+                                          </Tag>
+                                        )}
+                                      </div>
+                                      <div className="grid sm:grid-cols-2 gap-2 mt-3">
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Driver's full name</span>
+                                          <input
+                                            value={driverDraft.driverName}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, driverName: e.target.value } }))}
+                                            placeholder="Driver's full name"
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Nigerian phone number</span>
+                                          <input
+                                            type="tel"
+                                            value={driverDraft.driverPhone}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, driverPhone: e.target.value } }))}
+                                            placeholder="0801 234 5678"
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Agreed delivery fee (₦)</span>
+                                          <input
+                                            type="number"
+                                            min="1"
+                                            step="1"
+                                            value={driverDraft.deliveryFee}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, deliveryFee: e.target.value } }))}
+                                            placeholder="5000"
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Driver payment method</span>
+                                          <select
+                                            value={driverDraft.paymentMethod}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, paymentMethod: e.target.value } }))}
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          >
+                                            <option value="cash">Cash</option>
+                                            <option value="bank_transfer">Bank transfer</option>
+                                          </select>
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Expected pickup</span>
+                                          <input
+                                            type="datetime-local"
+                                            value={driverDraft.pickupAt}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, pickupAt: e.target.value } }))}
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </label>
+                                        <label className="text-xs">
+                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Expected delivery</span>
+                                          <input
+                                            type="datetime-local"
+                                            min={driverDraft.pickupAt || undefined}
+                                            value={driverDraft.deliveryDueAt}
+                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, deliveryDueAt: e.target.value } }))}
+                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
+                                            style={{ borderColor: "#DDD8CC" }}
+                                          />
+                                        </label>
+                                      </div>
+                                      <label className="text-xs block mt-2">
+                                        <span className="block mb-1 font-medium" style={{ color: INK }}>Package description</span>
+                                        <textarea
+                                          value={driverDraft.packageDescription}
+                                          onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, packageDescription: e.target.value } }))}
+                                          maxLength={500}
+                                          rows={2}
+                                          className="w-full px-2 py-2 rounded-lg border bg-white outline-none resize-y"
+                                          style={{ borderColor: "#DDD8CC" }}
+                                        />
+                                      </label>
+                                      <div className="flex gap-2 mt-3 flex-wrap">
+                                        <button
+                                          type="button"
+                                          onClick={() => saveLocalDriverAssignment(i.id, driverDraft)}
+                                          disabled={deliveryAssignmentSavingKey === i.id}
+                                          className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                          style={{ backgroundColor: SAGE, color: "white" }}
+                                        >
+                                          {deliveryAssignmentSavingKey === i.id
+                                            ? "Saving…"
+                                            : driverAssignment
+                                              ? "Update assignment and create new access"
+                                              : "Create driver link"}
+                                        </button>
+                                        {driverAssignment && driverAssignment.status !== "revoked" && (
+                                          <button
+                                            type="button"
+                                            onClick={() => revokeLocalDriverAccess(i.id, driverAssignment.id)}
+                                            disabled={deliveryAssignmentSavingKey === i.id}
+                                            className="px-3 py-2 rounded-lg border text-xs font-semibold bg-white disabled:opacity-50"
+                                            style={{ borderColor: BERRY, color: BERRY }}
+                                          >
+                                            Revoke access
+                                          </button>
+                                        )}
+                                        {driverAssignment && (
+                                          <button
+                                            type="button"
+                                            onClick={() => regenerateLocalDriverAccess(i.id, driverAssignment.id)}
+                                            disabled={deliveryAssignmentSavingKey === i.id}
+                                            className="px-3 py-2 rounded-lg border text-xs font-semibold bg-white disabled:opacity-50"
+                                            style={{ borderColor: INK, color: INK }}
+                                          >
+                                            Create new link and code
+                                          </button>
+                                        )}
+                                      </div>
+                                      {driverAssignment && (
+                                        <div className="mt-3 text-xs" style={{ color: SLATE }}>
+                                          Access expires {new Date(driverAssignment.accessExpiresAt).toLocaleString()}.
+                                          {!driverSecret && driverAssignment.status !== "revoked" && " Create a new link and code if you no longer have the originals."}
+                                        </div>
+                                      )}
+                                      {driverSecret && (
+                                        <div className="mt-3 p-3 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
+                                          <div className="font-semibold text-xs" style={{ color: INK }}>Share these separately with the assigned driver</div>
+                                          <div className="mt-2">
+                                            <div className="text-xs font-medium" style={{ color: INK }}>One-time delivery link</div>
+                                            <div className="flex gap-2 mt-1">
+                                              <input readOnly value={driverSecret.accessUrl} className="flex-1 min-w-0 px-2 py-1 rounded border text-xs" style={{ borderColor: "#DDD8CC" }} />
+                                              <button type="button" onClick={() => copyDeliveryAccessValue(driverSecret.accessUrl, "Driver link")} className="px-2 py-1 rounded border text-xs font-medium bg-white" style={{ borderColor: SAGE, color: INK }}>Copy link</button>
+                                            </div>
+                                          </div>
+                                          <div className="mt-2">
+                                            <div className="text-xs font-medium" style={{ color: INK }}>Six-digit activation code</div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                              <span className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{driverSecret.activationCode}</span>
+                                              <button type="button" onClick={() => copyDeliveryAccessValue(driverSecret.activationCode, "Activation code")} className="px-2 py-1 rounded border text-xs font-medium bg-white" style={{ borderColor: SAGE, color: INK }}>Copy code</button>
+                                            </div>
+                                          </div>
+                                          <p className="text-xs mt-2" style={{ color: BERRY }}>Do not send your Stallyard password. The driver link has access to this delivery only.</p>
+                                        </div>
                                       )}
                                     </div>
                                   )}
@@ -18308,4 +18647,5 @@ export default function Stallyard() {
     </div>
   );
 }
+
 
