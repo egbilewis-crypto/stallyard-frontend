@@ -161,6 +161,34 @@ export default function SellerDashboard({ scope }) {
                 ))}
               </div>
             )}
+            {currentUser && (
+              <section
+                className="mb-4 p-4 rounded-xl border"
+                style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}
+                aria-labelledby="seller-delivery-return-responsibility"
+              >
+                <h3
+                  id="seller-delivery-return-responsibility"
+                  className="text-sm font-semibold"
+                  style={{ color: INK }}
+                >
+                  Seller delivery and return responsibility
+                </h3>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>
+                  You are responsible for the original delivery and return-delivery costs when a return is approved for any of these reasons:
+                </p>
+                <ol className="mt-2 pl-5 list-decimal space-y-1 text-xs" style={{ color: INK }}>
+                  <li>You sent the wrong item.</li>
+                  <li>The item is counterfeit.</li>
+                  <li>The item is damaged during delivery.</li>
+                  <li>The item arrives defective or becomes defective during delivery.</li>
+                  <li>The item does not match its listing description or pictures.</li>
+                </ol>
+                <p className="text-xs mt-2 font-medium" style={{ color: BERRY }}>
+                  Describe items accurately, verify their condition, and package them securely before dispatch.
+                </p>
+              </section>
+            )}
             {currentUser && !hasSellerListingAccess && (
               <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
                 <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your email and phone first, then complete your live selfie and Nigerian ID check to publish up to ₦500,000 in combined active listings.</p></div>
@@ -1428,4 +1456,5 @@ export default function SellerDashboard({ scope }) {
           </div>
   );
 }
+
 
