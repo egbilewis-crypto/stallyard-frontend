@@ -17,6 +17,7 @@ const FaceLivenessDetectorCore = lazy(() =>
 // The complete privileged dashboard is kept out of the public marketplace
 // bundle and fetched only after an authenticated admin opens the admin view.
 const SuperAdminDashboard = lazy(() => import("./SuperAdminDashboard.jsx"));
+const DriverDelivery = lazy(() => import("./DriverDelivery.jsx"));
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -2048,7 +2049,7 @@ function LiveDeliveryPhotoCamera({ onSave, onClose, busy }) {
   );
 }
 
-export default function Stallyard() {
+function MarketplaceStallyard() {
   useFonts();
   const [fatalServerError, setFatalServerError] = useState(false);
   useEffect(() => {
@@ -18646,6 +18647,22 @@ export default function Stallyard() {
       )}
     </div>
   );
+}
+
+export default function Stallyard() {
+  const driverRoute = typeof window !== "undefined"
+    ? window.location.pathname.match(/^\/driver\/delivery\/([A-Za-z0-9_-]{30,120})\/?$/)
+    : null;
+
+  if (driverRoute) {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Opening secure delivery…</div>}>
+        <DriverDelivery accessToken={driverRoute[1]} />
+      </Suspense>
+    );
+  }
+
+  return <MarketplaceStallyard />;
 }
 
 
