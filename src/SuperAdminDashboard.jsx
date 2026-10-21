@@ -43,6 +43,7 @@ export default function SuperAdminDashboard({ scope }) {
     adminDisputeSearch,
     adminDisputeStatusFilter,
     adminDisputes,
+    adminLocalDeliveries,
     adminListingSearch,
     adminListingStatusFilter,
     adminMemberFilter,
@@ -76,6 +77,7 @@ export default function SuperAdminDashboard({ scope }) {
     adminToggleImageVisibility,
     adminToggleSuspend,
     adminToggleVerify,
+    adminRevokeLocalDelivery,
     adminTotpCodeInput,
     adminTotpError,
     adminTotpSetup,
@@ -117,6 +119,7 @@ export default function SuperAdminDashboard({ scope }) {
     expandedStaffId,
     faqForm,
     fetchAdminReport,
+    fetchAdminLocalDeliveries,
     fetchAdminStaff,
     fetchAuditLog,
     fetchBuyerRisk,
@@ -141,6 +144,10 @@ export default function SuperAdminDashboard({ scope }) {
     loadingAdminStaff,
     loadingAuditLog,
     loadingTicketMessages,
+    localDeliveryFilter,
+    localDeliveryLoading,
+    localDeliverySearch,
+    localDriverReports,
     members,
     messageReports,
     newTicketMessageInput,
@@ -232,6 +239,8 @@ export default function SuperAdminDashboard({ scope }) {
     setHideImageReason,
     setHidingImageDraft,
     setHomepageAds,
+    setLocalDeliveryFilter,
+    setLocalDeliverySearch,
     setNewTicketMessageInput,
     setOrders,
     setReconciliationFilter,
@@ -256,6 +265,7 @@ export default function SuperAdminDashboard({ scope }) {
     updateBanner,
     updateFaq,
     updateSellerReport,
+    updateLocalDriverReport,
     verifiedSellerApplications,
     verifiedSellerReports,
     verifyPaystackReconciliation,
@@ -373,6 +383,11 @@ export default function SuperAdminDashboard({ scope }) {
                 { id: "members", label: `Members (${members.length})`, permission: "seller_verification" },
                 { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
                 { id: "orders", label: `Orders (${orders.length})`, permission: "order_access" },
+                {
+                  id: "localDeliveries",
+                  label: `Local deliveries (${localDriverReports.filter((r) => ["open", "in_review"].includes(r.status)).length} reports)`,
+                  permission: "seller_report_review",
+                },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
                   id: "reports",
@@ -3260,6 +3275,135 @@ export default function SuperAdminDashboard({ scope }) {
                       )}
                     </div>
                   ))}
+              </div>
+            )}
+
+            {adminTab === "localDeliveries" && hasAdminPermission(currentMember, "seller_report_review") && (
+              <div className="space-y-5">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Local delivery control</h3>
+                    <p className="text-sm mt-1" style={{ color: SLATE }}>Review driver reports, delivery evidence, progress, and driver-fee payments.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchAdminLocalDeliveries}
+                    disabled={localDeliveryLoading}
+                    className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                    style={{ backgroundColor: INK, color: "white" }}
+                  >
+                    {localDeliveryLoading ? "Refreshing…" : "Refresh"}
+                  </button>
+                </div>
+
+                <div className="grid sm:grid-cols-3 gap-3">
+                  <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-xs" style={{ color: SLATE }}>Active deliveries</div>
+                    <div className="text-2xl font-semibold mt-1" style={{ color: INK }}>{adminLocalDeliveries.filter((d) => !["delivered", "revoked"].includes(d.status)).length}</div>
+                  </div>
+                  <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-xs" style={{ color: SLATE }}>Open driver reports</div>
+                    <div className="text-2xl font-semibold mt-1" style={{ color: BERRY }}>{localDriverReports.filter((r) => ["open", "in_review"].includes(r.status)).length}</div>
+                  </div>
+                  <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-xs" style={{ color: SLATE }}>Unconfirmed driver fees</div>
+                    <div className="text-2xl font-semibold mt-1" style={{ color: MARIGOLD }}>{adminLocalDeliveries.filter((d) => d.status === "delivered" && d.paymentStatus !== "confirmed").length}</div>
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-[1fr_220px] gap-3">
+                  <input
+                    value={localDeliverySearch}
+                    onChange={(e) => setLocalDeliverySearch(e.target.value)}
+                    placeholder="Search order, seller, buyer, driver, or item"
+                    className="w-full px-3 py-2 rounded-lg border bg-white outline-none text-sm"
+                    style={{ borderColor: "#DDD8CC" }}
+                  />
+                  <select
+                    value={localDeliveryFilter}
+                    onChange={(e) => setLocalDeliveryFilter(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border bg-white outline-none text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  >
+                    <option value="all">All deliveries</option>
+                    <option value="active">Active</option>
+                    <option value="delivered">Delivered</option>
+                    <option value="payment_pending">Driver fee pending</option>
+                    <option value="reported">Has open report</option>
+                    <option value="revoked">Access revoked</option>
+                  </select>
+                </div>
+
+                {localDriverReports.filter((r) => ["open", "in_review"].includes(r.status)).length > 0 && (
+                  <section className="space-y-3">
+                    <h4 className="text-lg font-semibold" style={{ color: INK }}>Driver reports requiring review</h4>
+                    {localDriverReports.filter((r) => ["open", "in_review"].includes(r.status)).map((r) => (
+                      <div key={r.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: BERRY }}>
+                        <div className="flex justify-between gap-2 flex-wrap">
+                          <div className="text-sm font-semibold" style={{ color: INK }}>Driver report #{r.id} · {orderNumber(r.order_id)}</div>
+                          <Tag color={r.status === "in_review" ? MARIGOLD : BERRY}>{String(r.status).replaceAll("_", " ")}</Tag>
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>Driver: {r.driver_name} · Seller: {r.seller_display_name || r.seller_username} · {new Date(r.created_at).toLocaleString()}</div>
+                        <div className="text-xs font-semibold mt-3 capitalize" style={{ color: BERRY }}>{String(r.category).replaceAll("_", " ")}</div>
+                        <div className="text-sm p-3 rounded-lg mt-2" style={{ backgroundColor: CANVAS, color: INK }}>{r.details}</div>
+                        <div className="text-xs mt-2" style={{ color: SLATE }}>Delivery: {String(r.delivery_status || "unknown").replaceAll("_", " ")} · Fee: {formatMoney(r.delivery_fee)} · Payment: {String(r.payment_status || "pending").replaceAll("_", " ")}</div>
+                        {r.proof_of_delivery_url && <a href={r.proof_of_delivery_url} target="_blank" rel="noreferrer" className="inline-block mt-3"><img src={r.proof_of_delivery_url} alt="Delivery proof" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a>}
+                        <div className="flex gap-3 mt-3 flex-wrap">
+                          {r.status === "open" && <button onClick={() => updateLocalDriverReport(r.id, "in_review")} className="text-xs font-semibold underline" style={{ color: MARIGOLD }}>Start review</button>}
+                          <button onClick={() => updateLocalDriverReport(r.id, "resolved")} className="text-xs font-semibold underline" style={{ color: SAGE }}>Resolve</button>
+                          <button onClick={() => updateLocalDriverReport(r.id, "dismissed")} className="text-xs font-semibold underline" style={{ color: SLATE }}>Dismiss</button>
+                        </div>
+                      </div>
+                    ))}
+                  </section>
+                )}
+
+                <section className="space-y-3">
+                  <h4 className="text-lg font-semibold" style={{ color: INK }}>Delivery assignments</h4>
+                  {(() => {
+                    const query = localDeliverySearch.trim().toLowerCase();
+                    const filtered = adminLocalDeliveries.filter((d) => {
+                      const matchesSearch = !query || [d.orderNumber, d.sellerUsername, d.sellerDisplayName, d.buyerUsername, d.buyerDisplayName, d.driverName, d.itemTitle]
+                        .filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+                      const matchesFilter = localDeliveryFilter === "all" ||
+                        (localDeliveryFilter === "active" && !["delivered", "revoked"].includes(d.status)) ||
+                        (localDeliveryFilter === "delivered" && d.status === "delivered") ||
+                        (localDeliveryFilter === "payment_pending" && d.status === "delivered" && d.paymentStatus !== "confirmed") ||
+                        (localDeliveryFilter === "reported" && d.openReportCount > 0) ||
+                        (localDeliveryFilter === "revoked" && d.status === "revoked");
+                      return matchesSearch && matchesFilter;
+                    });
+                    if (!filtered.length) return <p className="text-sm" style={{ color: SLATE }}>No local deliveries match this view.</p>;
+                    return filtered.map((d) => {
+                      const canRevoke = ["assigned", "accepted", "picked_up", "on_the_way", "arrived"].includes(d.status);
+                      return (
+                        <div key={d.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: d.openReportCount > 0 ? BERRY : "#DDD8CC" }}>
+                          <div className="flex justify-between gap-3 flex-wrap">
+                            <div>
+                              <div className="text-sm font-semibold" style={{ color: INK }}>{d.orderNumber} · {d.itemTitle || d.packageDescription}</div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>Seller: {d.sellerDisplayName || d.sellerUsername} · Buyer: {d.buyerDisplayName || d.buyerUsername}</div>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              <Tag color={d.status === "delivered" ? SAGE : d.status === "revoked" ? BERRY : MARIGOLD}>{String(d.status).replaceAll("_", " ")}</Tag>
+                              {d.openReportCount > 0 && <Tag color={BERRY}>{d.openReportCount} open report{d.openReportCount === 1 ? "" : "s"}</Tag>}
+                            </div>
+                          </div>
+                          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4 text-xs">
+                            <div><span style={{ color: SLATE }}>Driver</span><div className="font-medium" style={{ color: INK }}>{d.driverName} · {d.driverPhone}</div></div>
+                            <div><span style={{ color: SLATE }}>Driver fee</span><div className="font-medium" style={{ color: INK }}>{formatMoney(d.deliveryFee)} · {String(d.paymentMethod).replaceAll("_", " ")}</div></div>
+                            <div><span style={{ color: SLATE }}>Payment</span><div className="font-medium" style={{ color: d.paymentStatus === "confirmed" ? SAGE : MARIGOLD }}>{String(d.paymentStatus).replaceAll("_", " ")}</div></div>
+                            <div><span style={{ color: SLATE }}>Accepted</span><div style={{ color: INK }}>{d.acceptedAt ? new Date(d.acceptedAt).toLocaleString() : "Not yet"}</div></div>
+                            <div><span style={{ color: SLATE }}>Started</span><div style={{ color: INK }}>{d.startedAt ? new Date(d.startedAt).toLocaleString() : "Not yet"}</div></div>
+                            <div><span style={{ color: SLATE }}>Delivered</span><div style={{ color: INK }}>{d.deliveredAt ? new Date(d.deliveredAt).toLocaleString() : "Not yet"}</div></div>
+                          </div>
+                          {d.paymentMethod === "bank_transfer" && d.accountNumberLast4 && <div className="text-xs mt-3 p-2 rounded-lg" style={{ backgroundColor: CANVAS, color: SLATE }}>Driver bank: {d.bankName} · {d.accountName} · account ending {d.accountNumberLast4}</div>}
+                          {d.proofOfDeliveryUrl && <div className="mt-3"><div className="text-xs font-medium mb-1" style={{ color: INK }}>Delivery proof</div><a href={d.proofOfDeliveryUrl} target="_blank" rel="noreferrer"><img src={d.proofOfDeliveryUrl} alt="Delivery proof" className="w-28 h-28 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a></div>}
+                          {canRevoke && <button type="button" onClick={() => adminRevokeLocalDelivery(d.id)} className="mt-3 text-xs font-semibold underline" style={{ color: BERRY }}>Revoke driver access</button>}
+                        </div>
+                      );
+                    });
+                  })()}
+                </section>
               </div>
             )}
 
