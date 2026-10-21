@@ -6528,6 +6528,34 @@ function MarketplaceStallyard() {
     }
   };
 
+  const markLocalDriverPaid = async (itemId, assignment) => {
+    const method = assignment?.paymentMethod === "bank_transfer" ? "bank transfer" : "cash";
+    if (!window.confirm(`Confirm that you paid the driver ${formatMoney(assignment?.deliveryFee)} by ${method}?`)) return;
+    let reference = "";
+    if (assignment?.paymentMethod === "bank_transfer") {
+      reference = window.prompt("Bank transfer reference (optional):", "") || "";
+    }
+    setDeliveryAssignmentSavingKey(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignment.id}/mark-paid`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reference: reference.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.assignment) {
+        showToast(data.error || "Couldn't mark the driver fee paid");
+        return;
+      }
+      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
+      showToast("Driver fee marked paid — waiting for the driver to confirm receipt");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setDeliveryAssignmentSavingKey(null);
+    }
+  };
+
   const copyDeliveryAccessValue = async (value, label) => {
     try {
       await navigator.clipboard.writeText(value);
@@ -12909,7 +12937,7 @@ function MarketplaceStallyard() {
                                       )}
                                     </div>
                                   )}
-                                  {i.carrier === "Local Delivery Driver" && !['delivered', 'cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                  {i.carrier === "Local Delivery Driver" && !['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
                                     <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: SAGE, backgroundColor: "#F3F8F4" }}>
                                       <div className="flex items-center justify-between gap-2 flex-wrap">
                                         <div>
@@ -13005,20 +13033,22 @@ function MarketplaceStallyard() {
                                         />
                                       </label>
                                       <div className="flex gap-2 mt-3 flex-wrap">
-                                        <button
-                                          type="button"
-                                          onClick={() => saveLocalDriverAssignment(i.id, driverDraft)}
-                                          disabled={deliveryAssignmentSavingKey === i.id}
-                                          className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                          style={{ backgroundColor: SAGE, color: "white" }}
-                                        >
-                                          {deliveryAssignmentSavingKey === i.id
-                                            ? "Saving…"
-                                            : driverAssignment
-                                              ? "Update assignment and create new access"
-                                              : "Create driver link"}
-                                        </button>
-                                        {driverAssignment && driverAssignment.status !== "revoked" && (
+                                        {driverAssignment?.status !== "delivered" && (
+                                          <button
+                                            type="button"
+                                            onClick={() => saveLocalDriverAssignment(i.id, driverDraft)}
+                                            disabled={deliveryAssignmentSavingKey === i.id}
+                                            className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                            style={{ backgroundColor: SAGE, color: "white" }}
+                                          >
+                                            {deliveryAssignmentSavingKey === i.id
+                                              ? "Saving…"
+                                              : driverAssignment
+                                                ? "Update assignment and create new access"
+                                                : "Create driver link"}
+                                          </button>
+                                        )}
+                                        {driverAssignment?.status === "assigned" && (
                                           <button
                                             type="button"
                                             onClick={() => revokeLocalDriverAccess(i.id, driverAssignment.id)}
@@ -13029,7 +13059,7 @@ function MarketplaceStallyard() {
                                             Revoke access
                                           </button>
                                         )}
-                                        {driverAssignment && (
+                                        {driverAssignment && ["assigned", "revoked"].includes(driverAssignment.status) && (
                                           <button
                                             type="button"
                                             onClick={() => regenerateLocalDriverAccess(i.id, driverAssignment.id)}
@@ -13045,6 +13075,47 @@ function MarketplaceStallyard() {
                                         <div className="mt-3 text-xs" style={{ color: SLATE }}>
                                           Access expires {new Date(driverAssignment.accessExpiresAt).toLocaleString()}.
                                           {!driverSecret && driverAssignment.status !== "revoked" && " Create a new link and code if you no longer have the originals."}
+                                        </div>
+                                      )}
+                                      {driverAssignment?.status === "delivered" && (
+                                        <div className="mt-3 p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                            <div className="text-xs font-semibold" style={{ color: INK }}>Driver fee</div>
+                                            <Tag color={driverAssignment.paymentStatus === "confirmed" ? SAGE : MARIGOLD}>
+                                              {driverAssignment.paymentStatus === "confirmed"
+                                                ? "Driver confirmed paid"
+                                                : driverAssignment.paymentStatus === "seller_marked_paid"
+                                                  ? "Waiting for driver confirmation"
+                                                  : "Payment pending"}
+                                            </Tag>
+                                          </div>
+                                          <div className="mt-2 text-xs" style={{ color: SLATE }}>
+                                            Agreed fee: <strong style={{ color: INK }}>{formatMoney(driverAssignment.deliveryFee)}</strong> by {String(driverAssignment.paymentMethod || "cash").replace(/_/g, " ")}.
+                                          </div>
+                                          {driverAssignment.paymentMethod === "bank_transfer" && driverAssignment.hasDriverBankDetails && (
+                                            <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: "#F6F3EC", color: INK }}>
+                                              <div>{driverAssignment.driverBankName}</div>
+                                              <div className="font-medium">{driverAssignment.driverAccountName}</div>
+                                              <div style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{driverAssignment.driverAccountNumber}</div>
+                                            </div>
+                                          )}
+                                          {driverAssignment.paymentMethod === "bank_transfer" && !driverAssignment.hasDriverBankDetails && (
+                                            <div className="mt-2 text-xs" style={{ color: BERRY }}>Waiting for the driver to add bank details.</div>
+                                          )}
+                                          {driverAssignment.openReportCount > 0 && (
+                                            <div className="mt-2 text-xs font-medium" style={{ color: BERRY }}>The driver submitted a report that is awaiting Stallyard review.</div>
+                                          )}
+                                          {driverAssignment.paymentStatus === "pending" && (driverAssignment.paymentMethod === "cash" || driverAssignment.hasDriverBankDetails) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => markLocalDriverPaid(i.id, driverAssignment)}
+                                              disabled={deliveryAssignmentSavingKey === i.id}
+                                              className="mt-3 px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
+                                              style={{ backgroundColor: MARIGOLD, color: INK }}
+                                            >
+                                              {deliveryAssignmentSavingKey === i.id ? "Saving…" : "Mark driver fee paid"}
+                                            </button>
+                                          )}
                                         </div>
                                       )}
                                       {driverSecret && (
