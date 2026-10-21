@@ -386,7 +386,7 @@ export default function SuperAdminDashboard({ scope }) {
                 {
                   id: "localDeliveries",
                   label: `Local deliveries (${localDriverReports.filter((r) => ["open", "in_review"].includes(r.status)).length} reports)`,
-                  permission: "seller_report_review",
+                  requireSuperAdmin: true,
                 },
                 { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
                 {
@@ -3278,7 +3278,8 @@ export default function SuperAdminDashboard({ scope }) {
               </div>
             )}
 
-            {adminTab === "localDeliveries" && hasAdminPermission(currentMember, "seller_report_review") && (
+            {adminTab === "localDeliveries" &&
+              (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div className="space-y-5">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
