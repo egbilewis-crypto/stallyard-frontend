@@ -1,23 +1,5 @@
-import { useMarketplaceRouting, readMarketplaceRoute, marketplaceRouteUrl, PRIVATE_VIEWS } from "./MarketplaceRoutes.js";
-import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
-
-// AWS Amplify's camera and face-liveness libraries are large and are only
-// needed when a seller opens identity verification. Keep them out of the
-// public marketplace bundle and download both the component and its CSS on
-// demand. React.lazy requires a default export, so the named AWS component is
-// adapted here without adding another source file.
-const FaceLivenessDetectorCore = lazy(() =>
-  Promise.all([
-    import("@aws-amplify/ui-react-liveness"),
-    import("@aws-amplify/ui-react-liveness/styles.css"),
-  ]).then(([module]) => ({ default: module.FaceLivenessDetectorCore }))
-);
-
-// The complete privileged dashboard is kept out of the public marketplace
-// bundle and fetched only after an authenticated admin opens the admin view.
-const SuperAdminDashboard = lazy(() => import("./SuperAdminDashboard.jsx"));
-const DriverDelivery = lazy(() => import("./DriverDelivery.jsx"));
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -35,10 +17,16 @@ const BACKEND_URL =
 // Secure, HttpOnly session cookie. Authentication tokens are never stored in
 // localStorage or exposed to frontend JavaScript.
 const backendFetch = async (url, options = {}) => {
-  return fetch(url, {
+  const response = await fetch(url, {
     ...options,
     credentials: "include",
   });
+  if (typeof window !== "undefined" && response.status >= 500) {
+    window.dispatchEvent(new CustomEvent("stallyard:server-error", {
+      detail: { status: response.status },
+    }));
+  }
+  return response;
 };
 
 // `window.storage` may not exist in every browser environment. On the real
@@ -607,9 +595,9 @@ const RECOMMENDED_LISTING_PHOTO_DIM = 1200; // warn (not block) below this
 const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
 
 const SHIPPING_METHODS = [
-  { value: "dhl", label: "DHL" },
   { value: "self_delivery", label: "Self delivery" },
-  { value: "local_delivery_driver", label: "Local Delivery Driver" },
+  { value: "dhl", label: "DHL" },
+  { value: "sea_shipping", label: "Sea shipping" },
 ];
 
 const RETURN_POLICIES = ["No returns", "7-day returns", "14-day returns", "30-day returns"];
@@ -686,24 +674,6 @@ function formatMoney(amount, currency) {
   const symbol = CURRENCIES.NGN.symbol;
   const num = Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `${symbol}${num}`;
-}
-
-// New listing uploads end in "-1600.webp" and have matching 400/800/1200
-// variants. Older listing URLs safely return no srcset and continue using src.
-function responsiveListingSrcSet(url) {
-  const value = String(url || "");
-  if (!/-1600\.webp(?:\?.*)?$/i.test(value)) return undefined;
-  return [400, 800, 1200, 1600]
-    .map((width) => `${value.replace(/-1600\.webp(?=\?|$)/i, `-${width}.webp`)} ${width}w`)
-    .join(", ");
-}
-
-function toLocalDateTimeInput(value) {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "";
-  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
 }
 
 function formatDeliveryDate(value) {
@@ -807,7 +777,7 @@ const FULFILLMENT_COLOR = {
   returned: "#B8862E",
 };
 
-const SHIPPING_CARRIERS = ["DHL", "Self delivery", "Local Delivery Driver"];
+const SHIPPING_CARRIERS = ["Self delivery", "DHL", "GIG Logistics", "NIPOST", "UPS", "FedEx", "Other"];
 
 const RETURN_REASONS = [
   "Not as described",
@@ -1042,12 +1012,6 @@ function backendOrderToFrontend(row) {
       fulfillmentStatus: i.fulfillment_status || "new",
       trackingNumber: i.tracking_number || "",
       carrier: i.carrier || "",
-      selfDeliveryStatus: i.self_delivery_status || null,
-      deliveryPersonSelfieUrl: i.delivery_person_selfie_url || "",
-      selfDeliveryStartedAt: i.self_delivery_started_at ? new Date(i.self_delivery_started_at).getTime() : null,
-      selfDeliveryOnMyWayAt: i.self_delivery_on_my_way_at ? new Date(i.self_delivery_on_my_way_at).getTime() : null,
-      selfDeliveryArrivedAt: i.self_delivery_arrived_at ? new Date(i.self_delivery_arrived_at).getTime() : null,
-      selfDeliveryDeliveredAt: i.self_delivery_delivered_at ? new Date(i.self_delivery_delivered_at).getTime() : null,
       estimatedDeliveryStart: i.estimated_delivery_start ? String(i.estimated_delivery_start).slice(0, 10) : "",
       estimatedDeliveryEnd: i.estimated_delivery_end ? String(i.estimated_delivery_end).slice(0, 10) : "",
       liveLocationEnabled: !!i.live_location_enabled,
@@ -1109,17 +1073,13 @@ function backendUserToMember(user, existing) {
     adminRole: user.admin_role ?? existing?.adminRole ?? null,
     isEmailVerified: user.is_email_verified ?? existing?.isEmailVerified ?? false,
     isPhoneVerified: user.is_phone_verified ?? existing?.isPhoneVerified ?? false,
-    profileComplete: user.profile_complete ?? existing?.profileComplete ?? false,
     country: user.country || existing?.country || "",
     isAdmin: !!user.is_admin,
     isApproved: !!user.is_approved,
     isVerified: !!user.is_verified,
     isSuspended: !!user.is_suspended,
-    isPreview: !!(user.is_preview ?? existing?.isPreview),
     joinedAt: user.created_at ? new Date(user.created_at).getTime() : existing?.joinedAt || Date.now(),
     accountType: user.account_type || existing?.accountType || "personal",
-    onboardingIntent: user.onboarding_intent || existing?.onboardingIntent || "buy",
-    onboardingCompletedAt: user.onboarding_completed_at || existing?.onboardingCompletedAt || null,
     licenseNumber: user.license_number || existing?.licenseNumber || "",
     idType: user.id_type || existing?.idType || "Passport",
     idCountry: user.id_country || existing?.idCountry || "",
@@ -1137,9 +1097,7 @@ function backendUserToMember(user, existing) {
     casualSellerLimit: Number(user.casual_seller_limit ?? existing?.casualSellerLimit ?? 500000),
     casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
     sellerTier: user.seller_tier ?? existing?.sellerTier ?? (user.is_approved ? "verified" : "buyer"),
-    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 20000000),
-    sellerSuspended: !!(user.seller_suspended ?? existing?.sellerSuspended),
-    sellerSuspendedReason: user.seller_suspended_reason ?? existing?.sellerSuspendedReason ?? "",
+    sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 10000000),
     phoneVerified: existing?.phoneVerified || true,
     vacationMode: existing?.vacationMode || false,
   };
@@ -1226,72 +1184,6 @@ function resizeImageFile(file, maxDim = 900, quality = 0.75) {
         canvas.height = height;
         canvas.getContext("2d").drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// Homepage hero images are the page's LCP resource. Desktop creatives use a
-// wide 4:1 frame; mobile creatives use a square frame so important content is
-// never lost to aggressive responsive cropping. Both are encoded as WebP.
-function resizeHomepageHero(file, variant = "desktop") {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Couldn't read file"));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("Couldn't read image"));
-      img.onload = async () => {
-        try {
-          const isMobile = variant === "mobile";
-          const targetRatio = isMobile ? 1 : 4;
-          const maxBytes = (isMobile ? 180 : 250) * 1024;
-          const sourceRatio = img.width / img.height;
-          let sx = 0;
-          let sy = 0;
-          let sourceWidth = img.width;
-          let sourceHeight = img.height;
-          if (sourceRatio > targetRatio) {
-            sourceWidth = Math.round(img.height * targetRatio);
-            sx = Math.round((img.width - sourceWidth) / 2);
-          } else if (sourceRatio < targetRatio) {
-            sourceHeight = Math.round(img.width / targetRatio);
-            sy = Math.round((img.height - sourceHeight) / 2);
-          }
-
-          const widths = isMobile ? [800, 720, 640] : [1600, 1440, 1280, 1120];
-          const qualities = [0.82, 0.74, 0.66, 0.58, 0.5];
-          let best = null;
-          for (const requestedWidth of widths) {
-            const width = Math.max(1, Math.min(requestedWidth, sourceWidth));
-            const height = Math.max(1, Math.round(width / targetRatio));
-            const canvas = document.createElement("canvas");
-            canvas.width = width;
-            canvas.height = height;
-            canvas.getContext("2d").drawImage(img, sx, sy, sourceWidth, sourceHeight, 0, 0, width, height);
-            for (const quality of qualities) {
-              const blob = await new Promise((done) => canvas.toBlob(done, "image/webp", quality));
-              if (!blob) continue;
-              best = { blob, width, height };
-              if (blob.size <= maxBytes) break;
-            }
-            if (best?.blob.size <= maxBytes) break;
-          }
-          if (!best) throw new Error("This browser couldn't create a WebP image");
-          const outputReader = new FileReader();
-          outputReader.onerror = () => reject(new Error("Couldn't prepare the optimized image"));
-          outputReader.onload = () => resolve({
-            dataUrl: outputReader.result,
-            sizeBytes: best.blob.size,
-            width: best.width,
-            height: best.height,
-          });
-          outputReader.readAsDataURL(best.blob);
-        } catch (error) {
-          reject(error);
-        }
       };
       img.src = reader.result;
     };
@@ -1618,13 +1510,7 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
           <div className="relative">
             <img
               src={listing.images[0]}
-              srcSet={responsiveListingSrcSet(listing.images[0])}
-              sizes="(max-width: 640px) calc(50vw - 24px), (max-width: 1024px) 33vw, 320px"
               alt={listing.title}
-              width="640"
-              height="360"
-              loading="lazy"
-              decoding="async"
               className="w-full h-36 object-cover rounded-tr-2xl"
             />
             <span
@@ -1780,12 +1666,10 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
   const [captures, setCaptures] = useState({ liveSelfie: "", holdingIdSelfie: "", challengeFrames: [] });
   const [faceChecks, setFaceChecks] = useState([]);
   const [faceDetectionSupported, setFaceDetectionSupported] = useState(false);
+  const [faceMatchScore, setFaceMatchScore] = useState(null);
   const [challenges, setChallenges] = useState([]);
   const [challengeToken, setChallengeToken] = useState("");
   const [challengeLoading, setChallengeLoading] = useState(true);
-  const [awsLiveness, setAwsLiveness] = useState(null);
-  const [awsLivenessVerified, setAwsLivenessVerified] = useState(false);
-  const [rekognitionVerificationToken, setRekognitionVerificationToken] = useState("");
 
   const labels = {
     blink: "Blink slowly, then look at the camera",
@@ -1804,17 +1688,10 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     let cancelled = false;
     (async () => {
       try {
-        const [challengeResponse, awsResponse] = await Promise.all([
-          authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" }),
-          authFetch(`${BACKEND_URL}/casual-seller/rekognition/session`, { method: "POST" }),
-        ]);
-        const [data, awsData] = await Promise.all([challengeResponse.json(), awsResponse.json()]);
-        if (!challengeResponse.ok) throw new Error(data.error || "Couldn't start secure verification");
-        if (!awsResponse.ok) throw new Error(awsData.error || "Couldn't start AWS face verification");
-        if (!cancelled) {
-          setChallenges(data.challenges || []); setChallengeToken(data.token || "");
-          setAwsLiveness(awsData);
-        }
+        const response = await authFetch(`${BACKEND_URL}/casual-seller/challenge`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Couldn't start secure verification");
+        if (!cancelled) { setChallenges(data.challenges || []); setChallengeToken(data.token || ""); }
       } catch (err) {
         if (!cancelled) setError(err.message || "Couldn't start secure verification");
       } finally {
@@ -1823,18 +1700,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const completeAwsLiveness = async () => {
-    const response = await authFetch(`${BACKEND_URL}/casual-seller/rekognition/complete`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionId: awsLiveness.sessionId }),
-    });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "AWS could not verify liveness");
-    setAwsLivenessVerified(true);
-    setRekognitionVerificationToken(data.verificationToken || "");
-    showToast(`Secure liveness verified (${Math.round(Number(data.confidence || 0))}%)`);
-  };
 
   const initializeFaceDetector = async () => {
     const vision = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/+esm");
@@ -1905,18 +1770,56 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
     else setCaptures((current) => ({ ...current, challengeFrames: [...current.challengeFrames, dataUrl].slice(0, 3) }));
   };
 
+  const loadFaceMatcher = async () => {
+    if (!window.faceapi) {
+      await new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-stallyard-face-api="true"]');
+        if (existing) { existing.addEventListener("load", resolve, { once: true }); existing.addEventListener("error", reject, { once: true }); return; }
+        const script = document.createElement("script");
+        script.src = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
+        script.dataset.stallyardFaceApi = "true"; script.onload = resolve; script.onerror = reject; document.head.appendChild(script);
+      });
+    }
+    const modelPath = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights";
+    await Promise.all([
+      window.faceapi.nets.ssdMobilenetv1.loadFromUri(modelPath),
+      window.faceapi.nets.faceLandmark68Net.loadFromUri(modelPath),
+      window.faceapi.nets.faceRecognitionNet.loadFromUri(modelPath),
+    ]);
+    return window.faceapi;
+  };
+
+  const dataUrlImage = (src) => new Promise((resolve, reject) => {
+    const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src;
+  });
+
+  const verifyFaceMatchesHoldingPhoto = async () => {
+    const faceapi = await loadFaceMatcher();
+    const [selfieImage, holdingImage] = await Promise.all([dataUrlImage(captures.liveSelfie), dataUrlImage(captures.holdingIdSelfie)]);
+    const [selfieFace, idFace] = await Promise.all([
+      faceapi.detectSingleFace(selfieImage).withFaceLandmarks().withFaceDescriptor(),
+      faceapi.detectSingleFace(holdingImage).withFaceLandmarks().withFaceDescriptor(),
+    ]);
+    if (!selfieFace || !idFace) throw new Error("A clear face could not be found in both selfies. Retake the unclear image.");
+    const distance = faceapi.euclideanDistance(selfieFace.descriptor, idFace.descriptor);
+    const score = Math.max(0, Math.min(100, Math.round((1 - distance) * 100)));
+    setFaceMatchScore(score);
+    if (distance > 0.5) throw new Error("Your live selfie does not closely match your selfie holding the ID. Retake both images.");
+    return { passed: true, score, distance: Number(distance.toFixed(4)), selfieDescriptor: Array.from(selfieFace.descriptor) };
+  };
+
   const submit = async () => {
     setError("");
-    if (!awsLivenessVerified || !rekognitionVerificationToken) { setError("Complete the secure AWS face-liveness check first."); return; }
     if (!faceDetectionSupported) { setError("Automatic face detection is unavailable on this browser. Use an updated supported phone or browser so Stallyard does not approve an unverified person."); return; }
     if (!form.legalName.trim() || !form.dateOfBirth) { setError("Enter your legal name and date of birth."); return; }
     if (!captures.liveSelfie || !captures.holdingIdSelfie || captures.challengeFrames.length !== 3) { setError("Complete the live selfie, all three challenges, and the selfie holding your ID."); return; }
     if (!form.consent) { setError("You must accept the identity-record consent before submitting."); return; }
     setSubmitting(true);
     try {
+      const faceMatch = await verifyFaceMatchesHoldingPhoto();
       const response = await authFetch(`${BACKEND_URL}/casual-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, rekognitionVerificationToken }),
+        body: JSON.stringify({ ...form, ...captures, challenges, challengeToken, faceDetectionSupported, faceChecks, faceMatch }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
@@ -1934,30 +1837,6 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           <div><h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Automatic casual-seller verification</h2><p className="text-sm" style={{ color: SLATE }}>Verify once to publish up to ₦500,000 in combined active listings.</p></div>
           <button onClick={onClose} aria-label="Close"><X size={22} /></button>
         </div>
-        <div className="mb-4 p-3 rounded-lg border text-xs leading-5" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8", color: SLATE }}>
-          <strong style={{ color: INK }}>Identity-check attempt limit:</strong> You may start up to 3 AWS face-liveness checks in a rolling 24-hour period. Closing, restarting or abandoning a started check still uses an attempt.
-          {awsLiveness && <span className="block mt-1 font-medium" style={{ color: INK }}>{Number(awsLiveness.remainingAttempts || 0)} attempt{Number(awsLiveness.remainingAttempts || 0) === 1 ? "" : "s"} remaining after this session.</span>}
-        </div>
-        {!awsLivenessVerified && awsLiveness && (
-          <div className="mb-5 rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
-            <Suspense fallback={<div className="p-8 text-center text-sm" style={{ color: SLATE }}>Loading secure face verification…</div>}>
-              <FaceLivenessDetectorCore
-                sessionId={awsLiveness.sessionId}
-                region={awsLiveness.region}
-                config={{ credentialProvider: async () => ({
-                  accessKeyId: awsLiveness.credentials.accessKeyId,
-                  secretAccessKey: awsLiveness.credentials.secretAccessKey,
-                  sessionToken: awsLiveness.credentials.sessionToken,
-                  expiration: awsLiveness.credentials.expiration ? new Date(awsLiveness.credentials.expiration) : undefined,
-                }) }}
-                onAnalysisComplete={completeAwsLiveness}
-                onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
-                onUserCancel={onClose}
-              />
-            </Suspense>
-          </div>
-        )}
-        {awsLivenessVerified && <p className="mb-4 text-sm font-medium" style={{ color: SAGE }}>✓ AWS face-liveness verification passed</p>}
         <div className="grid md:grid-cols-2 gap-5">
           <div className="space-y-3">
             <input className="w-full px-3 py-2 rounded-lg border" placeholder="Legal name exactly as shown on ID" value={form.legalName} onChange={(e) => setForm({ ...form, legalName: e.target.value })} />
@@ -1968,7 +1847,7 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
           </div>
           <div>
             <div className="aspect-square rounded-xl overflow-hidden bg-black mb-2"><video ref={videoRef} muted playsInline className="w-full h-full object-cover" /></div>
-            {!cameraReady ? <button disabled={challengeLoading || !challengeToken || !awsLivenessVerified} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : !awsLivenessVerified ? "Complete AWS liveness first" : "Open secure camera"}</button> : (
+            {!cameraReady ? <button disabled={challengeLoading || !challengeToken} onClick={startCamera} className="w-full py-2 rounded-lg font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{challengeLoading ? "Preparing secure challenge…" : "Open secure camera"}</button> : (
               <div className="space-y-2 text-sm">
                 <button onClick={() => captureCamera("live")} className="w-full py-2 rounded-lg border">{captures.liveSelfie ? "✓ Retake neutral live selfie" : "Capture neutral live selfie"}</button>
                 {challenges.map((challenge, index) => <button key={challenge} disabled={captures.challengeFrames.length !== index} onClick={() => captureCamera("challenge", challenge)} className="w-full py-2 px-2 rounded-lg border disabled:opacity-40 text-left">{captures.challengeFrames[index] ? "✓ " : `${index + 1}. `}{labels[challenge]}</button>)}
@@ -1979,77 +1858,14 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
         </div>
         <label className="flex gap-2 mt-5 text-xs" style={{ color: SLATE }}><input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} /><span>I consent to Stallyard collecting and securely retaining my identity images and verification results for fraud prevention, account security, seller accountability, transaction investigations, and legal recordkeeping. They may be accessed only by authorized Stallyard verification personnel.</span></label>
         {error && <p className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
+        {faceMatchScore !== null && <p className="text-xs mt-2" style={{ color: SAGE }}>Live-selfie match: {faceMatchScore}%</p>}
         <button disabled={submitting} onClick={submit} className="w-full mt-4 py-3 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{submitting ? "Securely checking and saving…" : "Submit for automatic verification"}</button>
       </div>
     </div>
   );
 }
 
-function LiveDeliveryPhotoCamera({ onSave, onClose, busy }) {
-  const videoRef = useRef(null);
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState("");
-  const [photo, setPhoto] = useState(null);
-  const [facing, setFacing] = useState("environment");
-  useEffect(() => {
-    let cancelled = false;
-    let stream;
-    setReady(false);
-    setError("");
-    (async () => {
-      try {
-        if (!navigator.mediaDevices?.getUserMedia) throw new Error("Camera unavailable");
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 1400 } }, audio: false });
-        if (cancelled) { stream.getTracks().forEach((track) => track.stop()); return; }
-        const video = videoRef.current;
-        video.srcObject = stream;
-        await video.play();
-        if (!cancelled) setReady(true);
-      } catch {
-        stream?.getTracks().forEach((track) => track.stop());
-        if (!cancelled) setError("Camera access is required. Allow camera access in your browser settings, then reopen this camera. Saved pictures cannot be used.");
-      }
-    })();
-    return () => { cancelled = true; stream?.getTracks().forEach((track) => track.stop()); };
-  }, [facing]);
-  const capture = () => {
-    const video = videoRef.current;
-    if (!ready || !video?.videoWidth || !video.videoHeight || video.readyState < 2) return;
-    try {
-      const scale = Math.min(1, 1400 / Math.max(video.videoWidth, video.videoHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-      setPhoto(canvas.toDataURL("image/jpeg", 0.85));
-    } catch { setError("Couldn't capture the photo. Please try again."); }
-  };
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" style={{ backgroundColor: "rgba(10,15,22,.86)" }}>
-      <div role="dialog" aria-modal="true" aria-label="Take delivery photo" className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-xl">
-        <div className="flex justify-between gap-3 mb-3">
-          <div><h3 className="text-lg font-semibold">Take delivery photo</h3><p className="text-xs mt-1">Take a fresh picture of the handoff. Saved pictures cannot be selected.</p></div>
-          <button type="button" disabled={busy} onClick={onClose} aria-label="Close delivery camera"><X size={22} /></button>
-        </div>
-        <video ref={videoRef} autoPlay muted playsInline className={photo ? "hidden" : "w-full rounded-xl bg-black aspect-video object-contain"} />
-        {photo && <img src={photo} alt="Review captured delivery photo" className="w-full rounded-xl" />}
-        {error && <p role="alert" className="text-sm mt-3" style={{ color: BERRY }}>{error}</p>}
-        {!photo && !error && !ready && <p className="text-sm mt-2">Starting live camera…</p>}
-        <div className="flex gap-2 mt-3">
-          {photo ? <>
-            <button type="button" disabled={busy} onClick={() => setPhoto(null)} className="px-4 py-2 rounded-lg border disabled:opacity-50">Retake</button>
-            <button type="button" disabled={busy} onClick={() => onSave(photo)} className="px-4 py-2 rounded-lg disabled:opacity-50" style={{ backgroundColor: MARIGOLD }}>{busy ? "Saving…" : "Use photo"}</button>
-          </> : <>
-            <button type="button" disabled={!ready || !!error} onClick={capture} className="px-4 py-2 rounded-lg disabled:opacity-50" style={{ backgroundColor: MARIGOLD }}>Take photo</button>
-            <button type="button" disabled={!ready} onClick={() => setFacing((value) => value === "environment" ? "user" : "environment")} className="px-4 py-2 rounded-lg border disabled:opacity-50">Switch camera</button>
-          </>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MarketplaceStallyard() {
+export default function Stallyard() {
   useFonts();
   const [fatalServerError, setFatalServerError] = useState(false);
   useEffect(() => {
@@ -2057,11 +1873,7 @@ function MarketplaceStallyard() {
     window.addEventListener("stallyard:server-error", handleServerError);
     return () => window.removeEventListener("stallyard:server-error", handleServerError);
   }, []);
-  const [route, setRoute] = useMarketplaceRouting(isAdminHost());
-  const view = route.view;
-  const setView = (value) => setRoute((previous) => ({ ...previous, listingId: null, cart: false, view: value === "login" ? "signin" : typeof value === "function" ? value(previous.view) : value }));
-  const setRouteField = (key, value) => setRoute((previous) => ({ ...previous, [key]: typeof value === "function" ? value(previous[key]) : value }));
-
+  const [view, setView] = useState("browse");
   const [adminLoginMode, setAdminLoginMode] = useState(() => isAdminHost());
   const [adminLoginForm, setAdminLoginForm] = useState({ username: "", password: "" });
   const [adminLoginStep, setAdminLoginStep] = useState("credentials"); // "credentials" | "code" | "code-email" | "new-password"
@@ -2140,22 +1952,15 @@ function MarketplaceStallyard() {
   // for this, not just membersLoaded, or it acts on a stale null.
   const [sessionChecked, setSessionChecked] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const search = route.search;
-  const setSearch = (value) => setRouteField("search", value);
-  const categoryFilter = route.category;
-  const setCategoryFilter = (value) => setRouteField("category", value);
-  const subcategoryFilter = route.subcategory;
-  const setSubcategoryFilter = (value) => setRouteField("subcategory", value);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("All");
   const [categoriesMenuOpen, setCategoriesMenuOpen] = useState(false);
   const categoriesMenuRef = useRef(null);
-  const conditionFilter = route.condition;
-  const setConditionFilter = (value) => setRouteField("condition", value);
-  const sortBy = route.sort;
-  const setSortBy = (value) => setRouteField("sort", value);
-  const priceMin = route.priceMin;
-  const setPriceMin = (value) => setRouteField("priceMin", value);
-  const priceMax = route.priceMax;
-  const setPriceMax = (value) => setRouteField("priceMax", value);
+  const [conditionFilter, setConditionFilter] = useState("All");
+  const [sortBy, setSortBy] = useState("featured");
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   useEffect(() => {
     if (!categoriesMenuOpen) return;
@@ -2202,9 +2007,7 @@ function MarketplaceStallyard() {
   const [adminTotpError, setAdminTotpError] = useState("");
   const [startingAdminTotpSetup, setStartingAdminTotpSetup] = useState(false);
   const [confirmingAdminTotpSetup, setConfirmingAdminTotpSetup] = useState(false);
-  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller
-  const [accountCreatedSuccess, setAccountCreatedSuccess] = useState(false);
-  const [isNewAccountOnboarding, setIsNewAccountOnboarding] = useState(false);
+  const [registrationIntent, setRegistrationIntent] = useState("buyer"); // buyer | seller | business
   const [authForm, setAuthForm] = useState({
     username: "",
     password: "",
@@ -2226,12 +2029,7 @@ function MarketplaceStallyard() {
     accountType: "personal",
     licensePhotos: [],
   });
-  const [selectedListingCache, setSelectedListingCache] = useState(null);
-  const selected = route.listingId ? listings.find((listing) => String(listing.id) === String(route.listingId)) || (String(selectedListingCache?.id) === String(route.listingId) ? selectedListingCache : null) : null;
-  const setSelected = (listing) => {
-    setSelectedListingCache(listing);
-    setRouteField("listingId", listing?.id || null);
-  };
+  const [selected, setSelected] = useState(null);
   const [activeImg, setActiveImg] = useState(0);
   const [galleryZoomOpen, setGalleryZoomOpen] = useState(false);
   // Pinch-to-zoom state for the full-screen gallery — scale/offset are what
@@ -2300,8 +2098,7 @@ function MarketplaceStallyard() {
   const [watchlist, setWatchlist] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
-  const cartOpen = route.cart;
-  const setCartOpen = (value) => setRouteField("cart", value);
+  const [cartOpen, setCartOpen] = useState(false);
   const [shippingForm, setShippingForm] = useState({
     fullName: "",
     phone: "",
@@ -2323,10 +2120,8 @@ function MarketplaceStallyard() {
   const [checkoutVerifyError, setCheckoutVerifyError] = useState("");
   const [saveCardAtCheckout, setSaveCardAtCheckout] = useState(false);
   const [orders, setOrders] = useState([]);
-  const buyerOrderSearch = route.orderSearch;
-  const setBuyerOrderSearch = (value) => setRouteField("orderSearch", value);
-  const buyerOrderStatusFilter = route.orderStatus;
-  const setBuyerOrderStatusFilter = (value) => setRouteField("orderStatus", value);
+  const [buyerOrderSearch, setBuyerOrderSearch] = useState("");
+  const [buyerOrderStatusFilter, setBuyerOrderStatusFilter] = useState("all");
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [homepageAds, setHomepageAds] = useState([
@@ -2334,8 +2129,6 @@ function MarketplaceStallyard() {
     { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
     { slot: 3, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
   ]);
-  const [homepageHeroSlide, setHomepageHeroSlide] = useState(0);
-  const [homepageHeroPaused, setHomepageHeroPaused] = useState(false);
   const [homepageAdUploading, setHomepageAdUploading] = useState(null);
   const [homepageAdSaving, setHomepageAdSaving] = useState(null);
   const [policies, setPolicies] = useState({
@@ -2344,8 +2137,7 @@ function MarketplaceStallyard() {
   });
   const [myTickets, setMyTickets] = useState([]);
   const [adminTickets, setAdminTickets] = useState([]);
-  const activeTicketId = route.ticket;
-  const setActiveTicketId = (value) => setRouteField("ticket", value);
+  const [activeTicketId, setActiveTicketId] = useState(null);
   const [ticketMessages, setTicketMessages] = useState([]);
   const [loadingTicketMessages, setLoadingTicketMessages] = useState(false);
   const [newTicketForm, setNewTicketForm] = useState({ subject: "", message: "" });
@@ -2378,8 +2170,6 @@ function MarketplaceStallyard() {
   const [casualSellerApplications, setCasualSellerApplications] = useState([]);
   const [casualSellerReports, setCasualSellerReports] = useState([]);
   const [verifiedSellerApplications, setVerifiedSellerApplications] = useState([]);
-  const [premiumSellerApplications, setPremiumSellerApplications] = useState([]);
-  const [premiumSellerReports, setPremiumSellerReports] = useState([]);
   const [verifiedSellerReports, setVerifiedSellerReports] = useState([]);
   const [casualSellerAdminLoading, setCasualSellerAdminLoading] = useState(false);
   const [selectedCasualApplication, setSelectedCasualApplication] = useState(null);
@@ -2408,10 +2198,6 @@ function MarketplaceStallyard() {
   const [returnTrackingDrafts, setReturnTrackingDrafts] = useState({});
   const [trackingDrafts, setTrackingDrafts] = useState({});
   const [deliveryEstimateDrafts, setDeliveryEstimateDrafts] = useState({});
-  const [deliveryAssignments, setDeliveryAssignments] = useState({});
-  const [deliveryAssignmentDrafts, setDeliveryAssignmentDrafts] = useState({});
-  const [deliveryAssignmentSecrets, setDeliveryAssignmentSecrets] = useState({});
-  const [deliveryAssignmentSavingKey, setDeliveryAssignmentSavingKey] = useState(null);
   const locationWatchersRef = useRef({});
   const locationLastSentRef = useRef({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
@@ -2435,11 +2221,6 @@ function MarketplaceStallyard() {
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
   const [sellerReports, setSellerReports] = useState([]);
-  const [adminLocalDeliveries, setAdminLocalDeliveries] = useState([]);
-  const [localDriverReports, setLocalDriverReports] = useState([]);
-  const [localDeliveryLoading, setLocalDeliveryLoading] = useState(false);
-  const [localDeliverySearch, setLocalDeliverySearch] = useState("");
-  const [localDeliveryFilter, setLocalDeliveryFilter] = useState("all");
   const [sellerReportTarget, setSellerReportTarget] = useState(null);
   const [sellerReportReceipt, setSellerReportReceipt] = useState(null);
   const [showAllSellerReports, setShowAllSellerReports] = useState(false);
@@ -2493,12 +2274,10 @@ function MarketplaceStallyard() {
   const [editingStoreProfile, setEditingStoreProfile] = useState(false);
   const [storeProfileDraft, setStoreProfileDraft] = useState({ storeBio: "", storePolicies: "" });
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const activeThreadId = route.thread;
-  const setActiveThreadId = (value) => setRouteField("thread", value);
+  const [activeThreadId, setActiveThreadId] = useState(null);
   const [activeThreadOrderId, setActiveThreadOrderId] = useState(null);
   const [messageReadState, setMessageReadState] = useState({});
-  const viewingSeller = route.seller;
-  const setViewingSeller = (value) => setRouteField("seller", value);
+  const [viewingSeller, setViewingSeller] = useState(null);
   const [bidAmount, setBidAmount] = useState("");
   const [nowTick, setNowTick] = useState(Date.now());
   const [messageInput, setMessageInput] = useState("");
@@ -2531,15 +2310,13 @@ function MarketplaceStallyard() {
     vin: "",
   });
   const [previewOpen, setPreviewOpen] = useState(false);
-  const manageListingsTab = route.listingsTab;
-  const setManageListingsTab = (value) => setRouteField("listingsTab", value);
+  const [manageListingsTab, setManageListingsTab] = useState("all");
   const [expandedListingImagesId, setExpandedListingImagesId] = useState(null);
   // Which photo (if any) is mid-way through being hidden, so a reason can
   // be collected before actually confirming — { listingId, url } | null.
   const [hidingImageDraft, setHidingImageDraft] = useState(null);
   const [hideImageReason, setHideImageReason] = useState("");
-  const salesTab = route.salesTab;
-  const setSalesTab = (value) => setRouteField("salesTab", value);
+  const [salesTab, setSalesTab] = useState("all");
   const [quickEditId, setQuickEditId] = useState(null);
   const [quickEditDraft, setQuickEditDraft] = useState({ price: "", quantity: "" });
   const [uploading, setUploading] = useState(false);
@@ -2553,19 +2330,9 @@ function MarketplaceStallyard() {
   const [verifiedSellerIdImages, setVerifiedSellerIdImages] = useState({ front: "", back: "" });
   const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
-  const [premiumSellerLimit, setPremiumSellerLimit] = useState("25000000");
-  const [premiumSellerConsent, setPremiumSellerConsent] = useState(false);
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
-  const [deliveryPhotoTarget, setDeliveryPhotoTarget] = useState(null);
-  const [uploadingDeliverySelfieKey, setUploadingDeliverySelfieKey] = useState(null);
-  const [deliverySelfieDrafts, setDeliverySelfieDrafts] = useState({});
-  const [selfDeliveryActionKey, setSelfDeliveryActionKey] = useState(null);
-  const [deliverySelfieCameraTarget, setDeliverySelfieCameraTarget] = useState(null);
-  const [deliverySelfieCameraReady, setDeliverySelfieCameraReady] = useState(false);
-  const deliverySelfieVideoRef = useRef(null);
-  const deliverySelfieStreamRef = useRef(null);
   const [uploadingReturnEvidenceKey, setUploadingReturnEvidenceKey] = useState(null);
   const [packingSlipOrder, setPackingSlipOrder] = useState(null);
   const [deliveryTokens, setDeliveryTokens] = useState({});
@@ -2590,46 +2357,10 @@ function MarketplaceStallyard() {
   const [profileStageOpen, setProfileStageOpen] = useState(false);
   const [profileStageError, setProfileStageError] = useState("");
 
-  useEffect(() => {
-    if (!sessionChecked || isAdminHost() || currentUser || !PRIVATE_VIEWS.has(view)) return;
-    setAuthReturnView(view);
-    setRoute((previous) => ({ ...previous, view: "signin", next: marketplaceRouteUrl(previous) }));
-  }, [sessionChecked, currentUser, view]);
-  useEffect(() => {
-    if (view !== "dashboard" || !sessionChecked || !currentUser) return;
-    const target = route.sellerSection === "orders" ? "seller-sales" : route.sellerSection === "listings" ? "seller-listings" : "seller-overview";
-    const timer = setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: "auto" }), 0);
-    return () => clearTimeout(timer);
-  }, [view, route.sellerSection, sessionChecked, currentUser, orders.length]);
-
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
   }, []);
-
-  useEffect(() => {
-    const slideCount = homepageAds.filter((ad) => ad.imageUrl).length;
-    if (homepageHeroSlide >= Math.max(slideCount, 1)) setHomepageHeroSlide(0);
-    if (slideCount <= 1 || homepageHeroPaused || view !== "browse") return undefined;
-    const interval = setInterval(() => {
-      setHomepageHeroSlide((current) => (current + 1) % slideCount);
-    }, 7000);
-    return () => clearInterval(interval);
-  }, [homepageAds, homepageHeroPaused, homepageHeroSlide, view]);
-
-  useEffect(() => {
-    // Slide 1 is the LCP resource. Preload the remaining slides only after the
-    // initial page has had time to settle.
-    const timer = setTimeout(() => {
-      homepageAds.slice(1).forEach((ad) => {
-        [ad.imageUrl, ad.posterUrl].filter(Boolean).forEach((src) => {
-          const preload = new Image();
-          preload.src = src;
-        });
-      });
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [homepageAds]);
 
   useEffect(() => {
     (async () => {
@@ -2749,7 +2480,7 @@ function MarketplaceStallyard() {
             return {
               slot,
               imageUrl: ad.image_url || "",
-              mediaType: "image",
+              mediaType: slot === 1 && ad.media_type === "video" ? "video" : "image",
               posterUrl: ad.poster_url || "",
               linkUrl: ad.link_url || "",
             };
@@ -2849,12 +2580,7 @@ function MarketplaceStallyard() {
         setSavedAddresses([]);
         setAdminDisputes([]);
         setSellerReports([]);
-        setAdminLocalDeliveries([]);
-        setLocalDriverReports([]);
         setMyDisputes([]);
-        setDeliveryAssignments({});
-        setDeliveryAssignmentDrafts({});
-        setDeliveryAssignmentSecrets({});
         return;
       }
       const isAdmin = members.find((m) => m.username === currentUser)?.isAdmin;
@@ -2885,13 +2611,12 @@ function MarketplaceStallyard() {
         // dispute cases are supplementary to the order view
       }
       try {
-        const [mineRes, sellingRes, adminRes, assignmentRes] = await Promise.all([
+        const [mineRes, sellingRes, adminRes] = await Promise.all([
           authFetch(`${BACKEND_URL}/orders/mine`),
           authFetch(`${BACKEND_URL}/orders/selling`),
           isAdmin && hasAdminPermission(members.find((m) => m.username === currentUser), "order_access")
             ? authFetch(`${BACKEND_URL}/orders`)
             : Promise.resolve(null),
-          !isAdmin ? authFetch(`${BACKEND_URL}/delivery-assignments/mine`) : Promise.resolve(null),
         ]);
         const byId = new Map();
         for (const res of [mineRes, sellingRes, adminRes]) {
@@ -2900,12 +2625,6 @@ function MarketplaceStallyard() {
           for (const row of rows) byId.set(row.id, backendOrderToFrontend(row));
         }
         setOrders([...byId.values()].sort((a, b) => b.createdAt - a.createdAt));
-        if (assignmentRes?.ok) {
-          const data = await assignmentRes.json();
-          const byItem = {};
-          for (const assignment of data.assignments || []) byItem[assignment.orderItemId] = assignment;
-          setDeliveryAssignments(byItem);
-        }
       } catch {
         // couldn't reach backend for orders — leave empty rather than show stale/fake data
       }
@@ -2980,22 +2699,6 @@ function MarketplaceStallyard() {
           }
         } catch {
           // couldn't reach backend for seller reports — leave empty
-        }
-        try {
-          const [deliveriesRes, driverReportsRes] = await Promise.all([
-            authFetch(`${BACKEND_URL}/admin/local-deliveries`),
-            authFetch(`${BACKEND_URL}/admin/local-driver-reports`),
-          ]);
-          if (deliveriesRes.ok) {
-            const { deliveries } = await deliveriesRes.json();
-            setAdminLocalDeliveries(deliveries || []);
-          }
-          if (driverReportsRes.ok) {
-            const { reports } = await driverReportsRes.json();
-            setLocalDriverReports(reports || []);
-          }
-        } catch {
-          // Local-delivery administration is available only to permitted staff.
         }
       }
       if (!isAdmin) {
@@ -3137,54 +2840,10 @@ function MarketplaceStallyard() {
 
   useEffect(() => {
     if (!currentUser || !authToken || sessionUserProfile?.is_admin) { setCasualSellerStatus(null); return; }
-    let cancelled = false;
-    let refreshInFlight = false;
-    const refreshSellerStage = async () => {
-      if (refreshInFlight) return;
-      refreshInFlight = true;
-      try {
-        const [statusResponse, sessionResponse] = await Promise.all([
-          authFetch(`${BACKEND_URL}/casual-seller/status`),
-          authFetch(`${BACKEND_URL}/session/me`),
-        ]);
-        if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-          if (cancelled) return;
-          let sessionMessage = sessionResponse.status === 403
-            ? "This account has been suspended. Contact Stallyard support."
-            : "Your session expired. Please sign in again.";
-          try {
-            const sessionError = await sessionResponse.json();
-            if (sessionError?.error) sessionMessage = sessionError.error;
-          } catch {
-            // Use the safe fallback message when the server sends no JSON body.
-          }
-          setCasualSellerStatus(null);
-          setSessionUserProfile(null);
-          setCurrentUser(null);
-          setAuthToken(null);
-          try {
-            await window.storage.delete("stallyard-session", false);
-            await window.storage.delete("stallyard-auth-token", false);
-          } catch {
-            // The server has already ended the session; local cleanup is best effort.
-          }
-          showToast(sessionMessage);
-          return;
-        }
-        const statusData = statusResponse.ok ? await statusResponse.json() : null;
-        const sessionData = sessionResponse.ok ? await sessionResponse.json() : null;
-        if (cancelled) return;
-        if (statusData) setCasualSellerStatus(statusData);
-        if (sessionData?.user?.username === currentUser) setSessionUserProfile(sessionData.user);
-      } catch {
-        // Keep the last confirmed seller stage during a temporary network interruption.
-      } finally {
-        refreshInFlight = false;
-      }
-    };
-    refreshSellerStage();
-    const interval = setInterval(refreshSellerStage, 20000);
-    return () => { cancelled = true; clearInterval(interval); };
+    authFetch(`${BACKEND_URL}/casual-seller/status`)
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => { if (data) setCasualSellerStatus(data); })
+      .catch(() => {});
   }, [currentUser, authToken, sessionUserProfile?.is_admin]);
 
   useEffect(() => {
@@ -3288,38 +2947,6 @@ function MarketplaceStallyard() {
     setVerifiedSellerIdImages({ front: "", back: "" });
     setVerifiedSellerConsent(false);
     showToast("Verified Seller application submitted — you'll be notified after admin review");
-  };
-
-  const applyForPremiumSeller = async () => {
-    if (casualSellerStatus?.premiumApplication?.status === "pending") {
-      showToast("Your Premium Seller application is already awaiting review");
-      return;
-    }
-    const requestedLimit = Number(premiumSellerLimit);
-    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000) {
-      showToast("Request a limit above ₦20,000,000");
-      return;
-    }
-    if (!bankStatementDraft) { showToast("Upload a recent supporting bank statement"); return; }
-    if (!premiumSellerConsent) { showToast("Accept the Premium Seller declaration"); return; }
-    try {
-      const response = await authFetch(`${BACKEND_URL}/premium-seller/apply`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestedLimit, supportingDocument: bankStatementDraft, consent: true }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Premium Seller application could not be submitted");
-      setBankStatementDraft(null);
-      setPremiumSellerConsent(false);
-      setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
-        reference: data.reference,
-        requested_limit: requestedLimit,
-        status: "pending",
-        decision_reason: null,
-        created_at: new Date().toISOString(),
-      } } : current);
-      showToast(`Premium Seller application ${data.reference} submitted for review`);
-    } catch (err) { showToast(err.message || "Couldn't reach the server — try again"); }
   };
 
   const saveVacationSettings = async () => {
@@ -3468,7 +3095,6 @@ function MarketplaceStallyard() {
           email: draft.email,
           password: draft.password,
           emailVerified: true,
-          onboardingIntent: registrationIntent === "seller" ? "sell" : "buy",
         }),
       });
     } catch {
@@ -3485,7 +3111,6 @@ function MarketplaceStallyard() {
     await persistMembers([...members, newMember]);
     await saveAuthToken(true);
     await setSession(newMember.username);
-    setIsNewAccountOnboarding(true);
     setPendingEmailVerification(null);
     setEmailCodeInput("");
     setEmailVerifyError("");
@@ -3507,7 +3132,7 @@ function MarketplaceStallyard() {
       licenseNumber: "",
       idType: "Passport",
       idCountry: "",
-      accountType: "personal",
+      accountType: registrationIntent === "business" ? "business" : "personal",
       licensePhotos: [],
     });
     showToast(
@@ -3566,10 +3191,12 @@ function MarketplaceStallyard() {
       setProfileStageError("That phone number doesn't look right — check it and try again");
       return;
     }
-    if (!authForm.phone.trim()) {
-      setProfileStageError("Enter your Nigerian phone number");
+    const skipOfficeLocation = authForm.accountType === "personal";
+    if (!skipOfficeLocation && !authForm.officeLocation.trim()) {
+      setProfileStageError("Enter your office location");
       return;
     }
+    const skipId = false;
     let res;
     try {
       res = await authFetch(`${BACKEND_URL}/profile/complete`, {
@@ -3584,7 +3211,14 @@ function MarketplaceStallyard() {
           nationality: authForm.nationality.trim(),
           stateOfResidence: authForm.stateOfResidence,
           phone: authForm.phone.trim(),
-          country: "Nigeria",
+          officeLocation: authForm.officeLocation.trim(),
+          country: authForm.country.trim(),
+          accountType: authForm.accountType,
+          idType: skipId ? "" : authForm.idType,
+          idCountry: skipId ? "" : authForm.country.trim(),
+          licenseNumber: skipId ? "" : authForm.licenseNumber.trim(),
+          licensePhotos: skipId ? [] : authForm.licensePhotos,
+          idVerificationExempt: false,
         }),
       });
     } catch {
@@ -3601,17 +3235,16 @@ function MarketplaceStallyard() {
     const updatedMember = backendUserToMember(data.user, existing);
     await persistMembers(members.map((m) => (m.username === currentUser ? updatedMember : m)));
     setProfileStageOpen(false);
-    if (isNewAccountOnboarding) {
-      setAccountCreatedSuccess(true);
-      setIsNewAccountOnboarding(false);
-    } else {
-      setView(updatedMember.onboardingIntent === "sell" ? "sell" : "buyerHome");
-      showToast("Profile completed successfully");
-    }
+    setView(authReturnView);
+    showToast(
+      updatedMember.profileComplete
+        ? "Profile complete — you're all set!"
+        : "Saved — you can finish the rest whenever you're ready."
+    );
   };
 
   const openRegistration = (intent = "buyer") => {
-    const normalizedIntent = ["buyer", "seller"].includes(intent) ? intent : "buyer";
+    const normalizedIntent = ["buyer", "seller", "business"].includes(intent) ? intent : "buyer";
     setRegistrationIntent(normalizedIntent);
     setAuthMode("register");
     setAuthError("");
@@ -3620,7 +3253,7 @@ function MarketplaceStallyard() {
     setAuthReturnView(normalizedIntent === "buyer" ? "browse" : "sell");
     setAuthForm((prev) => ({
       ...prev,
-      accountType: "personal",
+      accountType: normalizedIntent === "business" ? "business" : "personal",
       country: "Nigeria",
     }));
     setView("signup");
@@ -3734,10 +3367,7 @@ function MarketplaceStallyard() {
       setProfileStageOpen(true);
       showToast(`Welcome back, ${member.displayName} — let's finish your profile`);
     } else {
-      if (route.next) {
-        const destination = new URL(route.next, window.location.origin);
-        setRoute(readMarketplaceRoute(destination));
-      } else setView(authReturnView);
+      setView(authReturnView);
       showToast(`Welcome back, ${member.displayName}`);
     }
   };
@@ -3884,11 +3514,10 @@ function MarketplaceStallyard() {
   const currentMember = currentUser && sessionUserProfile?.username === currentUser
     ? backendUserToMember(sessionUserProfile, publicCurrentMember || undefined)
     : publicCurrentMember;
-  const hasSellerListingAccess = !currentMember?.isAdmin && !currentMember?.sellerSuspended && !!(
-    currentMember?.isApproved ||
+  const hasSellerListingAccess = !!(
+    currentMember?.isApproved || currentMember?.isAdmin ||
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
-  const casualSellerContactReady = casualSellerStatus?.emailVerified === true && casualSellerStatus?.phoneVerified === true;
 
   useEffect(() => {
     const accountNumber = bankForm.accountNumber.replace(/\D/g, "");
@@ -4312,22 +3941,15 @@ function MarketplaceStallyard() {
     }
   };
 
-  const persistSettings = async (next, field = null) => {
+  const persistSettings = async (next) => {
     const body = {};
-    if (field === "commissionRate" || next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
-    if (field === "taxRate" || next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
+    if (next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
+    if (next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
-      // Older admin buttons pass the already-edited state without a field.
-      if (hasAdminPermission(currentMember, "finance")) {
-        body.commissionRate = next.commissionRate;
-        body.taxRate = next.taxRate;
-      } else {
-        showToast("No settings changes to save");
-        return false;
-      }
+      setSettings(next);
+      return;
     }
-    showToast("Saving settings…");
     try {
       const res = await authFetch(`${BACKEND_URL}/settings`, {
         method: "PATCH",
@@ -4337,14 +3959,12 @@ function MarketplaceStallyard() {
       const data = await res.json();
       if (!res.ok) {
         showToast(data.error || "Couldn't save settings — try again");
-        return false;
+        return;
       }
       setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "" });
       showToast("Settings saved");
-      return true;
     } catch {
       showToast("Couldn't reach the server — try again");
-      return false;
     }
   };
 
@@ -4731,64 +4351,6 @@ function MarketplaceStallyard() {
       setSellerReports((reports) => reports.map((report) => report.id === reportId ? { ...report, ...data.report } : report));
       showToast(`Seller report marked ${status.replace("_", " ")}`);
     } catch { showToast("Couldn't reach the server — try again"); }
-  };
-
-  const fetchAdminLocalDeliveries = async () => {
-    setLocalDeliveryLoading(true);
-    try {
-      const [deliveriesRes, reportsRes] = await Promise.all([
-        authFetch(`${BACKEND_URL}/admin/local-deliveries`),
-        authFetch(`${BACKEND_URL}/admin/local-driver-reports`),
-      ]);
-      const deliveriesData = await deliveriesRes.json().catch(() => ({}));
-      const reportsData = await reportsRes.json().catch(() => ({}));
-      if (!deliveriesRes.ok) return showToast(deliveriesData.error || "Couldn't load local deliveries");
-      if (!reportsRes.ok) return showToast(reportsData.error || "Couldn't load driver reports");
-      setAdminLocalDeliveries(deliveriesData.deliveries || []);
-      setLocalDriverReports(reportsData.reports || []);
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setLocalDeliveryLoading(false);
-    }
-  };
-
-  const updateLocalDriverReport = async (reportId, status) => {
-    const adminNote = window.prompt("Internal review note (optional)") || "";
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/local-driver-reports/${reportId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, adminNote }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.report) return showToast(data.error || "Couldn't update the driver report");
-      setLocalDriverReports((reports) => reports.map((report) => report.id === reportId ? { ...report, ...data.report } : report));
-      await fetchAdminLocalDeliveries();
-      showToast(`Driver report marked ${status.replace("_", " ")}`);
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    }
-  };
-
-  const adminRevokeLocalDelivery = async (assignmentId) => {
-    const reason = window.prompt("Why are you revoking this driver's delivery access?") || "";
-    if (reason.trim().length < 5) return reason && showToast("Enter at least 5 characters");
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/local-deliveries/${assignmentId}/revoke`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: reason.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return showToast(data.error || "Couldn't revoke driver access");
-      setAdminLocalDeliveries((deliveries) => deliveries.map((delivery) =>
-        delivery.id === assignmentId ? { ...delivery, status: "revoked", revokedAt: new Date().toISOString() } : delivery
-      ));
-      showToast("Driver access revoked and recorded in the audit log");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    }
   };
 
   const openAdminPanel = () => {
@@ -5652,24 +5214,21 @@ function MarketplaceStallyard() {
     }
   };
 
-  const openTicketThread = (ticketId) => setActiveTicketId(ticketId);
-  useEffect(() => {
-    if (!activeTicketId || !currentUser || !sessionChecked) return;
-    let cancelled = false;
-    setTicketMessages([]);
+  const openTicketThread = async (ticketId) => {
+    setActiveTicketId(ticketId);
     setLoadingTicketMessages(true);
-    (async () => {
-      try {
-        const res = await authFetch(`${BACKEND_URL}/support-tickets/${activeTicketId}/messages`);
-        if (res.ok) {
-          const data = await res.json();
-          if (!cancelled) setTicketMessages(data.messages || []);
-        } else if (!cancelled) showToast("This support conversation is unavailable");
-      } catch { if (!cancelled) showToast("Couldn't load that conversation — try again"); }
-      finally { if (!cancelled) setLoadingTicketMessages(false); }
-    })();
-    return () => { cancelled = true; };
-  }, [activeTicketId, currentUser, sessionChecked]);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/support-tickets/${ticketId}/messages`);
+      if (res.ok) {
+        const { messages } = await res.json();
+        setTicketMessages(messages);
+      }
+    } catch {
+      showToast("Couldn't load that conversation — try again");
+    } finally {
+      setLoadingTicketMessages(false);
+    }
+  };
 
   const sendTicketMessage = async () => {
     if (!newTicketMessageInput.trim() || !activeTicketId) return;
@@ -5836,9 +5395,8 @@ function MarketplaceStallyard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast(data.error || "Couldn't save that change — try again");
+        showToast("Couldn't save that change — try again");
         return false;
       }
       return true;
@@ -6077,58 +5635,12 @@ function MarketplaceStallyard() {
   };
 
   const fetchVerifiedSellerApplications = async () => {
-    const isSuperAdmin = currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin");
-    if (!isSuperAdmin) {
-      setVerifiedSellerApplications([]);
-      return;
-    }
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications`);
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Couldn't load verified-seller applications");
       setVerifiedSellerApplications(data.applications || []);
     } catch (err) { showToast(err.message || "Couldn't load verified-seller applications"); }
-  };
-
-  const fetchPremiumSellerApplications = async () => {
-    const isSuperAdmin = currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin");
-    if (!isSuperAdmin) { setPremiumSellerApplications([]); return; }
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Couldn't load Premium Seller applications");
-      setPremiumSellerApplications(data.applications || []);
-    } catch (err) { showToast(err.message || "Couldn't load Premium Seller applications"); }
-  };
-
-  const viewPremiumSellerDocument = async (application) => {
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications/${application.id}/document`);
-      if (!response.ok) throw new Error("Supporting document unavailable");
-      const url = URL.createObjectURL(await response.blob());
-      window.open(url, "_blank", "noopener,noreferrer");
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (err) { showToast(err.message); }
-  };
-
-  const decidePremiumSellerApplication = async (application, approve) => {
-    const reason = approve ? "" : window.prompt("Reason for rejection");
-    if (!approve && !reason) return;
-    const approvedLimit = approve ? Number(window.prompt("Approved combined active-listing limit", String(application.requested_limit))) : null;
-    if (approve && (!Number.isFinite(approvedLimit) || approvedLimit <= 20000000)) { showToast("Enter an approved limit above ₦20,000,000"); return; }
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications/${application.id}/${approve ? "approve" : "reject"}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(approve ? { approvedLimit } : { reason }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Application could not be updated");
-      if (data.user) {
-        await persistMembers(members.map((member) => member.username === application.username ? backendUserToMember(data.user, member) : member));
-      }
-      await fetchPremiumSellerApplications();
-      showToast(approve ? "Premium Seller approved" : "Premium Seller application rejected");
-    } catch (err) { showToast(err.message || "Couldn't reach the server"); }
   };
 
   const fetchVerifiedSellerReports = async () => {
@@ -6172,44 +5684,6 @@ function MarketplaceStallyard() {
     } catch (err) { showToast(err.message || "Couldn't generate Verified Seller report"); }
   };
 
-  const fetchPremiumSellerReports = async () => {
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Couldn't load Premium Seller reports");
-      setPremiumSellerReports(data.reports || []);
-    } catch (err) { showToast(err.message || "Couldn't load Premium Seller reports"); }
-  };
-
-  const downloadPremiumSellerReport = async (report) => {
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/${report.id}/download`);
-      if (!response.ok) throw new Error("Premium Seller report unavailable");
-      const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement("a"); link.href=url; link.download=`stallyard-premium-sellers-${String(report.report_date).slice(0,10)}.pdf`; link.click();
-      setTimeout(()=>URL.revokeObjectURL(url),1000);
-    } catch (err) { showToast(err.message); }
-  };
-
-  const revealPremiumSellerReportPassword = async (report) => {
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/${report.id}/password`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Report password unavailable");
-      window.alert(`Password for the ${String(report.report_date).slice(0,10)} Premium Seller report:\n\n${data.password}\n\nKeep this password private.`);
-    } catch (err) { showToast(err.message); }
-  };
-
-  const runPremiumSellerReportNow = async () => {
-    try {
-      const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-reports/run`,{method:"POST"});
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Report could not be generated");
-      await fetchPremiumSellerReports();
-      showToast(data.sent ? `Premium Seller report sent for ${data.applicationCount} approval(s)` : "No unreported Premium Seller approvals were found");
-    } catch (err) { showToast(err.message); }
-  };
-
   const viewVerifiedSellerBankStatement = async (application) => {
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/verified-seller-applications/${application.id}/bank-statement`);
@@ -6231,19 +5705,14 @@ function MarketplaceStallyard() {
   };
 
   useEffect(() => {
-    if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
+    if (adminTab === "members" && currentMember?.isAdmin && hasAdminPermission(currentMember, "seller_verification")) {
       fetchVerifiedSellerApplications();
-      fetchPremiumSellerApplications();
-    } else if (adminTab === "members") {
-      setVerifiedSellerApplications([]);
-      setPremiumSellerApplications([]);
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
   useEffect(() => {
     if (adminTab === "members" && currentMember?.isAdmin && (!currentMember.adminRole || currentMember.adminRole === "super_admin")) {
       fetchVerifiedSellerReports();
-      fetchPremiumSellerReports();
     }
   }, [adminTab, currentMember?.isAdmin, currentMember?.adminRole]);
 
@@ -6507,145 +5976,6 @@ function MarketplaceStallyard() {
     Object.values(locationWatchersRef.current).forEach((watchId) => navigator.geolocation?.clearWatch(watchId));
   }, []);
 
-  const saveLocalDriverAssignment = async (itemId, draft) => {
-    const driverName = String(draft?.driverName || "").trim();
-    const driverPhone = String(draft?.driverPhone || "").trim();
-    const deliveryFee = Number(draft?.deliveryFee);
-    if (driverName.length < 2) {
-      showToast("Enter the driver's full name");
-      return;
-    }
-    if (!driverPhone) {
-      showToast("Enter the driver's Nigerian phone number");
-      return;
-    }
-    if (!Number.isFinite(deliveryFee) || deliveryFee <= 0) {
-      showToast("Enter a delivery fee greater than ₦0");
-      return;
-    }
-    setDeliveryAssignmentSavingKey(itemId);
-    try {
-      const body = {
-        driverName,
-        driverPhone,
-        deliveryFee,
-        paymentMethod: draft?.paymentMethod || "cash",
-        pickupAt: draft?.pickupAt ? new Date(draft.pickupAt).toISOString() : null,
-        deliveryDueAt: draft?.deliveryDueAt ? new Date(draft.deliveryDueAt).toISOString() : null,
-        packageDescription: String(draft?.packageDescription || "").trim(),
-      };
-      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/delivery-assignment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.assignment) {
-        showToast(data.error || "Couldn't create the driver assignment");
-        return;
-      }
-      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
-      setDeliveryAssignmentSecrets((all) => ({
-        ...all,
-        [itemId]: {
-          accessUrl: `${window.location.origin}${data.accessPath}`,
-          activationCode: data.activationCode,
-        },
-      }));
-      showToast("Driver assignment created — copy the link and activation code");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setDeliveryAssignmentSavingKey(null);
-    }
-  };
-
-  const regenerateLocalDriverAccess = async (itemId, assignmentId) => {
-    setDeliveryAssignmentSavingKey(itemId);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignmentId}/regenerate-access`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.assignment) {
-        showToast(data.error || "Couldn't regenerate driver access");
-        return;
-      }
-      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
-      setDeliveryAssignmentSecrets((all) => ({
-        ...all,
-        [itemId]: {
-          accessUrl: `${window.location.origin}${data.accessPath}`,
-          activationCode: data.activationCode,
-        },
-      }));
-      showToast("A new driver link and activation code were created");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setDeliveryAssignmentSavingKey(null);
-    }
-  };
-
-  const revokeLocalDriverAccess = async (itemId, assignmentId) => {
-    if (!window.confirm("Revoke this driver's access to the delivery?")) return;
-    setDeliveryAssignmentSavingKey(itemId);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignmentId}/revoke`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.assignment) {
-        showToast(data.error || "Couldn't revoke driver access");
-        return;
-      }
-      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
-      setDeliveryAssignmentSecrets((all) => {
-        const next = { ...all };
-        delete next[itemId];
-        return next;
-      });
-      showToast("Driver access revoked");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setDeliveryAssignmentSavingKey(null);
-    }
-  };
-
-  const markLocalDriverPaid = async (itemId, assignment) => {
-    const method = assignment?.paymentMethod === "bank_transfer" ? "bank transfer" : "cash";
-    if (!window.confirm(`Confirm that you paid the driver ${formatMoney(assignment?.deliveryFee)} by ${method}?`)) return;
-    let reference = "";
-    if (assignment?.paymentMethod === "bank_transfer") {
-      reference = window.prompt("Bank transfer reference (optional):", "") || "";
-    }
-    setDeliveryAssignmentSavingKey(itemId);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/delivery-assignments/${assignment.id}/mark-paid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reference: reference.trim() }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.assignment) {
-        showToast(data.error || "Couldn't mark the driver fee paid");
-        return;
-      }
-      setDeliveryAssignments((all) => ({ ...all, [itemId]: data.assignment }));
-      showToast("Driver fee marked paid — waiting for the driver to confirm receipt");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    } finally {
-      setDeliveryAssignmentSavingKey(null);
-    }
-  };
-
-  const copyDeliveryAccessValue = async (value, label) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      showToast(`${label} copied`);
-    } catch {
-      window.prompt(`Copy the ${label.toLowerCase()}:`, value);
-    }
-  };
-
   const updateItemCarrier = async (orderId, itemId, carrier) => {
     const ok = await patchOrderItemOnBackend(itemId, { carrier });
     if (!ok) return;
@@ -6659,22 +5989,11 @@ function MarketplaceStallyard() {
             }
       )
     );
-    if (carrier !== "Local Delivery Driver") {
-      setDeliveryAssignments((all) => {
-        if (!all[itemId]) return all;
-        return { ...all, [itemId]: { ...all[itemId], status: "revoked", revokedAt: new Date().toISOString() } };
-      });
-      setDeliveryAssignmentSecrets((all) => {
-        const next = { ...all };
-        delete next[itemId];
-        return next;
-      });
-    }
   };
 
   const updateItemProofOfDelivery = async (orderId, itemId, proofOfDeliveryUrl) => {
     const ok = await patchOrderItemOnBackend(itemId, { proofOfDeliveryUrl });
-    if (!ok) return false;
+    if (!ok) return;
     await persistOrders(
       orders.map((o) =>
         o.id !== orderId
@@ -6686,7 +6005,6 @@ function MarketplaceStallyard() {
       )
     );
     showToast("Proof of delivery saved");
-    return true;
   };
 
   // Optional receipt confirmation records that the buyer received and accepted
@@ -6803,7 +6121,7 @@ function MarketplaceStallyard() {
             : {
                 ...o,
                 paymentStatus: data.order ? "released" : o.paymentStatus,
-                items: o.items.map((i) => (i.id === itemId ? { ...i, fulfillmentStatus: data.item?.fulfillment_status || i.fulfillmentStatus, deliveryTokenRedeemedAt: data.item?.delivery_token_redeemed_at ? new Date(data.item.delivery_token_redeemed_at).getTime() : Date.now(), deliveryToken: null } : i)),
+                items: o.items.map((i) => (i.id === itemId ? { ...i, buyerConfirmedAt: i.buyerConfirmedAt || Date.now(), deliveryToken: null } : i)),
               }
         )
       );
@@ -6919,6 +6237,44 @@ function MarketplaceStallyard() {
         } : item),
       }));
       showToast("Cancellation request sent to the seller");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const cancelAndRefundOrder = async (order) => {
+    const fee = Math.round(Number(order.total || 0) * 0.02 * 100) / 100;
+    const refund = Math.round((Number(order.total || 0) - fee) * 100) / 100;
+    const received = order.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl);
+    const accepted = window.confirm(
+      `Stallyard charges a 2% cancellation fee of ${formatMoney(fee, order.currency)}. You will receive ${formatMoney(refund, order.currency)} back from your ${formatMoney(order.total, order.currency)} payment. This applies to the entire order. Continue?`
+    );
+    if (!accepted) return;
+    const reason = window.prompt(received ? "Why are you returning and refunding this order?" : "Why are you cancelling this order?");
+    if (!reason?.trim()) return;
+    try {
+      const res = await authFetch(`${BACKEND_URL}/orders/${order.id}/buyer-cancel-refund`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.error || "Couldn't submit the refund");
+        return;
+      }
+      await persistOrders(orders.map((current) => current.id !== order.id ? current : {
+        ...current,
+        paymentStatus: "refund_pending",
+        refundStatus: data.order?.refund_status || "pending",
+        refundType: "buyer_cancellation",
+        refundAmount: Number(data.refundAmount || refund),
+        cancellationFee: Number(data.cancellationFee || fee),
+        buyerExitType: data.buyerExitType || (received ? "return_refund" : "cancellation"),
+        refundReason: reason.trim(),
+        refundRequestedAt: Date.now(),
+      }));
+      showToast(`Refund submitted — ${formatMoney(fee, order.currency)} cancellation fee charged`);
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -7889,7 +7245,7 @@ function MarketplaceStallyard() {
         const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataUrl: resized.dataUrl, folder: "listings/products" }),
+          body: JSON.stringify({ dataUrl: resized.dataUrl }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -8005,146 +7361,23 @@ function MarketplaceStallyard() {
     }
   };
 
-  const saveLiveDeliveryPhoto = async (dataUrl) => {
-    if (!deliveryPhotoTarget || uploadingPodKey) return;
-    const { orderId, itemId } = deliveryPhotoTarget;
-    setUploadingPodKey(`${orderId}-${itemId}`);
-    try {
-      const saved = await updateItemProofOfDelivery(orderId, itemId, dataUrl);
-      if (saved) setDeliveryPhotoTarget(null);
-    } catch {
-      showToast("Couldn't save the delivery photo — try again");
-    } finally { setUploadingPodKey(null); }
-  };
-
-  const runSelfDeliveryStep = async (orderId, itemId, action, extra = {}) => {
-    const key = `${orderId}-${itemId}-${action}`;
-    setSelfDeliveryActionKey(key);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/order-items/${itemId}/self-delivery`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action,
-          deliveryPersonSelfieUrl: action === "selfie" ? extra.deliveryPersonSelfieUrl || deliverySelfieDrafts[itemId] || "" : undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.item) {
-        showToast(data.error || "Couldn't update Self delivery — try again");
-        return false;
-      }
-      const row = data.item;
-      setOrders((all) => all.map((order) => order.id !== orderId ? order : {
-        ...order,
-        items: order.items.map((item) => item.id !== itemId ? item : {
-          ...item,
-          carrier: row.carrier || item.carrier,
-          fulfillmentStatus: row.fulfillment_status || item.fulfillmentStatus,
-          selfDeliveryStatus: row.self_delivery_status || null,
-          deliveryPersonSelfieUrl: row.delivery_person_selfie_url || "",
-          selfDeliveryStartedAt: row.self_delivery_started_at ? new Date(row.self_delivery_started_at).getTime() : item.selfDeliveryStartedAt,
-          selfDeliveryOnMyWayAt: row.self_delivery_on_my_way_at ? new Date(row.self_delivery_on_my_way_at).getTime() : item.selfDeliveryOnMyWayAt,
-          selfDeliveryArrivedAt: row.self_delivery_arrived_at ? new Date(row.self_delivery_arrived_at).getTime() : item.selfDeliveryArrivedAt,
-          selfDeliveryDeliveredAt: row.self_delivery_delivered_at ? new Date(row.self_delivery_delivered_at).getTime() : item.selfDeliveryDeliveredAt,
-          liveLocationEnabled: !!row.live_location_enabled,
-        }),
-      }));
-      if (action === "selfie") {
-        setDeliverySelfieDrafts((drafts) => {
-          const next = { ...drafts };
-          delete next[itemId];
-          return next;
-        });
-      }
-      showToast({ start: "Self delivery started", on_my_way: "Marked On my way", selfie: "Delivery-person selfie uploaded", arrived: "Marked I’m here", delivered: "Delivery completed" }[action]);
-      return true;
-    } catch {
-      showToast("Couldn't reach the server — try again");
-      return false;
-    } finally {
-      setSelfDeliveryActionKey(null);
-    }
-  };
-
-  const closeDeliverySelfieCamera = () => {
-    if (deliverySelfieStreamRef.current) {
-      deliverySelfieStreamRef.current.getTracks().forEach((track) => track.stop());
-      deliverySelfieStreamRef.current = null;
-    }
-    if (deliverySelfieVideoRef.current) deliverySelfieVideoRef.current.srcObject = null;
-    setDeliverySelfieCameraReady(false);
-    setDeliverySelfieCameraTarget(null);
-  };
-
-  useEffect(() => {
-    if (!deliverySelfieCameraTarget) return undefined;
-    let cancelled = false;
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1280 } },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        deliverySelfieStreamRef.current = stream;
-        if (deliverySelfieVideoRef.current) {
-          deliverySelfieVideoRef.current.srcObject = stream;
-          await deliverySelfieVideoRef.current.play();
-          setDeliverySelfieCameraReady(true);
-        }
-      } catch {
-        showToast("Camera access is required for the live delivery-person selfie");
-        setDeliverySelfieCameraTarget(null);
-      }
-    };
-    startCamera();
-    return () => {
-      cancelled = true;
-      if (deliverySelfieStreamRef.current) {
-        deliverySelfieStreamRef.current.getTracks().forEach((track) => track.stop());
-        deliverySelfieStreamRef.current = null;
-      }
-    };
-  }, [deliverySelfieCameraTarget]);
-
-  const captureLiveDeliverySelfie = async () => {
-    const target = deliverySelfieCameraTarget;
-    const video = deliverySelfieVideoRef.current;
-    if (!target || !video || !deliverySelfieCameraReady || !video.videoWidth) {
-      showToast("Wait for the live camera to become ready");
+  const handleProofOfDeliverySelect = async (e, orderId, itemId) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast("That photo is too large — please upload something under 5MB");
       return;
     }
-    const key = `${target.orderId}-${target.itemId}`;
-    setUploadingDeliverySelfieKey(key);
+    const key = `${orderId}-${itemId}`;
+    setUploadingPodKey(key);
     try {
-      const size = Math.min(video.videoWidth, video.videoHeight);
-      const canvas = document.createElement("canvas");
-      canvas.width = 960;
-      canvas.height = 960;
-      const context = canvas.getContext("2d");
-      const sourceX = Math.max(0, (video.videoWidth - size) / 2);
-      const sourceY = Math.max(0, (video.videoHeight - size) / 2);
-      context.drawImage(video, sourceX, sourceY, size, size, 0, 0, 960, 960);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.84);
-      const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl, folder: "self-delivery/live-selfies" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.url) throw new Error(data.error || "Couldn't upload the live selfie");
-      const saved = await runSelfDeliveryStep(target.orderId, target.itemId, "selfie", {
-        deliveryPersonSelfieUrl: data.url,
-      });
-      if (saved) closeDeliverySelfieCamera();
-    } catch (err) {
-      showToast(err.message || "Couldn't save the live selfie — try again");
+      const dataUrl = await resizeImageFile(file, 1400, 0.85);
+      await updateItemProofOfDelivery(orderId, itemId, dataUrl);
+    } catch {
+      showToast("Couldn't read that photo — try a different one");
     } finally {
-      setUploadingDeliverySelfieKey(null);
+      setUploadingPodKey(null);
     }
   };
 
@@ -8221,17 +7454,16 @@ function MarketplaceStallyard() {
     if (!file) return;
     setHomepageAdUploading(slot);
     try {
-      const optimized = await resizeHomepageHero(file, "desktop");
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads" }),
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url, mediaType: "image" } : ad));
-      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
-      showToast(`Slide ${slot} desktop image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
+      setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, imageUrl: data.url } : ad));
+      showToast(`Ad ${slot} image uploaded — click Save ad to publish it`);
     } catch (err) {
       showToast(err.message || "Couldn't upload that ad image");
     } finally {
@@ -8273,25 +7505,24 @@ function MarketplaceStallyard() {
     }
   };
 
-  const handleHomepageAdMobileImageSelect = async (e, slot) => {
+  const handleHomepageAdPosterSelect = async (e, slot) => {
     const file = (e.target.files || [])[0];
     e.target.value = "";
-    if (!file) return;
+    if (!file || slot !== 1) return;
     setHomepageAdUploading(slot);
     try {
-      const optimized = await resizeHomepageHero(file, "mobile");
+      const dataUrl = await resizeImageFile(file, 1800, 0.84);
       const res = await authFetch(`${BACKEND_URL}/uploads/image`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dataUrl: optimized.dataUrl, folder: "homepage-ads/mobile" }),
+        body: JSON.stringify({ dataUrl, folder: "homepage-ads/posters" }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Mobile image upload failed");
+      if (!res.ok) throw new Error(data.error || "Poster upload failed");
       setHomepageAds((ads) => ads.map((ad) => ad.slot === slot ? { ...ad, posterUrl: data.url } : ad));
-      const sizeKb = Math.max(1, Math.round(optimized.sizeBytes / 1024));
-      showToast(`Slide ${slot} mobile image: ${optimized.width}×${optimized.height} WebP (${sizeKb} KB) — save the slide when ready`);
+      showToast("Video poster uploaded — click Save ad to publish it");
     } catch (err) {
-      showToast(err.message || "Couldn't upload that mobile image");
+      showToast(err.message || "Couldn't upload that poster image");
     } finally {
       setHomepageAdUploading(null);
     }
@@ -8307,8 +7538,8 @@ function MarketplaceStallyard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageUrl: ad.imageUrl || "",
-          mediaType: "image",
-          posterUrl: ad.posterUrl || "",
+          mediaType: ad.slot === 1 ? (ad.mediaType || "image") : "image",
+          posterUrl: ad.slot === 1 ? (ad.posterUrl || "") : "",
           linkUrl: ad.linkUrl || "",
         }),
       });
@@ -8317,7 +7548,7 @@ function MarketplaceStallyard() {
       setHomepageAds((ads) => ads.map((item) => item.slot === slot ? {
         slot,
         imageUrl: data.ad?.image_url || "",
-        mediaType: "image",
+        mediaType: slot === 1 && data.ad?.media_type === "video" ? "video" : "image",
         posterUrl: data.ad?.poster_url || "",
         linkUrl: data.ad?.link_url || "",
       } : item));
@@ -8726,21 +7957,6 @@ function MarketplaceStallyard() {
     const target = members.find((m) => m.username === username);
     if (target?.backendId) {
       try {
-        if (target.isPreview) {
-          if (!window.confirm(`Delete preview account @${username} and all of its isolated test data? This cannot affect real accounts or transactions.`)) {
-            return;
-          }
-          const res = await authFetch(`${BACKEND_URL}/admin/preview-users/${target.backendId}`, { method: "DELETE" });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            showToast(body.error || "Couldn't delete that preview account");
-            return;
-          }
-          await persistMembers(members.filter((m) => m.username !== username));
-          await persistListings(listings.filter((l) => l.ownerUsername !== username));
-          showToast("Preview account and isolated test data deleted");
-          return;
-        }
         await authFetch(`${BACKEND_URL}/listings/by-owner/${target.backendId}`, { method: "DELETE" });
         const res = await authFetch(`${BACKEND_URL}/users/${target.backendId}`, { method: "DELETE" });
         if (!res.ok) {
@@ -8767,31 +7983,6 @@ function MarketplaceStallyard() {
     await persistMembers(members.filter((m) => m.username !== username));
     await persistListings(listings.filter((l) => l.ownerUsername !== username));
     showToast("Member removed");
-  };
-
-  const adminSetPreviewPhoneVerification = async (username, isVerified) => {
-    const target = members.find((m) => m.username === username);
-    if (!target?.backendId || !target.isPreview) {
-      showToast("Only preview accounts can use admin test-phone verification");
-      return;
-    }
-    try {
-      const res = await authFetch(`${BACKEND_URL}/admin/preview-users/${target.backendId}/phone-verification`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isVerified }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToast(data.error || "Couldn't update the preview phone verification");
-        return;
-      }
-      const updated = backendUserToMember(data.user, target);
-      await persistMembers(members.map((m) => (m.username === username ? updated : m)));
-      showToast(isVerified ? "Preview phone marked verified" : "Preview phone verification removed");
-    } catch {
-      showToast("Couldn't reach the server — try again");
-    }
   };
 
   const adminSetRole = async (username, role, reason = "") => {
@@ -9573,12 +8764,9 @@ function MarketplaceStallyard() {
     );
   }
 
-  if (PRIVATE_VIEWS.has(view) && (!sessionChecked || !currentUser)) {
-    return <div role="status" className="min-h-screen flex items-center justify-center" style={{ backgroundColor: CANVAS, color: INK }}>Checking your session…</div>;
-  }
-
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
+    const showBusinessFields = authForm.accountType !== "personal";
     return (
       <div className="min-h-screen w-full flex" style={{ backgroundColor: "white", fontFamily: "'Work Sans', sans-serif" }}>
         {/* Photo panel */}
@@ -9740,39 +8928,35 @@ function MarketplaceStallyard() {
                     </button>
                   </div>
                 </div>
-              ) : accountCreatedSuccess ? (
-                <div role="status" aria-live="polite">
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mb-5" style={{ backgroundColor: "#EDF4EE", color: SAGE }}>✓</div>
-                  <h1 className="text-3xl mb-2" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Account created successfully</h1>
-                  <p className="text-sm mb-5 leading-6" style={{ color: SLATE }}>Welcome to Stallyard. Your email is verified, your profile has been saved, and you are securely signed in.</p>
-                  <div className="rounded-xl border p-4 mb-5 space-y-2 text-sm" style={{ borderColor: "#DDD8CC", backgroundColor: "#FAF8F2", color: INK }}>
-                    <p>✓ Account created</p>
-                    <p>✓ Email verified</p>
-                    <p>✓ Personal profile completed</p>
-                    <p style={{ color: sessionUserProfile?.is_phone_verified ? SAGE : SLATE }}>{sessionUserProfile?.is_phone_verified ? "✓ Phone verified" : "○ Phone verification still required before selling"}</p>
-                  </div>
-                  {registrationIntent === "seller" ? (
-                    <>
-                      <p className="text-sm mb-4" style={{ color: SLATE }}>Next, verify your phone, add your payout bank and complete the secure Casual Seller identity check.</p>
-                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("sell"); }} className="w-full py-3 rounded-lg font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>Continue seller setup</button>
-                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("buyerHome"); }} className="w-full mt-3 py-2 text-sm underline" style={{ color: SLATE }}>Go to dashboard</button>
-                    </>
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("buyerHome"); }} className="w-full py-3 rounded-lg font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>Go to Buyer Dashboard</button>
-                      <button type="button" onClick={() => { setAccountCreatedSuccess(false); setView("browse"); }} className="w-full mt-3 py-2 text-sm underline" style={{ color: SLATE }}>Start shopping</button>
-                    </>
-                  )}
-                </div>
               ) : profileStageOpen ? (
                 <div>
                   <h1 className="text-3xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                     Finish your profile
                   </h1>
                   <p className="text-sm mb-6" style={{ color: SLATE }}>
-                    You're signed in. Complete these details to unlock buying and selling, or finish later and continue browsing.
+                    You're signed in — this just unlocks buying and selling. Close this any time and pick up where you left off.
                   </p>
                   <div className="space-y-3">
+                    <div
+                      className="w-full flex rounded-full p-1 mb-1"
+                      style={{ backgroundColor: "#F1EDE1" }}
+                    >
+                      {["personal", "business"].map((type) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => setAuthForm({ ...authForm, accountType: type })}
+                          className="flex-1 py-2 rounded-full text-sm font-medium transition-colors"
+                          style={
+                            authForm.accountType === type
+                              ? { backgroundColor: INK, color: "#fff" }
+                              : { backgroundColor: "transparent", color: SLATE }
+                          }
+                        >
+                          {type === "personal" ? "Personal" : "Business"}
+                        </button>
+                      ))}
+                    </div>
                     <select
                       value={authForm.country}
                       onChange={(e) => setAuthForm({ ...authForm, country: e.target.value })}
@@ -9824,7 +9008,6 @@ function MarketplaceStallyard() {
                         Date of Birth
                         <input
                           type="date"
-                          max={new Date(Date.UTC(new Date().getUTCFullYear() - 18, new Date().getUTCMonth(), new Date().getUTCDate())).toISOString().slice(0, 10)}
                           value={authForm.dateOfBirth}
                           onChange={(e) => setAuthForm({ ...authForm, dateOfBirth: e.target.value })}
                           className="block w-full mt-1 px-3 py-2 rounded-lg border outline-none"
@@ -9862,14 +9045,106 @@ function MarketplaceStallyard() {
                       <option value="">Select state of residence</option>
                       {NIGERIAN_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
                     </select>
+                    {showBusinessFields && (
+                      <input
+                        value={authForm.displayName}
+                        onChange={(e) => setAuthForm({ ...authForm, displayName: e.target.value })}
+                        placeholder="Stall name (e.g. Maple & Co.)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
                     <input
                       type="tel"
                       value={authForm.phone}
                       onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
-                      placeholder="Nigerian phone number"
+                      placeholder="Phone number (optional)"
                       className="w-full px-3 py-2 rounded-lg border outline-none"
                       style={{ borderColor: "#DDD8CC" }}
                     />
+                    {showBusinessFields && (
+                      <input
+                        value={authForm.officeLocation}
+                        onChange={(e) => setAuthForm({ ...authForm, officeLocation: e.target.value })}
+                        placeholder="Office location (e.g. Downtown branch)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
+                    {true && (
+                      <select
+                        value={authForm.idType}
+                        onChange={(e) => setAuthForm({ ...authForm, idType: e.target.value })}
+                        className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <option>Passport</option>
+                        <option>National ID</option>
+                        <option>Driver's License</option>
+                        <option>NIN</option>
+                        <option>Permanent Voter's Card</option>
+                        <option>Residence/Work Permit (CERPAC)</option>
+                      </select>
+                    )}
+                    {false && (
+                      <p className="text-xs" style={{ color: SLATE }}>
+                        ID verification isn't required for US-based members.
+                      </p>
+                    )}
+                    {true && showBusinessFields && (
+                      <input
+                        value={authForm.licenseNumber}
+                        onChange={(e) => setAuthForm({ ...authForm, licenseNumber: e.target.value })}
+                        placeholder="License number (optional, self-reported)"
+                        className="w-full px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                    )}
+                    {true && (
+                      <div>
+                        <p className="text-xs mb-2" style={{ color: SLATE }}>
+                          License photos (optional, up to 5)
+                        </p>
+                        {authForm.licensePhotos.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mb-2">
+                            {authForm.licensePhotos.map((src, idx) => (
+                              <div key={idx} className="relative w-20 h-20">
+                                <img
+                                  src={src}
+                                  alt={`License photo ${idx + 1}`}
+                                  className="w-full h-full object-cover rounded-lg"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => removeLicensePhoto(idx)}
+                                  className="absolute -top-2 -right-2 w-6 h-6 rounded-full flex items-center justify-center"
+                                  style={{ backgroundColor: BERRY }}
+                                  aria-label="Remove photo"
+                                >
+                                  <X size={14} color="white" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {authForm.licensePhotos.length < 5 && (
+                          <label
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
+                          >
+                            {uploadingLicense ? "Processing..." : "Add license photos"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              onChange={handleLicensePhotoSelect}
+                              disabled={uploadingLicense}
+                              className="hidden"
+                            />
+                          </label>
+                        )}
+                      </div>
+                    )}
                     {profileStageError && (
                       <p className="text-sm" style={{ color: BERRY }}>
                         {profileStageError}
@@ -10254,7 +9529,7 @@ function MarketplaceStallyard() {
               </div>
 
               <div className="flex items-center gap-3 sm:gap-5 whitespace-nowrap">
-                {!currentMember?.isAdmin && <button onClick={() => setView("sell")} className="hover:underline">Sell</button>}
+                <button onClick={() => setView("sell")} className="hover:underline">Sell</button>
                 <button
                   onClick={() => currentUser ? setView("watchlist") : (setAuthMode("login"), setAuthError(""), setAuthReturnView("watchlist"), setView("signup"))}
                   className="hidden sm:inline hover:underline"
@@ -10267,22 +9542,6 @@ function MarketplaceStallyard() {
                 >
                   My Stallyard
                 </button>
-                {currentUser && !currentMember?.isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(null);
-                      setView("dashboard");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className="inline-flex items-center gap-1 hover:underline"
-                    aria-label="Open seller dashboard"
-                    title="Seller Dashboard"
-                  >
-                    <Store size={16} />
-                    <span className="hidden md:inline">Seller Dashboard</span>
-                  </button>
-                )}
                 {currentUser && (
                   <button
                     type="button"
@@ -10311,17 +9570,6 @@ function MarketplaceStallyard() {
                     </span>
                   )}
                 </button>
-                {currentUser && (
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="lg:hidden relative p-1"
-                    aria-label="Log out"
-                    title="Log out"
-                  >
-                    <LogOut size={19} />
-                  </button>
-                )}
                 {currentUser && (
                   <button onClick={logout} className="hidden lg:inline hover:underline">Log out</button>
                 )}
@@ -10620,6 +9868,25 @@ function MarketplaceStallyard() {
           </section>
         )}
 
+        {view === "user-agreement" && (
+          <div className="max-w-3xl mx-auto">
+            <div className="p-6 sm:p-8 rounded-2xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+              <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: MARIGOLD }}>
+                Legal
+              </p>
+              <h2 className="text-3xl mb-3" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                User Agreement
+              </h2>
+              <div className="p-4 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8" }}>
+                <p className="text-sm font-semibold" style={{ color: INK }}>Draft under review</p>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  Stallyard's User Agreement is currently being prepared. The complete agreement will be published here after it has been reviewed and approved.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {view === "how-it-works" && (
           <section className="max-w-5xl mx-auto">
             <div className="text-center mb-10">
@@ -10692,7 +9959,7 @@ function MarketplaceStallyard() {
               <p className="mt-4 text-sm sm:text-base max-w-2xl mx-auto leading-7" style={{ color: SLATE }}>Choose the account path that fits what you want to do. Stallyard is a Nigeria-only marketplace and marketplace payments are in naira.</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-10">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
               {[
                 {
                   intent: "buyer",
@@ -10707,6 +9974,13 @@ function MarketplaceStallyard() {
                   title: "Create a seller account",
                   text: "Create a personal account, complete seller verification, then list products and receive payouts after valid delivery confirmation.",
                   button: "Create seller account",
+                },
+                {
+                  intent: "business",
+                  icon: "🏢",
+                  title: "Create a business account",
+                  text: "Register your business/stall profile, complete the required verification, and sell under your business identity on Stallyard.",
+                  button: "Create business account",
                 },
               ].map((option) => (
                 <div key={option.intent} className="rounded-2xl border bg-white p-6 flex flex-col" style={{ borderColor: "#DDD8CC" }}>
@@ -10728,9 +10002,9 @@ function MarketplaceStallyard() {
             <div className="rounded-2xl border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
               <div className="p-6 sm:p-8 border-b" style={{ borderColor: "#EEE9DE", backgroundColor: "#FFF9EE" }}>
                 <h2 className="text-2xl sm:text-3xl font-semibold" style={{ color: INK }}>What you’ll need to sign up</h2>
-                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Every Stallyard account can buy and later become a seller. Seller verification is required before listings can go live.</p>
+                <p className="mt-2 text-sm leading-6 max-w-3xl" style={{ color: SLATE }}>Basic account creation is quick. Seller and business accounts require additional verification before listings can go live.</p>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-0">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-0">
                 <div className="p-6 sm:p-7 lg:border-r" style={{ borderColor: "#EEE9DE" }}>
                   <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Buyer account</h3>
                   <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
@@ -10752,6 +10026,16 @@ function MarketplaceStallyard() {
                   </ul>
                 </div>
 
+                <div className="p-6 sm:p-7">
+                  <h3 className="font-semibold text-lg mb-4" style={{ color: INK }}>Business account</h3>
+                  <ul className="space-y-3 text-sm leading-6" style={{ color: SLATE }}>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business or stall name</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Business/office location in Nigeria</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Representative’s name, phone number and government-issued ID</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Bank statement and seller-verification information before selling</span></li>
+                    <li className="flex gap-2"><span style={{ color: SAGE }}>✓</span><span>Payout bank details are added securely for seller withdrawals/payouts</span></li>
+                  </ul>
+                </div>
               </div>
             </div>
 
@@ -10775,88 +10059,60 @@ function MarketplaceStallyard() {
         {view === "browse" && (
           <>
             {isHomeState && (
-              <div className="mb-8 relative left-1/2 -translate-x-1/2 w-[calc(100vw-2rem)] sm:w-[calc(100vw-4rem)] max-w-[1600px]">
-                {(() => {
-                  const slides = homepageAds.filter((ad) => ad.imageUrl);
-                  if (!slides.length) return null;
-                  const activeIndex = Math.min(homepageHeroSlide, slides.length - 1);
-                  const ad = slides[activeIndex];
-                  const hero = (
-                    <picture>
-                      {ad.posterUrl && <source media="(max-width: 639px)" srcSet={ad.posterUrl} />}
-                      <img
-                        src={ad.imageUrl}
-                        alt={`Stallyard featured promotion ${activeIndex + 1}`}
-                        width="1600"
-                        height="400"
-                        loading={activeIndex === 0 ? "eager" : "lazy"}
-                        fetchPriority={activeIndex === 0 ? "high" : "auto"}
-                        decoding="async"
-                        className="absolute inset-0 w-full h-full object-cover"
-                      />
-                    </picture>
-                  );
-                  return (
-                    <section
-                      className="relative overflow-hidden rounded-2xl border bg-white w-full aspect-square sm:aspect-[4/1]"
-                      style={{ borderColor: "#DDD8CC" }}
-                      aria-label="Featured Stallyard promotions"
+              <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1.65fr_1fr] lg:grid-rows-2 gap-4">
+                {homepageAds.map((ad) => {
+                  const isPrimary = ad.slot === 1;
+                  const card = (
+                    <div
+                      className={`relative overflow-hidden rounded-2xl border bg-white ${isPrimary ? "lg:row-span-2" : ""}`}
+                      style={{
+                        borderColor: "#DDD8CC",
+                        minHeight: isPrimary ? "360px" : "172px",
+                      }}
                     >
-                      {ad.linkUrl ? (
-                        <a href={ad.linkUrl} className="absolute inset-0 block" aria-label={`Open promotion ${activeIndex + 1}`}>
-                          {hero}
-                        </a>
-                      ) : hero}
-
-                      {slides.length > 1 && (
-                        <>
-                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 rounded-full bg-black/55 px-3 py-2">
-                            {slides.map((slide, index) => (
-                              <button
-                                key={slide.slot}
-                                type="button"
-                                onClick={() => setHomepageHeroSlide(index)}
-                                aria-label={`Show promotion ${index + 1}`}
-                                aria-current={index === activeIndex ? "true" : undefined}
-                                className="h-2.5 w-2.5 rounded-full border border-white"
-                                style={{ backgroundColor: index === activeIndex ? "white" : "transparent" }}
-                              />
-                            ))}
-                          </div>
-                          <div className="absolute bottom-3 right-3 z-10 flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroSlide((activeIndex - 1 + slides.length) % slides.length)}
-                              aria-label="Previous promotion"
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              ‹
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroSlide((activeIndex + 1) % slides.length)}
-                              aria-label="Next promotion"
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-xl"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              ›
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setHomepageHeroPaused((paused) => !paused)}
-                              aria-label={homepageHeroPaused ? "Play promotions" : "Pause promotions"}
-                              className="h-9 w-9 rounded-full bg-white border shadow flex items-center justify-center text-sm font-bold"
-                              style={{ borderColor: "#DDD8CC", color: INK }}
-                            >
-                              {homepageHeroPaused ? "▶" : "Ⅱ"}
-                            </button>
-                          </div>
-                        </>
+                      {ad.imageUrl ? (
+                        isPrimary && ad.mediaType === "video" ? (
+                          <video
+                            src={ad.imageUrl}
+                            poster={ad.posterUrl || undefined}
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                            aria-label="Stallyard featured video promotion"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={ad.imageUrl}
+                            alt={`Stallyard featured promotion ${ad.slot}`}
+                            className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 hover:scale-[1.015]"
+                          />
+                        )
+                      ) : (
+                        <div
+                          className="absolute inset-0 flex items-center justify-center"
+                          style={{ background: ad.slot === 1 ? "#EFE7D6" : ad.slot === 2 ? "#E7EFE8" : "#F4E5E2" }}
+                        >
+                          <span className="text-sm font-medium" style={{ color: SLATE }}>Featured</span>
+                        </div>
                       )}
-                    </section>
+                    </div>
                   );
-                })()}
+                  return ad.linkUrl ? (
+                    <a
+                      key={ad.slot}
+                      href={ad.linkUrl}
+                      className={isPrimary ? "lg:row-span-2 block" : "block"}
+                      aria-label={`Open featured promotion ${ad.slot}`}
+                    >
+                      {card}
+                    </a>
+                  ) : (
+                    <div key={ad.slot} className={isPrimary ? "lg:row-span-2" : ""}>{card}</div>
+                  );
+                })}
               </div>
             )}
 
@@ -11077,13 +10333,13 @@ function MarketplaceStallyard() {
                 <p className="text-sm mt-1" style={{ color: SLATE }}>
                   Be the first to set one up.
                 </p>
-                {!currentMember?.isAdmin && <button
+                <button
                   onClick={() => setView("sell")}
                   className="mt-4 px-4 py-2 rounded-lg font-medium text-sm"
                   style={{ backgroundColor: MARIGOLD, color: INK }}
                 >
                   List something
-                </button>}
+                </button>
               </div>
             )}
 
@@ -11241,15 +10497,13 @@ function MarketplaceStallyard() {
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Completed profile, verified email and verified Nigerian phone</span></li>
                   <li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Live selfie, selfie holding identification and three camera challenges</span></li>
                 </ul>
-                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified Seller · up to ₦20,000,000 active</h3>
+                <h3 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified Seller · up to ₦10,000,000 active</h3>
                 <ul className="space-y-2 text-sm leading-6" style={{ color: SLATE }}>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Approved Casual Seller verification</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Accepted ID type with front and applicable back images</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Recent bank statement, complete Nigerian address and verified payout bank</span></li>
                   <li className="flex gap-3"><span style={{ color: MARIGOLD }}>✓</span><span>Administrative approval</span></li>
                 </ul>
-                <h3 className="font-semibold text-sm mt-5 mb-2" style={{ color: INK }}>Premium Seller · above ₦20,000,000 active</h3>
-                <ul className="space-y-2 text-sm leading-6" style={{ color: SLATE }}><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Approved Verified Seller account and verified payout bank</span></li><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Recent supporting document and requested listing limit</span></li><li className="flex gap-3"><span style={{ color: SAGE }}>✓</span><span>Manual review and an individually approved numeric limit</span></li></ul>
               </div>
 
               <div className="rounded-2xl border p-6 sm:p-8" style={{ borderColor: "#DDD8CC", backgroundColor: "#FFF9EE" }}>
@@ -11290,7 +10544,7 @@ function MarketplaceStallyard() {
           </section>
         )}
 
-        {view === "sell" && !currentMember?.isAdmin && (
+        {view === "sell" && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               {editingId ? "Edit your listing" : "Set up a listing"}
@@ -11329,35 +10583,11 @@ function MarketplaceStallyard() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <p className="font-semibold text-sm" style={{ color: INK }}>Sell as a verified casual seller</p>
-                    <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings.</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Complete automatic selfie, liveness, and ID checks. Once approved, you can publish up to ₦500,000 in combined active listings without waiting for admin approval.</p>
                   </div>
-                  <button
-                    onClick={() => setCasualVerificationOpen(true)}
-                    disabled={!casualSellerContactReady}
-                    title={!casualSellerContactReady ? "Verify both your email and phone number first" : undefined}
-                    className="px-4 py-2 rounded-lg font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ backgroundColor: SAGE, color: "white" }}
-                  >
-                    {!casualSellerContactReady
-                      ? "Verify email and phone first"
-                      : casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
+                  <button onClick={() => setCasualVerificationOpen(true)} className="px-4 py-2 rounded-lg font-medium text-sm" style={{ backgroundColor: SAGE, color: "white" }}>
+                    {casualSellerStatus?.status === "review_required" ? "Retry verification" : "Verify and start selling"}
                   </button>
-                </div>
-                <div className="mt-3 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
-                  <p className="text-xs font-semibold" style={{ color: INK }}>
-                    Email and phone verification are required
-                  </p>
-                  <p className="text-xs mt-1" style={{ color: SLATE }}>
-                    You must verify both your email address and phone number before you can continue with face verification.
-                  </p>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    <Tag color={casualSellerStatus?.emailVerified ? SAGE : BERRY}>
-                      Email: {casualSellerStatus?.emailVerified ? "Verified" : "Not verified"}
-                    </Tag>
-                    <Tag color={casualSellerStatus?.phoneVerified ? SAGE : BERRY}>
-                      Phone: {casualSellerStatus?.phoneVerified ? "Verified" : "Not verified"}
-                    </Tag>
-                  </div>
                 </div>
                 {casualSellerStatus?.application?.decision_reason && <p className="text-xs mt-2" style={{ color: BERRY }}>{casualSellerStatus.application.decision_reason}</p>}
               </div>
@@ -11387,7 +10617,7 @@ function MarketplaceStallyard() {
                 {currentMember?.verificationStatus !== "pending" ? (
                   <div className="mt-3 pt-3 border-t" style={{ borderColor: "#DDD8CC" }}>
                     <p className="text-sm font-medium" style={{ color: INK }}>Need more than ₦500,000?</p>
-                    <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦20,000,000 in combined active listings.</p>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>Upgrade to Verified Seller to maintain up to ₦10,000,000 in combined active listings.</p>
                     <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>Add one accepted government ID, upload a recent bank statement, keep a complete default Nigerian address and verified payout bank account, then submit for approval.</p>
                     <select value={verifiedSellerIdForm.idType} onChange={(e) => setVerifiedSellerIdForm((form) => ({ ...form, idType: e.target.value }))} className="w-full px-3 py-2 rounded-lg border text-sm bg-white mb-2" style={{ borderColor: "#DDD8CC" }}>
                       <option value="nin">National Identification Number (NIN)</option>
@@ -11421,55 +10651,18 @@ function MarketplaceStallyard() {
               <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller</p>
-                  <Tag color={MARIGOLD}>Up to ₦20,000,000</Tag>
+                  <Tag color={MARIGOLD}>Up to ₦10,000,000</Tag>
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 20000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                  {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
                 </p>
                 <div className="h-2 rounded-full overflow-hidden mt-2" style={{ backgroundColor: "#E8E5DC" }}>
-                  <div className="h-full rounded-full" style={{ backgroundColor: MARIGOLD, width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 20000000) * 100))}%` }} />
+                  <div className="h-full rounded-full" style={{ backgroundColor: MARIGOLD, width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%` }} />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  Draft, sold, cancelled, expired and removed listings do not count. Premium Seller approval is required above this combined limit.
+                  Draft, sold, cancelled, expired and removed listings do not count. Premium Seller status will be required to publish above this combined limit.
                 </p>
-                <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
-                  <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
-                  {casualSellerStatus?.premiumApplication?.status === "pending" ? (
-                    <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
-                      <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
-                    </div>
-                  ) : (<>
-                    {casualSellerStatus?.premiumApplication?.status === "rejected" && (
-                      <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
-                        <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
-                        <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
-                      </div>
-                    )}
-                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling, and every application is reviewed manually.</p>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
-                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
-                    </label>
-                    <label className="inline-block px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
-                      {bankStatementDraft ? "✓ Supporting document attached" : "Upload recent bank statement or supporting document"}
-                      <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
-                    </label>
-                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit and supporting information are accurate and may be retained for marketplace risk review.</span></label>
-                    <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
-                  </>)}
-                </div>
               </div>
-            )}
-
-            {currentUser && currentMember?.sellerTier === "premium" && (
-              <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
-                <div className="flex items-center justify-between gap-3 flex-wrap"><p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller</p><Tag color={SAGE}>{formatMoney(currentMember.sellerListingLimit, "NGN")} approved limit</Tag></div>
-                <p className="text-xs mt-2" style={{ color: SLATE }}>{formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} in combined active listings. Only active listings count.</p>
-              </div>
-            )}
-
-            {currentUser && currentMember?.sellerSuspended && (
-              <div className="mb-6 p-4 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}><p className="text-sm font-semibold" style={{ color: BERRY }}>Selling access suspended</p><p className="text-xs mt-1" style={{ color: SLATE }}>{currentMember.sellerSuspendedReason || "Contact Stallyard support for review."}</p></div>
             )}
 
             {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
@@ -12025,7 +11218,7 @@ function MarketplaceStallyard() {
           </div>
         )}
 
-        {view === "dashboard" && !currentMember?.isAdmin && (
+        {view === "dashboard" && (
           <div>
             <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
               <div>
@@ -12065,9 +11258,9 @@ function MarketplaceStallyard() {
             {currentUser && (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 my-5">
                 {[
-                  { label: "Overview", action: () => setRouteField("sellerSection", "overview") },
-                  { label: "Listings", action: () => setRouteField("sellerSection", "listings") },
-                  { label: "Orders & delivery", action: () => setRouteField("sellerSection", "orders") },
+                  { label: "Overview", action: () => document.getElementById("seller-overview")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Listings", action: () => document.getElementById("seller-listings")?.scrollIntoView({ behavior: "smooth" }) },
+                  { label: "Orders & delivery", action: () => document.getElementById("seller-sales")?.scrollIntoView({ behavior: "smooth" }) },
                   { label: "Seller wallet", action: () => setView("wallet") },
                   { label: "Messages", action: () => setView("messages") },
                   { label: "My Stall", action: () => openStorefront(currentUser) },
@@ -12084,34 +11277,10 @@ function MarketplaceStallyard() {
                 ))}
               </div>
             )}
-            {currentUser && (
-              <section
-                className="mb-4 p-4 rounded-xl border"
-                style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}
-                aria-labelledby="seller-delivery-return-responsibility"
-              >
-                <h3 id="seller-delivery-return-responsibility" className="text-sm font-semibold" style={{ color: INK }}>
-                  Seller delivery and return responsibility
-                </h3>
-                <p className="text-xs mt-1" style={{ color: SLATE }}>
-                  You are responsible for the original delivery and return-delivery costs when a return is approved for any of these reasons:
-                </p>
-                <ol className="mt-2 pl-5 list-decimal space-y-1 text-xs" style={{ color: INK }}>
-                  <li>You sent the wrong item.</li>
-                  <li>The item is counterfeit.</li>
-                  <li>The item is damaged during delivery.</li>
-                  <li>The item arrives defective or becomes defective during delivery.</li>
-                  <li>The item does not match its listing description or pictures.</li>
-                </ol>
-                <p className="text-xs mt-2 font-medium" style={{ color: BERRY }}>
-                  Describe items accurately, verify their condition, and package them securely before dispatch.
-                </p>
-              </section>
-            )}
             {currentUser && !hasSellerListingAccess && (
               <div className="mb-4 p-4 rounded-lg border flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
-                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your email and phone first, then complete your live selfie and Nigerian ID check to publish up to ₦500,000 in combined active listings.</p></div>
-                <button disabled={!casualSellerContactReady} title={!casualSellerContactReady ? "Verify both your email and phone number first" : undefined} onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed" style={{ backgroundColor: SAGE, color: "white" }}>{casualSellerContactReady ? "Start verification" : "Verify email and phone first"}</button>
+                <div><p className="text-sm font-medium" style={{ color: INK }}>Automatic casual-seller verification</p><p className="text-xs mt-1" style={{ color: SLATE }}>Verify your live selfie and Nigerian ID to publish up to ₦500,000 in combined active listings.</p></div>
+                <button onClick={() => setCasualVerificationOpen(true)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: SAGE, color: "white" }}>Start verification</button>
               </div>
             )}
             {currentUser && hasSellerListingAccess && !currentMember?.isApproved && (
@@ -12142,7 +11311,7 @@ function MarketplaceStallyard() {
                   />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦20,000,000.
+                  ₦500,000 combined active-listing limit. Draft, sold, cancelled, expired and removed listings do not count. Verified Sellers may maintain up to ₦10,000,000.
                 </p>
               </div>
             )}
@@ -12152,7 +11321,7 @@ function MarketplaceStallyard() {
                   <div>
                     <p className="text-sm font-semibold" style={{ color: INK }}>Verified Seller allowance</p>
                     <p className="text-xs mt-1" style={{ color: SLATE }}>
-                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 20000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
+                      {formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} active · {formatMoney(Math.max(0, 10000000 - Number(casualSellerStatus?.currentActiveValue || 0)), "NGN")} remaining
                     </p>
                   </div>
                   <Tag color={MARIGOLD}>Verified Seller</Tag>
@@ -12162,12 +11331,12 @@ function MarketplaceStallyard() {
                     className="h-full rounded-full"
                     style={{
                       backgroundColor: MARIGOLD,
-                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 20000000) * 100))}%`,
+                      width: `${Math.min(100, Math.max(0, (Number(casualSellerStatus?.currentActiveValue || 0) / 10000000) * 100))}%`,
                     }}
                   />
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
-                  ₦20,000,000 combined active-listing limit. Only active listings count. Premium Seller approval is required above ₦20,000,000.
+                  ₦10,000,000 combined active-listing limit. Only active listings count. Premium Seller status is required above ₦10,000,000.
                 </p>
               </div>
             )}
@@ -12590,7 +11759,7 @@ function MarketplaceStallyard() {
                     return (
                       <button
                         key={t.key}
-                        onClick={() => setRoute((previous) => ({ ...previous, sellerSection: "listings", listingsTab: t.key }))}
+                        onClick={() => setManageListingsTab(t.key)}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
                         style={{
                           backgroundColor: manageListingsTab === t.key ? INK : "white",
@@ -12650,7 +11819,7 @@ function MarketplaceStallyard() {
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                               className="font-medium"
                             >
-                              {formatMoney(Number(l.price))}
+                              ${Number(l.price).toFixed(2)}
                             </span>
                             <button
                               onClick={() => {
@@ -12787,7 +11956,7 @@ function MarketplaceStallyard() {
                       return (
                         <button
                           key={t.key}
-                          onClick={() => setRoute((previous) => ({ ...previous, sellerSection: "orders", salesTab: t.key }))}
+                          onClick={() => setSalesTab(t.key)}
                           className="px-3 py-1.5 rounded-lg text-xs font-medium shrink-0"
                           style={{
                             backgroundColor: salesTab === t.key ? INK : "white",
@@ -12828,7 +11997,7 @@ function MarketplaceStallyard() {
                               className="text-sm font-semibold"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              {formatMoney(myRevenue)}
+                              ${myRevenue.toFixed(2)}
                             </span>
                           </div>
                           <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
@@ -12901,17 +12070,6 @@ function MarketplaceStallyard() {
                                 start: i.estimatedDeliveryStart || "",
                                 end: i.estimatedDeliveryEnd || "",
                               };
-                              const driverAssignment = deliveryAssignments[i.id] || null;
-                              const driverDraft = deliveryAssignmentDrafts[i.id] || {
-                                driverName: driverAssignment?.driverName || "",
-                                driverPhone: driverAssignment?.driverPhone || "",
-                                deliveryFee: driverAssignment?.deliveryFee ? String(driverAssignment.deliveryFee) : "",
-                                paymentMethod: driverAssignment?.paymentMethod || "cash",
-                                pickupAt: toLocalDateTimeInput(driverAssignment?.pickupAt),
-                                deliveryDueAt: toLocalDateTimeInput(driverAssignment?.deliveryDueAt),
-                                packageDescription: driverAssignment?.packageDescription || i.title || "",
-                              };
-                              const driverSecret = deliveryAssignmentSecrets[i.id] || null;
                               return (
                                 <div
                                   key={i.id}
@@ -12933,8 +12091,6 @@ function MarketplaceStallyard() {
                                         onChange={(e) => updateItemFulfillment(o.id, i.id, e.target.value)}
                                         className="px-2 py-1 rounded-lg border outline-none text-xs"
                                         style={{ borderColor: "#DDD8CC", color: INK }}
-                                        disabled={i.carrier === "Self delivery"}
-                                        title={i.carrier === "Self delivery" ? "Use the Self delivery steps below" : "Update fulfillment status"}
                                       >
                                         <option value="new">New</option>
                                         <option value="preparing">Preparing</option>
@@ -12974,7 +12130,7 @@ function MarketplaceStallyard() {
                                       <div className="text-xs" style={{ color: SLATE }}>The token is also in Messages. Delivery photo is still required before payment release.</div>
                                     </div>
                                   )}
-                                  {!['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
+                                  {(i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") && (
                                     <div className="flex items-center gap-2 mt-2 flex-wrap">
                                       <select
                                         value={i.carrier || ""}
@@ -12989,334 +12145,29 @@ function MarketplaceStallyard() {
                                           </option>
                                         ))}
                                       </select>
-                                      {i.carrier !== "Self delivery" && (
-                                        <>
-                                          <input
-                                            value={trackDraft}
-                                            onChange={(e) =>
-                                              setTrackingDrafts((d) => ({ ...d, [trackKey]: e.target.value }))
-                                            }
-                                            placeholder="Tracking number (optional)"
-                                            className="flex-1 px-2 py-1 rounded-lg border outline-none text-xs"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                          <button
-                                            onClick={async () => {
-                                              await updateItemTracking(o.id, i.id, trackDraft.trim());
-                                              setTrackingDrafts((d) => {
-                                                const next = { ...d };
-                                                delete next[trackKey];
-                                                return next;
-                                              });
-                                            }}
-                                            className="px-2 py-1 rounded-lg text-xs font-medium"
-                                            style={{ backgroundColor: MARIGOLD, color: INK }}
-                                          >
-                                            Save
-                                          </button>
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                  {i.carrier === "Local Delivery Driver" && !['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
-                                    <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: SAGE, backgroundColor: "#F3F8F4" }}>
-                                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                                        <div>
-                                          <div className="text-sm font-semibold" style={{ color: INK }}>Assign a Local Delivery Driver</div>
-                                          <div className="text-xs mt-0.5" style={{ color: SLATE }}>
-                                            The driver receives restricted access to this delivery only. Never share your Stallyard password.
-                                          </div>
-                                        </div>
-                                        {driverAssignment && (
-                                          <Tag color={driverAssignment.status === "revoked" ? BERRY : SAGE}>
-                                            {driverAssignment.status === "revoked" ? "Access revoked" : "Assigned"}
-                                          </Tag>
-                                        )}
-                                      </div>
-                                      <div className="grid sm:grid-cols-2 gap-2 mt-3">
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Driver's full name</span>
-                                          <input
-                                            value={driverDraft.driverName}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, driverName: e.target.value } }))}
-                                            placeholder="Driver's full name"
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                        </label>
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Nigerian phone number</span>
-                                          <input
-                                            type="tel"
-                                            value={driverDraft.driverPhone}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, driverPhone: e.target.value } }))}
-                                            placeholder="0801 234 5678"
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                        </label>
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Agreed delivery fee (₦)</span>
-                                          <input
-                                            type="number"
-                                            min="1"
-                                            step="1"
-                                            value={driverDraft.deliveryFee}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, deliveryFee: e.target.value } }))}
-                                            placeholder="5000"
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                        </label>
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Driver payment method</span>
-                                          <select
-                                            value={driverDraft.paymentMethod}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, paymentMethod: e.target.value } }))}
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          >
-                                            <option value="cash">Cash</option>
-                                            <option value="bank_transfer">Bank transfer</option>
-                                          </select>
-                                        </label>
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Expected pickup</span>
-                                          <input
-                                            type="datetime-local"
-                                            value={driverDraft.pickupAt}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, pickupAt: e.target.value } }))}
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                        </label>
-                                        <label className="text-xs">
-                                          <span className="block mb-1 font-medium" style={{ color: INK }}>Expected delivery</span>
-                                          <input
-                                            type="datetime-local"
-                                            min={driverDraft.pickupAt || undefined}
-                                            value={driverDraft.deliveryDueAt}
-                                            onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, deliveryDueAt: e.target.value } }))}
-                                            className="w-full px-2 py-2 rounded-lg border bg-white outline-none"
-                                            style={{ borderColor: "#DDD8CC" }}
-                                          />
-                                        </label>
-                                      </div>
-                                      <label className="text-xs block mt-2">
-                                        <span className="block mb-1 font-medium" style={{ color: INK }}>Package description</span>
-                                        <textarea
-                                          value={driverDraft.packageDescription}
-                                          onChange={(e) => setDeliveryAssignmentDrafts((all) => ({ ...all, [i.id]: { ...driverDraft, packageDescription: e.target.value } }))}
-                                          maxLength={500}
-                                          rows={2}
-                                          className="w-full px-2 py-2 rounded-lg border bg-white outline-none resize-y"
-                                          style={{ borderColor: "#DDD8CC" }}
-                                        />
-                                      </label>
-                                      <div className="flex gap-2 mt-3 flex-wrap">
-                                        {driverAssignment?.status !== "delivered" && (
-                                          <button
-                                            type="button"
-                                            onClick={() => saveLocalDriverAssignment(i.id, driverDraft)}
-                                            disabled={deliveryAssignmentSavingKey === i.id}
-                                            className="px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                            style={{ backgroundColor: SAGE, color: "white" }}
-                                          >
-                                            {deliveryAssignmentSavingKey === i.id
-                                              ? "Saving…"
-                                              : driverAssignment
-                                                ? "Update assignment and create new access"
-                                                : "Create driver link"}
-                                          </button>
-                                        )}
-                                        {driverAssignment?.status === "assigned" && (
-                                          <button
-                                            type="button"
-                                            onClick={() => revokeLocalDriverAccess(i.id, driverAssignment.id)}
-                                            disabled={deliveryAssignmentSavingKey === i.id}
-                                            className="px-3 py-2 rounded-lg border text-xs font-semibold bg-white disabled:opacity-50"
-                                            style={{ borderColor: BERRY, color: BERRY }}
-                                          >
-                                            Revoke access
-                                          </button>
-                                        )}
-                                        {driverAssignment && ["assigned", "revoked"].includes(driverAssignment.status) && (
-                                          <button
-                                            type="button"
-                                            onClick={() => regenerateLocalDriverAccess(i.id, driverAssignment.id)}
-                                            disabled={deliveryAssignmentSavingKey === i.id}
-                                            className="px-3 py-2 rounded-lg border text-xs font-semibold bg-white disabled:opacity-50"
-                                            style={{ borderColor: INK, color: INK }}
-                                          >
-                                            Create new link and code
-                                          </button>
-                                        )}
-                                      </div>
-                                      {driverAssignment && (
-                                        <div className="mt-3 text-xs" style={{ color: SLATE }}>
-                                          Access expires {new Date(driverAssignment.accessExpiresAt).toLocaleString()}.
-                                          {!driverSecret && driverAssignment.status !== "revoked" && " Create a new link and code if you no longer have the originals."}
-                                        </div>
-                                      )}
-                                      {driverAssignment?.status === "delivered" && (
-                                        <div className="mt-3 p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
-                                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                                            <div className="text-xs font-semibold" style={{ color: INK }}>Driver fee</div>
-                                            <Tag color={driverAssignment.paymentStatus === "confirmed" ? SAGE : MARIGOLD}>
-                                              {driverAssignment.paymentStatus === "confirmed"
-                                                ? "Driver confirmed paid"
-                                                : driverAssignment.paymentStatus === "seller_marked_paid"
-                                                  ? "Waiting for driver confirmation"
-                                                  : "Payment pending"}
-                                            </Tag>
-                                          </div>
-                                          <div className="mt-2 text-xs" style={{ color: SLATE }}>
-                                            Agreed fee: <strong style={{ color: INK }}>{formatMoney(driverAssignment.deliveryFee)}</strong> by {String(driverAssignment.paymentMethod || "cash").replace(/_/g, " ")}.
-                                          </div>
-                                          {driverAssignment.paymentMethod === "bank_transfer" && driverAssignment.hasDriverBankDetails && (
-                                            <div className="mt-2 p-2 rounded-lg" style={{ backgroundColor: "#F6F3EC", color: INK }}>
-                                              <div>{driverAssignment.driverBankName}</div>
-                                              <div className="font-medium">{driverAssignment.driverAccountName}</div>
-                                              <div style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{driverAssignment.driverAccountNumber}</div>
-                                            </div>
-                                          )}
-                                          {driverAssignment.paymentMethod === "bank_transfer" && !driverAssignment.hasDriverBankDetails && (
-                                            <div className="mt-2 text-xs" style={{ color: BERRY }}>Waiting for the driver to add bank details.</div>
-                                          )}
-                                          {driverAssignment.openReportCount > 0 && (
-                                            <div className="mt-2 text-xs font-medium" style={{ color: BERRY }}>The driver submitted a report that is awaiting Stallyard review.</div>
-                                          )}
-                                          {driverAssignment.paymentStatus === "pending" && (driverAssignment.paymentMethod === "cash" || driverAssignment.hasDriverBankDetails) && (
-                                            <button
-                                              type="button"
-                                              onClick={() => markLocalDriverPaid(i.id, driverAssignment)}
-                                              disabled={deliveryAssignmentSavingKey === i.id}
-                                              className="mt-3 px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                              style={{ backgroundColor: MARIGOLD, color: INK }}
-                                            >
-                                              {deliveryAssignmentSavingKey === i.id ? "Saving…" : "Mark driver fee paid"}
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
-                                      {driverSecret && (
-                                        <div className="mt-3 p-3 rounded-lg border bg-white" style={{ borderColor: MARIGOLD }}>
-                                          <div className="font-semibold text-xs" style={{ color: INK }}>Share these separately with the assigned driver</div>
-                                          <div className="mt-2">
-                                            <div className="text-xs font-medium" style={{ color: INK }}>One-time delivery link</div>
-                                            <div className="flex gap-2 mt-1">
-                                              <input readOnly value={driverSecret.accessUrl} className="flex-1 min-w-0 px-2 py-1 rounded border text-xs" style={{ borderColor: "#DDD8CC" }} />
-                                              <button type="button" onClick={() => copyDeliveryAccessValue(driverSecret.accessUrl, "Driver link")} className="px-2 py-1 rounded border text-xs font-medium bg-white" style={{ borderColor: SAGE, color: INK }}>Copy link</button>
-                                            </div>
-                                          </div>
-                                          <div className="mt-2">
-                                            <div className="text-xs font-medium" style={{ color: INK }}>Six-digit activation code</div>
-                                            <div className="flex items-center gap-2 mt-1">
-                                              <span className="text-lg font-semibold tracking-widest" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{driverSecret.activationCode}</span>
-                                              <button type="button" onClick={() => copyDeliveryAccessValue(driverSecret.activationCode, "Activation code")} className="px-2 py-1 rounded border text-xs font-medium bg-white" style={{ borderColor: SAGE, color: INK }}>Copy code</button>
-                                            </div>
-                                          </div>
-                                          <p className="text-xs mt-2" style={{ color: BERRY }}>Do not send your Stallyard password. The driver link has access to this delivery only.</p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-                                  {i.carrier === "Self delivery" && !['cancelled', 'returned'].includes(i.fulfillmentStatus) && (
-                                    <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF9EF" }}>
-                                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                                        <div>
-                                          <div className="text-sm font-semibold" style={{ color: INK }}>Self delivery</div>
-                                          <div className="text-xs mt-0.5" style={{ color: SLATE }}>
-                                            Complete each step in order. The buyer can follow the progress.
-                                          </div>
-                                        </div>
-                                        <Tag color={i.selfDeliveryStatus === "delivered" ? SAGE : MARIGOLD}>
-                                          {({ started: "Started", on_my_way: "On my way", arrived: "I’m here", delivered: "Delivered" }[i.selfDeliveryStatus] || "Not started")}
-                                        </Tag>
-                                      </div>
-
-                                      {!i.selfDeliveryStatus && (
-                                        <button
-                                          type="button"
-                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "start")}
-                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-start`}
-                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                          style={{ backgroundColor: INK, color: "white" }}
-                                        >
-                                          {selfDeliveryActionKey === `${o.id}-${i.id}-start` ? "Starting…" : "Start self delivery"}
-                                        </button>
-                                      )}
-
-                                      {i.selfDeliveryStatus === "started" && (
-                                        <button
-                                          type="button"
-                                          onClick={() => runSelfDeliveryStep(o.id, i.id, "on_my_way")}
-                                          disabled={selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way`}
-                                          className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                          style={{ backgroundColor: MARIGOLD, color: INK }}
-                                        >
-                                          {selfDeliveryActionKey === `${o.id}-${i.id}-on_my_way` ? "Saving…" : "On my way"}
-                                        </button>
-                                      )}
-
-                                      {i.selfDeliveryStatus === "on_my_way" && (
-                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
-                                          {!i.deliveryPersonSelfieUrl ? (
-                                            <>
-                                              <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-person selfie</div>
-                                              <div className="text-xs mt-1" style={{ color: SLATE }}>Take a current photo of the person making this delivery before continuing.</div>
-                                              <button
-                                                type="button"
-                                                onClick={() => setDeliverySelfieCameraTarget({ orderId: o.id, itemId: i.id })}
-                                                className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium"
-                                                style={{ borderColor: INK, color: INK }}
-                                              >
-                                                Open live selfie camera
-                                              </button>
-                                            </>
-                                          ) : (
-                                            <>
-                                              <div className="flex items-center gap-3 flex-wrap">
-                                                <img src={i.deliveryPersonSelfieUrl} alt="Delivery person selfie" className="w-20 h-20 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
-                                                <div>
-                                                  <div className="text-xs font-semibold" style={{ color: SAGE }}>Delivery-person selfie saved</div>
-                                                  <div className="text-xs mt-1" style={{ color: SLATE }}>GPS sharing is optional. Use the location controls below if desired.</div>
-                                                </div>
-                                              </div>
-                                              <button
-                                                type="button"
-                                                onClick={() => runSelfDeliveryStep(o.id, i.id, "arrived")}
-                                                disabled={selfDeliveryActionKey === `${o.id}-${i.id}-arrived`}
-                                                className="mt-3 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                                                style={{ backgroundColor: MARIGOLD, color: INK }}
-                                              >
-                                                {selfDeliveryActionKey === `${o.id}-${i.id}-arrived` ? "Saving…" : "I’m here"}
-                                              </button>
-                                            </>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {i.selfDeliveryStatus === "arrived" && (
-                                        <div className="mt-3 p-3 rounded-lg bg-white border" style={{ borderColor: "#E7DDC9" }}>
-                                          <div className="text-xs font-semibold" style={{ color: INK }}>Required: delivery-proof photo</div>
-                                          <div className="text-xs mt-1" style={{ color: SLATE }}>Take a live handoff photo before completing delivery.</div>
-                                          {i.proofOfDeliveryUrl ? (
-                                            <img src={i.proofOfDeliveryUrl} alt="Delivery proof" className="mt-2 w-24 h-24 rounded-lg object-cover border" style={{ borderColor: "#DDD8CC" }} />
-                                          ) : (
-                                            <button type="button" onClick={() => setDeliveryPhotoTarget({ orderId: o.id, itemId: i.id })} disabled={uploadingPodKey === trackKey} className="inline-block mt-2 px-3 py-2 rounded-lg border bg-white text-xs font-medium disabled:opacity-50" style={{ borderColor: INK, color: INK }}>Take delivery photo</button>
-                                          )}
-                                          <button
-                                            type="button"
-                                            onClick={() => runSelfDeliveryStep(o.id, i.id, "delivered")}
-                                            disabled={!i.proofOfDeliveryUrl || selfDeliveryActionKey === `${o.id}-${i.id}-delivered`}
-                                            className="block mt-2 px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-40"
-                                            style={{ backgroundColor: SAGE, color: "white" }}
-                                          >
-                                            {selfDeliveryActionKey === `${o.id}-${i.id}-delivered` ? "Completing…" : "Delivered"}
-                                          </button>
-                                        </div>
-                                      )}
+                                      <input
+                                        value={trackDraft}
+                                        onChange={(e) =>
+                                          setTrackingDrafts((d) => ({ ...d, [trackKey]: e.target.value }))
+                                        }
+                                        placeholder="Tracking number (optional)"
+                                        className="flex-1 px-2 py-1 rounded-lg border outline-none text-xs"
+                                        style={{ borderColor: "#DDD8CC" }}
+                                      />
+                                      <button
+                                        onClick={async () => {
+                                          await updateItemTracking(o.id, i.id, trackDraft.trim());
+                                          setTrackingDrafts((d) => {
+                                            const next = { ...d };
+                                            delete next[trackKey];
+                                            return next;
+                                          });
+                                        }}
+                                        className="px-2 py-1 rounded-lg text-xs font-medium"
+                                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                                      >
+                                        Save
+                                      </button>
                                     </div>
                                   )}
                                   {!['cancelled', 'returned', 'delivered'].includes(i.fulfillmentStatus) && (
@@ -13370,7 +12221,7 @@ function MarketplaceStallyard() {
                                       </div>
                                     </div>
                                   )}
-                                  {i.fulfillmentStatus === "shipped" && (i.carrier !== "Self delivery" || !!i.deliveryPersonSelfieUrl) && (
+                                  {i.fulfillmentStatus === "shipped" && (
                                     <div className="mt-2 p-2 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: CANVAS }}>
                                       <div className="text-xs font-medium" style={{ color: INK }}>Live delivery location</div>
                                       <div className="text-xs mt-1" style={{ color: SLATE }}>
@@ -13416,7 +12267,19 @@ function MarketplaceStallyard() {
                                           />
                                         </a>
                                       ) : (
-                                        <button type="button" onClick={() => setDeliveryPhotoTarget({ orderId: o.id, itemId: i.id })} disabled={uploadingPodKey === trackKey} className="inline-block px-2 py-1 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}>Take delivery photo</button>
+                                        <label
+                                          className="inline-block px-2 py-1 rounded-lg border text-xs font-medium cursor-pointer"
+                                          style={{ borderColor: "#DDD8CC", backgroundColor: "white", color: INK }}
+                                        >
+                                          {uploadingPodKey === trackKey ? "Uploading…" : "Upload delivery photo"}
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => handleProofOfDeliverySelect(e, o.id, i.id)}
+                                            className="hidden"
+                                            disabled={uploadingPodKey === trackKey}
+                                          />
+                                        </label>
                                       )}
                                     </div>
                                   )}
@@ -13458,7 +12321,7 @@ function MarketplaceStallyard() {
                                             disabled={
                                               redeemingTokenKey === i.id ||
                                               !(redeemTokenDrafts[i.id] || "").trim() ||
-                                              !i.proofOfDeliveryUrl || !i.deliveryTokenSentAt || !!i.deliveryTokenRedeemedAt || i.fulfillmentStatus !== "delivered"
+                                              !i.proofOfDeliveryUrl
                                             }
                                             className="px-2 py-1 rounded-lg text-xs font-medium disabled:opacity-50"
                                             style={{ backgroundColor: MARIGOLD, color: INK }}
@@ -13577,32 +12440,15 @@ function MarketplaceStallyard() {
               <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                 Dashboard
               </h2>
-              <div className="flex items-center gap-2 flex-wrap">
-                {!currentMember?.isAdmin && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelected(null);
-                      setView("dashboard");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white"
-                    style={{ backgroundColor: INK }}
-                  >
-                    <Store size={17} />
-                    Seller Dashboard
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setView("wallet")}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
-                  style={{ borderColor: SAGE, color: INK }}
-                >
-                  <Wallet size={17} />
-                  Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setView("wallet")}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border bg-white text-sm font-semibold"
+                style={{ borderColor: SAGE, color: INK }}
+              >
+                <Wallet size={17} />
+                Seller wallet · {formatMoney(walletNetAvailable, "NGN")}
+              </button>
             </div>
             <p className="text-sm mb-5" style={{ color: SLATE }}>
               Everything about your orders, messages, and alerts in one place.
@@ -14561,9 +13407,14 @@ function MarketplaceStallyard() {
                         )}
                       </div>
                       <div className="flex items-center gap-3 flex-wrap justify-end">
-                        {o.paymentStatus === "held" && (
-                          <span className="text-xs" style={{ color: SLATE }}>Orders cannot be cancelled after placement</span>
-                        )}
+                        {!o.isDisputed && o.paymentStatus === "held" &&
+                          !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
+                            <button onClick={() => cancelAndRefundOrder(o)} className="text-xs font-semibold underline" style={{ color: BERRY }}>
+                              {o.items.some((item) => item.fulfillmentStatus === "delivered" || item.buyerConfirmedAt || item.proofOfDeliveryUrl)
+                                ? "Return order & refund"
+                                : "Cancel order & refund"}
+                            </button>
+                          )}
                         {!o.isDisputed && o.paymentStatus === "held" &&
                           !o.items.some((item) => item.deliveryTokenSentAt || item.deliveryTokenRedeemedAt) && (
                             <button onClick={() => fileDispute(o.id)} className="text-xs font-medium underline" style={{ color: SLATE }}>
@@ -15828,7 +14679,7 @@ function MarketplaceStallyard() {
                     Request a withdrawal
                   </h3>
                   <div className="flex items-center gap-2 mb-2">
-                    <span style={{ color: SLATE }}>₦</span>
+                    <span style={{ color: SLATE }}>$</span>
                     <input
                       type="number"
                       min="0"
@@ -15888,7 +14739,7 @@ function MarketplaceStallyard() {
                               className="font-medium"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              {formatMoney(w.amount)}
+                              ${w.amount.toFixed(2)}
                             </span>
                           </div>
                         </div>
@@ -15950,7 +14801,7 @@ function MarketplaceStallyard() {
                               className="font-medium"
                               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
                             >
-                              {formatMoney(t.payout)}
+                              ${t.payout.toFixed(2)}
                             </span>
                           </div>
                         </div>
@@ -16094,7 +14945,7 @@ function MarketplaceStallyard() {
                             }}
                           >
                             <div className="font-medium mb-1">
-                              Offer: {formatMoney(m.amount)}
+                              Offer: ${m.amount.toFixed(2)}
                             </div>
                             {m.status === "pending" && !mine && (
                               <div className="flex items-center gap-3 mt-1">
@@ -16128,7 +14979,7 @@ function MarketplaceStallyard() {
                                     className="text-xs font-medium underline"
                                     style={{ color: INK }}
                                   >
-                                    Add to cart at {formatMoney(m.amount)}
+                                    Add to cart at ${m.amount.toFixed(2)}
                                   </button>
                                 )}
                               </div>
@@ -16203,7 +15054,7 @@ function MarketplaceStallyard() {
 
                 {offerModalOpen && (
                   <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD }}>
-                    <span style={{ color: SLATE }}>₦</span>
+                    <span style={{ color: SLATE }}>$</span>
                     <input
                       type="number"
                       min="0"
@@ -16248,7 +15099,7 @@ function MarketplaceStallyard() {
                       aria-label="Make an offer"
                       title="Make an offer"
                     >
-                      ₦
+                      $
                     </button>
                   )}
                   <label
@@ -16600,288 +15451,3512 @@ function MarketplaceStallyard() {
           </div>
         )}
 
-{view === "admin" && currentMember?.isAdmin && (
-          <Suspense fallback={<div className="py-12 text-center text-sm" style={{ color: SLATE }}>Loading secure admin dashboard…</div>}>
-            <SuperAdminDashboard scope={{
-              ADMIN_ROLE_LABELS,
-              ADMIN_ROLE_ORDER,
-              Array,
-              BACKEND_URL,
-              BERRY,
-              Boolean,
-              CANVAS,
-              CATEGORIES,
-              CATEGORY_COLOR,
-              CURRENCIES,
-              Date,
-              FULFILLMENT_LABEL,
-              INK,
-              ImageIcon,
-              MARIGOLD,
-              Math,
-              Number,
-              Object,
-              Pencil,
-              Plus,
-              React,
-              SAGE,
-              SLATE,
-              Set,
-              StarDisplay,
-              String,
-              TICKET_STATUS_LABEL,
-              Tag,
-              Trash2,
-              X,
-              accountReports,
-              activeAdminOrderId,
-              activeDisputeCaseId,
-              activeTicketId,
-              addBanner,
-              addFaq,
-              adminApproveListing,
-              adminApproveMember,
-              adminAutoVerifySeller,
-              adminDisputeSearch,
-              adminDisputeStatusFilter,
-              adminDisputes,
-              adminLocalDeliveries,
-              adminListingSearch,
-              adminListingStatusFilter,
-              adminMemberFilter,
-              adminMemberSearch,
-              adminOrderSearch,
-              adminOrderStatusFilter,
-              adminRejectListing,
-              adminRemoveListing,
-              adminRemoveMember,
-              adminReportData,
-              adminReportError,
-              adminReportFrom,
-              adminReportLoading,
-              adminReportTo,
-              adminReportType,
-              adminResolveAccountReport,
-              adminResolveMessageReport,
-              adminResolveReviewReport,
-              adminRestoreListing,
-              adminSetRole,
-              adminSetPreviewPhoneVerification,
-              adminStaff,
-              adminStaffError,
-              adminStaffFilter,
-              adminStaffSearch,
-              adminTab,
-              adminTakeDownListing,
-              adminTempPasswordGeneratingId,
-              adminTickets,
-              adminToggleFeature,
-              adminToggleImageVisibility,
-              adminToggleSuspend,
-              adminToggleVerify,
-              adminRevokeLocalDelivery,
-              adminTotpCodeInput,
-              adminTotpError,
-              adminTotpSetup,
-              adminUpdateTicketStatus,
-              auditActionFilter,
-              auditDateFilter,
-              auditLog,
-              auditSearch,
-              authFetch,
-              authImageUploading,
-              bannerForm,
-              bannerImageUploading,
-              buyerRiskData,
-              buyerRiskError,
-              buyerRiskFilter,
-              buyerRiskLoading,
-              buyerRiskSearch,
-              casualSellerAdminLoading,
-              casualSellerApplications,
-              casualSellerReports,
-              confirmAdminTotpSetup,
-              confirmingAdminTotpSetup,
-              content,
-              contentTab,
-              currentMember,
-              currentUser,
-              decidePremiumSellerApplication,
-              dismissImageFlag,
-              disputeAdminDrafts,
-              downloadAdminReportCsv,
-              downloadCasualSellerReport,
-              downloadPremiumSellerReport,
-              downloadVerifiedSellerReport,
-              editingFaqId,
-              expandedBuyerRiskId,
-              expandedDocsUsername,
-              expandedListingImagesId,
-              expandedSellerPerformanceId,
-              expandedStaffId,
-              faqForm,
-              fetchAdminReport,
-              fetchAdminLocalDeliveries,
-              fetchAdminStaff,
-              fetchAuditLog,
-              fetchBuyerRisk,
-              fetchCasualSellerVerification,
-              fetchReconciliation,
-              fetchSellerPerformance,
-              fetchSystemHealth,
-              fetchVerifiedSellerApplications,
-              formatMoney,
-              generateAdminTemporaryPassword,
-              handleAuthImageSelect,
-              handleBannerImageSelect,
-              handleHomepageAdImageSelect,
-              handleHomepageAdMobileImageSelect,
-              hasAdminPermission,
-              hideImageReason,
-              hidingImageDraft,
-              homepageAdSaving,
-              homepageAdUploading,
-              homepageAds,
-              listings,
-              loadingAdminStaff,
-              loadingAuditLog,
-              loadingTicketMessages,
-              localDeliveryFilter,
-              localDeliveryLoading,
-              localDeliverySearch,
-              localDriverReports,
-              members,
-              messageReports,
-              newTicketMessageInput,
-              openAdminDisputes,
-              openAdminNotes,
-              openAdminWarnings,
-              openCasualApplicationEvidence,
-              openTicketThread,
-              orderNumber,
-              orders,
-              partialRefundOrder,
-              paystackCheckingOrderId,
-              paystackChecks,
-              persistSettings,
-              premiumSellerApplications,
-              premiumSellerReports,
-              reconciliationData,
-              reconciliationError,
-              reconciliationFilter,
-              reconciliationLoading,
-              reconciliationSearch,
-              refundAdminFilter,
-              refundAdminSearch,
-              refundOrder,
-              releasePayout,
-              removeArticle,
-              removeAuthImage,
-              removeBanner,
-              removeFaq,
-              revealCasualSellerReportPassword,
-              revealPremiumSellerReportPassword,
-              revealVerifiedSellerReportPassword,
-              reviewReports,
-              revokeAdminStaffSessions,
-              runPremiumSellerReportNow,
-              runVerifiedSellerReportNow,
-              saveAdminDisputeCase,
-              saveHomepageAd,
-              savingDisputeCaseId,
-              sellerPerformanceData,
-              sellerPerformanceError,
-              sellerPerformanceFilter,
-              sellerPerformanceLoading,
-              sellerPerformanceSearch,
-              sellerReports,
-              sendTicketMessage,
-              sendingTicketMessage,
-              setActiveAdminOrderId,
-              setActiveDisputeCaseId,
-              setActiveTicketId,
-              setAddMemberOpen,
-              setAdminDisputeSearch,
-              setAdminDisputeStatusFilter,
-              setAdminListingSearch,
-              setAdminListingStatusFilter,
-              setAdminMemberFilter,
-              setAdminMemberSearch,
-              setAdminOrderSearch,
-              setAdminOrderStatusFilter,
-              setAdminReportData,
-              setAdminReportError,
-              setAdminReportFrom,
-              setAdminReportTo,
-              setAdminReportType,
-              setAdminStaffFilter,
-              setAdminStaffSearch,
-              setAdminTab,
-              setAdminTotpCodeInput,
-              setAdminTotpError,
-              setAdminTotpSetup,
-              setArticleForm,
-              setArticleModalOpen,
-              setAuditActionFilter,
-              setAuditDateFilter,
-              setAuditSearch,
-              setBannerForm,
-              setBuyerRiskFilter,
-              setBuyerRiskSearch,
-              setContentTab,
-              setDisputeAdminDrafts,
-              setEditingArticleId,
-              setEditingFaqId,
-              setExpandedBuyerRiskId,
-              setExpandedDocsUsername,
-              setExpandedListingImagesId,
-              setExpandedSellerPerformanceId,
-              setExpandedStaffId,
-              setFaqForm,
-              setHideImageReason,
-              setHidingImageDraft,
-              setHomepageAds,
-              setLocalDeliveryFilter,
-              setLocalDeliverySearch,
-              setNewTicketMessageInput,
-              setOrders,
-              setReconciliationFilter,
-              setReconciliationSearch,
-              setRefundAdminFilter,
-              setRefundAdminSearch,
-              setRejectModalUsername,
-              setRejectReasonDraft,
-              setSellerPerformanceFilter,
-              setSellerPerformanceSearch,
-              setSettings,
-              setTicketMessages,
-              settings,
-              showToast,
-              startAdminTotpSetup,
-              startEdit,
-              startingAdminTotpSetup,
-              systemHealth,
-              systemHealthError,
-              systemHealthLoading,
-              ticketMessages,
-              updateBanner,
-              updateFaq,
-              updateSellerReport,
-              updateLocalDriverReport,
-              verifiedSellerApplications,
-              verifiedSellerReports,
-              verifyPaystackReconciliation,
-              view,
-              viewPremiumSellerDocument,
-              viewVerifiedSellerBankStatement,
-              viewVerifiedSellerIdentification,
-              window,
-              withdrawals,
-            }} />
-          </Suspense>
+        {view === "admin" && currentMember?.isAdmin && !currentMember?.twoFactorEnabled && (
+          <div className="max-w-sm">
+            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Two-factor required
+            </h2>
+            <p className="text-sm mb-5" style={{ color: SLATE }}>
+              Admin accounts must set up an authenticator app (Google Authenticator, Authy, 1Password, etc.)
+              before you can open this panel.
+            </p>
+            {!adminTotpSetup ? (
+              <div>
+                {adminTotpError && (
+                  <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                    {adminTotpError}
+                  </p>
+                )}
+                <button
+                  onClick={startAdminTotpSetup}
+                  disabled={startingAdminTotpSetup}
+                  className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                  style={{ backgroundColor: MARIGOLD, color: INK }}
+                >
+                  {startingAdminTotpSetup ? "Generating..." : "Set up authenticator app"}
+                </button>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm mb-2" style={{ color: SLATE }}>
+                  Scan this QR code with your authenticator app:
+                </p>
+                <img
+                  src={adminTotpSetup.qrCodeUrl}
+                  alt="Authenticator app QR code"
+                  className="mb-3 rounded-lg border"
+                  style={{ borderColor: "#DDD8CC", width: 180, height: 180 }}
+                />
+                <p className="text-xs mb-1" style={{ color: SLATE }}>
+                  Can't scan? Enter this key manually:
+                </p>
+                <p
+                  className="text-xs mb-3 px-2 py-1.5 rounded border break-all"
+                  style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                >
+                  {adminTotpSetup.secret}
+                </p>
+                <label className="block text-xs font-medium mb-1" style={{ color: SLATE }}>
+                  Then enter the 6-digit code it's showing
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={adminTotpCodeInput}
+                  onChange={(e) => setAdminTotpCodeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && confirmAdminTotpSetup()}
+                  className="w-full px-3 py-2 rounded-lg border mb-2"
+                  style={{ borderColor: "#DDD8CC" }}
+                  placeholder="123456"
+                  autoFocus
+                />
+                {adminTotpError && (
+                  <p className="text-xs mb-2" style={{ color: "#B4432A" }}>
+                    {adminTotpError}
+                  </p>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={confirmAdminTotpSetup}
+                    disabled={confirmingAdminTotpSetup}
+                    className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                  >
+                    {confirmingAdminTotpSetup ? "Confirming..." : "Confirm code"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAdminTotpSetup(null);
+                      setAdminTotpCodeInput("");
+                      setAdminTotpError("");
+                    }}
+                    className="text-xs underline disabled:opacity-50"
+                    style={{ color: SLATE }}
+                  >
+                    Start over
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         )}
 
 
+        {view === "admin" && currentMember?.isAdmin && currentMember?.twoFactorEnabled && (
+          <div>
+            <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+              Admin dashboard
+            </h2>
+            <p className="text-sm mb-5" style={{ color: SLATE }}>
+              Visible only to you, {currentMember.displayName}.
+            </p>
+
+            <div className="flex gap-2 mb-6 flex-wrap">
+              {[
+                { id: "overview", label: "Overview", requireSuperAdmin: true },
+                { id: "listings", label: `Listings (${listings.length})`, permission: "listing_moderation" },
+                { id: "members", label: `Members (${members.length})`, permission: "seller_verification" },
+                { id: "staff", label: `Admin staff`, requireSuperAdmin: true },
+                { id: "orders", label: `Orders (${orders.length})`, permission: "order_access" },
+                { id: "disputes", label: `Disputes (${openAdminDisputes.length})`, permission: "dispute_resolution" },
+                {
+                  id: "reports",
+                  label: `Message reports (${messageReports.filter((r) => r.status === "open").length})`,
+                  permission: "dispute_resolution",
+                },
+                {
+                  id: "reviewReports",
+                  label: `Review reports (${reviewReports.filter((r) => r.status === "open").length})`,
+                  permission: "dispute_resolution",
+                },
+                {
+                  id: "sellerReports",
+                  label: `Seller reports (${sellerReports.filter((r) => ["open", "in_review"].includes(r.status)).length})`,
+                  permission: "seller_report_review",
+                },
+                {
+                  id: "accountReports",
+                  label: `Account reports (${accountReports.filter((r) => r.status === "open").length})`,
+                  requireSuperAdmin: true,
+                },
+                {
+                  id: "supportTickets",
+                  label: `Support tickets (${adminTickets.filter((t) => t.status !== "resolved").length})`,
+                  permission: "support_tickets",
+                },
+                { id: "settings", label: "Settings", permission: "finance_or_content" },
+                { id: "content", label: "Content", requireSuperAdmin: true },
+                { id: "homepageAds", label: "Homepage ads", requireSuperAdmin: true },
+                { id: "reconciliation", label: "Reconciliation", permission: "finance" },
+                { id: "sellerPerformance", label: "Seller performance", permission: "seller_verification" },
+                { id: "buyerRisk", label: "Buyer risk", requireSuperAdmin: true },
+                { id: "casualVerification", label: "Casual seller verification", requireSuperAdmin: true },
+                {
+                  id: "refunds",
+                  label: `Refunds (${orders.filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending").length})`,
+                  permission: "finance",
+                },
+                {
+                  id: "withdrawals",
+                  label: `Withdrawals (${withdrawals.filter((w) => w.status === "processing").length})`,
+                  permission: "finance",
+                },
+                { id: "reportsExport", label: "Reports & exports", permission: "finance_or_seller" },
+                { id: "systemHealth", label: "System health", requireSuperAdmin: true },
+                { id: "auditLog", label: "Audit log", requireSuperAdmin: true },
+              ]
+                .filter((t) => {
+                  const isSuperAdmin = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
+                  if (t.requireSuperAdmin) return isSuperAdmin;
+                  if (t.permission === "finance_or_content") {
+                    return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "content_management");
+                  }
+                  if (t.permission === "finance_or_seller") {
+                    return isSuperAdmin || hasAdminPermission(currentMember, "finance") || hasAdminPermission(currentMember, "seller_verification");
+                  }
+                  if (t.permission) return hasAdminPermission(currentMember, t.permission);
+                  return true; // no permission listed = every admin role can view
+                })
+                .map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setAdminTab(t.id);
+                    if (t.id === "members") fetchVerifiedSellerApplications();
+                    if (t.id === "auditLog") fetchAuditLog();
+                    if (t.id === "staff") fetchAdminStaff();
+                    if (t.id === "reconciliation") fetchReconciliation();
+                    if (t.id === "sellerPerformance") fetchSellerPerformance();
+                    if (t.id === "buyerRisk") fetchBuyerRisk();
+                    if (t.id === "casualVerification") fetchCasualSellerVerification();
+                    if (t.id === "systemHealth") fetchSystemHealth();
+                  }}
+                  className="px-3 py-1.5 rounded-full text-sm font-medium border"
+                  style={{
+                    borderColor: adminTab === t.id ? INK : "#DDD8CC",
+                    backgroundColor: adminTab === t.id ? INK : "white",
+                    color: adminTab === t.id ? "white" : SLATE,
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+
+            {adminTab === "homepageAds" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <div className="mb-5">
+                  <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                    Homepage ads
+                  </h3>
+                  <p className="text-sm mt-1" style={{ color: SLATE }}>
+                    Control the three clickable promotions shown at the top of the Stallyard homepage. Ad 1 can be an image or a short autoplay video; Ads 2 and 3 stay lightweight images.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                  {homepageAds.map((ad) => (
+                    <div key={ad.slot} className="rounded-xl border bg-white p-4" style={{ borderColor: "#DDD8CC" }}>
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div>
+                          <p className="font-semibold" style={{ color: INK }}>Ad {ad.slot}</p>
+                          <p className="text-xs" style={{ color: SLATE }}>
+                            {ad.slot === 1 ? "Large feature — image or video" : "Small feature — image"}
+                          </p>
+                        </div>
+                        {ad.imageUrl && (
+                          <button
+                            type="button"
+                            onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, imageUrl: "" } : item))}
+                            className="text-xs underline"
+                            style={{ color: BERRY }}
+                          >
+                            Remove media
+                          </button>
+                        )}
+                      </div>
+
+                      {ad.slot === 1 && (
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                          {["image", "video"].map((type) => (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => setHomepageAds((ads) => ads.map((item) => item.slot === 1 ? {
+                                ...item,
+                                mediaType: type,
+                                imageUrl: item.mediaType === type ? item.imageUrl : "",
+                              } : item))}
+                              className="px-3 py-2 rounded-lg border text-sm font-medium"
+                              style={{
+                                borderColor: ad.mediaType === type ? MARIGOLD : "#DDD8CC",
+                                backgroundColor: ad.mediaType === type ? "#FBF0DC" : "white",
+                                color: INK,
+                              }}
+                            >
+                              {type === "image" ? "Image" : "Video"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="rounded-lg overflow-hidden border mb-3 bg-gray-50" style={{ borderColor: "#DDD8CC", aspectRatio: ad.slot === 1 ? "16 / 9" : "16 / 9" }}>
+                        {ad.imageUrl ? (
+                          ad.slot === 1 && ad.mediaType === "video" ? (
+                            <video
+                              src={ad.imageUrl}
+                              poster={ad.posterUrl || undefined}
+                              muted
+                              loop
+                              playsInline
+                              controls
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <img src={ad.imageUrl} alt={`Ad ${ad.slot} preview`} className="w-full h-full object-cover" />
+                          )
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center" style={{ color: SLATE }}>
+                            <ImageIcon size={32} />
+                          </div>
+                        )}
+                      </div>
+
+                      {ad.slot === 1 && ad.mediaType === "video" ? (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Video</label>
+                          <label
+                            className="mb-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change video" : "Choose video"}
+                            <input
+                              type="file"
+                              accept="video/mp4,video/webm"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdVideoSelect(e, ad.slot)}
+                            />
+                          </label>
+                          <p className="text-xs mb-3" style={{ color: SLATE }}>MP4 or WebM, ideally 10–20 seconds, maximum 40 MB. It will autoplay muted and loop.</p>
+
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Poster image (optional)</label>
+                          {ad.posterUrl && (
+                            <div className="mb-2 rounded-lg overflow-hidden border" style={{ borderColor: "#DDD8CC" }}>
+                              <img src={ad.posterUrl} alt="Ad 1 video poster" className="w-full h-24 object-cover" />
+                            </div>
+                          )}
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {ad.posterUrl ? "Change poster" : "Choose poster image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdPosterSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Image</label>
+                          <label
+                            className="mb-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            <ImageIcon size={16} />
+                            {homepageAdUploading === ad.slot ? "Uploading…" : ad.imageUrl ? "Change image" : "Choose image"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={homepageAdUploading === ad.slot}
+                              onChange={(e) => handleHomepageAdImageSelect(e, ad.slot)}
+                            />
+                          </label>
+                        </>
+                      )}
+
+                      <label className="block text-xs font-medium mb-1" style={{ color: INK }}>Hyperlink</label>
+                      <input
+                        value={ad.linkUrl}
+                        onChange={(e) => setHomepageAds((ads) => ads.map((item) => item.slot === ad.slot ? { ...item, linkUrl: e.target.value } : item))}
+                        placeholder="https://example.com or /category/..."
+                        className="w-full px-3 py-2 rounded-lg border outline-none text-sm mb-3"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => saveHomepageAd(ad.slot)}
+                        disabled={homepageAdSaving === ad.slot || homepageAdUploading === ad.slot}
+                        className="w-full px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        {homepageAdSaving === ad.slot ? "Saving…" : "Save ad"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {adminTab === "overview" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Marketplace totals
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  {(() => {
+                    // Stallyard is Nigeria-only, so marketplace values are NGN.
+                    const salesByCurrency = {};
+                    const commissionByCurrency = {};
+                    orders.forEach((o) => {
+                      const cur = o.currency || "NGN";
+                      salesByCurrency[cur] = (salesByCurrency[cur] || 0) + (o.total || 0);
+                      commissionByCurrency[cur] = (commissionByCurrency[cur] || 0) + (o.commissionAmount || 0);
+                    });
+                    const formatByCurrency = (byCurrency) => {
+                      const entries = Object.entries(byCurrency);
+                      if (entries.length === 0) return formatMoney(0, "NGN");
+                      return entries.map(([cur, amount]) => formatMoney(amount, cur)).join(" + ");
+                    };
+                    return [
+                      {
+                        label: "Total sales",
+                        value: formatByCurrency(salesByCurrency),
+                        color: SAGE,
+                      },
+                      {
+                        label: "Marketplace commission",
+                        value: formatByCurrency(commissionByCurrency),
+                        color: SAGE,
+                      },
+                      { label: "Total users", value: members.length, color: INK, tab: "members" },
+                      {
+                        label: "Approved listings",
+                        value: listings.filter((l) => l.status === "active").length,
+                        color: INK,
+                        tab: "listings",
+                      },
+                    ];
+                  })().map((s) => (
+                    <button
+                      key={s.label}
+                      onClick={() => s.tab && setAdminTab(s.tab)}
+                      className="p-4 rounded-lg border bg-white text-left"
+                      style={{ borderColor: "#DDD8CC", cursor: s.tab ? "pointer" : "default" }}
+                    >
+                      <div className="text-xs uppercase tracking-wide mb-1" style={{ color: SLATE }}>
+                        {s.label}
+                      </div>
+                      <div
+                        className="text-2xl font-semibold"
+                        style={{ fontFamily: "'IBM Plex Mono', monospace", color: s.color }}
+                      >
+                        {s.value}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Needs your attention
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  {(() => {
+                    const pendingOrders = orders.reduce(
+                      (s, o) => s + o.items.filter((i) => (i.fulfillmentStatus || "new") === "new").length,
+                      0
+                    );
+                    const awaitingConfirmation = orders.reduce(
+                      (s, o) =>
+                        s +
+                        o.items.filter(
+                          (i) =>
+                            (i.fulfillmentStatus === "shipped" || i.fulfillmentStatus === "delivered") &&
+                            !i.buyerConfirmedAt
+                        ).length,
+                      0
+                    );
+                    const pendingSellerApps = members.filter((m) => m.verificationStatus === "pending").length;
+                    const refundRequests = orders.reduce(
+                      (s, o) => s + o.items.filter((i) => i.returnStatus === "requested").length,
+                      0
+                    );
+                    const suspendedUsers = members.filter((m) => m.isSuspended).length;
+                    const suspiciousActivity = accountReports.filter((r) => r.status === "open").length;
+                    const openSellerReports = sellerReports.filter((r) => ["open", "in_review"].includes(r.status)).length;
+                    const systemAlerts = withdrawals.filter((w) => w.status === "failed").length;
+
+                    return [
+                      { label: "Pending orders", value: pendingOrders, tab: "orders" },
+                      { label: "Awaiting delivery confirmation", value: awaitingConfirmation, tab: "orders" },
+                      { label: "Seller apps awaiting verification", value: pendingSellerApps, tab: "members" },
+                      { label: "Open disputes", value: openAdminDisputes.length, tab: "disputes" },
+                      { label: "Refund requests", value: refundRequests, tab: "orders" },
+                      { label: "Suspended users", value: suspendedUsers, tab: "members" },
+                      { label: "Suspicious activity reports", value: suspiciousActivity, tab: "accountReports" },
+                      { label: "Seller reports", value: openSellerReports, tab: "accountReports" },
+                      { label: "System alerts", value: systemAlerts, tab: "withdrawals" },
+                    ].map((s) => (
+                      <button
+                        key={s.label}
+                        onClick={() => setAdminTab(s.tab)}
+                        className="p-4 rounded-lg border bg-white text-left"
+                        style={{ borderColor: s.value > 0 ? BERRY : "#DDD8CC" }}
+                      >
+                        <div className="text-xs mb-1" style={{ color: SLATE }}>
+                          {s.label}
+                        </div>
+                        <div
+                          className="text-2xl font-semibold"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: s.value > 0 ? BERRY : INK }}
+                        >
+                          {s.value}
+                        </div>
+                      </button>
+                    ));
+                  })()}
+                </div>
+
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: SLATE }}>
+                  Money
+                </h3>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+                  {(() => {
+                    const processingWithdrawals = withdrawals.filter((w) => w.status === "processing");
+                    const moneyAwaitingPayout = processingWithdrawals.reduce((s, w) => s + Number(w.amount), 0);
+                    return [
+                      {
+                        label: "Money awaiting payout",
+                        value: `${CURRENCIES.NGN.symbol}${moneyAwaitingPayout.toFixed(2)}`,
+                        sub: `${processingWithdrawals.length} request${processingWithdrawals.length === 1 ? "" : "s"}`,
+                        tab: "withdrawals",
+                      },
+                    ].map((s) => (
+                      <button
+                        key={s.label}
+                        onClick={() => setAdminTab(s.tab)}
+                        className="p-4 rounded-lg border bg-white text-left"
+                        style={{ borderColor: "#DDD8CC" }}
+                      >
+                        <div className="text-xs mb-1" style={{ color: SLATE }}>
+                          {s.label}
+                        </div>
+                        <div
+                          className="text-2xl font-semibold"
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: MARIGOLD }}
+                        >
+                          {s.value}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {s.sub}
+                        </div>
+                      </button>
+                    ));
+                  })()}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-6">
+                  <div>
+                    <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                      Listings by category
+                    </h3>
+                    <div className="space-y-2">
+                      {CATEGORIES.filter((c) => listings.some((l) => l.category === c)).map((c) => {
+                        const count = listings.filter((l) => l.category === c).length;
+                        const pct = Math.round((count / listings.length) * 100) || 0;
+                        return (
+                          <div key={c} className="flex items-center gap-2">
+                            <span className="text-xs w-24 shrink-0 truncate" style={{ color: SLATE }}>
+                              {c}
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                              <div
+                                className="h-full rounded-full"
+                                style={{ width: `${pct}%`, backgroundColor: CATEGORY_COLOR[c] }}
+                              />
+                            </div>
+                            <span
+                              className="text-xs w-8 text-right shrink-0"
+                              style={{ fontFamily: "'IBM Plex Mono', monospace", color: SLATE }}
+                            >
+                              {count}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {listings.length === 0 && (
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          No listings yet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-semibold mb-3" style={{ color: INK }}>
+                      Recent orders
+                    </h3>
+                    <div className="space-y-2">
+                      {orders
+                        .slice()
+                        .sort((a, b) => b.createdAt - a.createdAt)
+                        .slice(0, 5)
+                        .map((o) => (
+                          <div
+                            key={o.id}
+                            className="flex items-center justify-between text-sm p-2 rounded-lg border bg-white"
+                            style={{ borderColor: "#DDD8CC" }}
+                          >
+                            <span className="truncate" style={{ color: INK }}>
+                              {o.buyerName}
+                            </span>
+                            <span
+                              style={{ fontFamily: "'IBM Plex Mono', monospace", color: SLATE }}
+                              className="shrink-0 ml-2"
+                            >
+                              {formatMoney(o.total, o.currency)}
+                            </span>
+                          </div>
+                        ))}
+                      {orders.length === 0 && (
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          No orders yet.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {adminTab === "listings" && hasAdminPermission(currentMember, "listing_moderation") && (
+              <div className="space-y-2">
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <input value={adminListingSearch} onChange={(e) => setAdminListingSearch(e.target.value)}
+                    placeholder="Search title, seller, category or listing ID"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminListingStatusFilter} onChange={(e) => setAdminListingStatusFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All statuses</option><option value="pending">Pending</option><option value="active">Active</option>
+                    <option value="draft">Draft</option><option value="paused">Paused</option><option value="sold">Sold</option>
+                    <option value="rejected">Rejected</option><option value="removed">Taken down</option>
+                  </select>
+                </div>
+                {listings.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No listings on the marketplace yet.
+                  </p>
+                )}
+                {listings
+                  .filter((l) => {
+                    if (adminListingStatusFilter !== "all" && (l.status || "pending") !== adminListingStatusFilter) return false;
+                    const q = adminListingSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [l.id, l.title, l.sellerName, l.ownerUsername, l.category, l.brand, l.sku]
+                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                  })
+                  .map((l) => (
+                  <div key={l.id}>
+                  <div
+                    className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white flex-wrap"
+                    style={{ borderColor: l.status === "removed" ? BERRY : "#DDD8CC" }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-2xl">{l.emoji}</span>
+                      <div className="min-w-0">
+                        <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
+                          {l.title}
+                          {l.isFeatured && <Tag color={MARIGOLD}>Featured</Tag>}
+                          {l.status === "draft" && <Tag color={SLATE}>Draft</Tag>}
+                          {l.status === "pending" && <Tag color={MARIGOLD}>Pending</Tag>}
+                          {l.status === "paused" && <Tag color={SLATE}>Paused</Tag>}
+                          {l.status === "sold" && <Tag color={BERRY}>Sold out</Tag>}
+                          {l.status === "rejected" && <Tag color={BERRY}>Rejected</Tag>}
+                          {l.status === "removed" && <Tag color={BERRY}>Taken down</Tag>}
+                        </div>
+                        <div className="text-xs" style={{ color: SLATE }}>
+                          {l.category}
+                          {l.condition && l.condition !== "New" ? ` · ${l.condition}` : ""} · by {l.sellerName}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                      <span
+                        style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                        className="font-medium"
+                      >
+                        ${Number(l.price).toFixed(2)}
+                      </span>
+                      {l.status === "pending" && (
+                        <button
+                          onClick={() => adminApproveListing(l.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Approve
+                        </button>
+                      )}
+                      {l.status === "pending" && (
+                        <button
+                          onClick={() => adminRejectListing(l.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: BERRY }}
+                        >
+                          Reject
+                        </button>
+                      )}
+                      {l.status === "removed" ? (
+                        <button
+                          onClick={() => adminRestoreListing(l.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => adminTakeDownListing(l.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: BERRY }}
+                        >
+                          Take down
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setExpandedListingImagesId((id) => (id === l.id ? null : l.id))}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Photos ({(l.allImages || l.images || []).length})
+                      </button>
+                      <button
+                        onClick={() => adminToggleFeature(l.id)}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        {l.isFeatured ? "Unfeature" : "Feature"}
+                      </button>
+                      <button
+                        onClick={() => openAdminNotes("listing", l.id, `Listing: ${l.title}`)}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Internal notes
+                      </button>
+                      <button
+                        onClick={() => startEdit(l, true)}
+                        className="text-xs font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        Edit
+                      </button>
+                      <button onClick={() => adminRemoveListing(l.id)} aria-label="Delete listing">
+                        <Trash2 size={16} style={{ color: BERRY }} />
+                      </button>
+                    </div>
+                  </div>
+                  {expandedListingImagesId === l.id && (
+                    <div className="p-3 rounded-lg border bg-white mt-1 mb-2" style={{ borderColor: "#DDD8CC" }}>
+                      <p className="text-xs mb-2" style={{ color: SLATE }}>
+                        All photos on this listing, at full resolution. Hiding a photo removes it from what buyers
+                        see, without touching the rest of the listing.
+                      </p>
+                      {(l.allImages || l.images || []).length === 0 ? (
+                        <p className="text-xs" style={{ color: SLATE }}>
+                          No photos on this listing.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-3">
+                          {(l.allImages || l.images || []).map((url, idx) => {
+                            const isHidden = (l.hiddenImageUrls || []).includes(url);
+                            const flagEntry = (l.flaggedImages || []).find((f) => f.url === url);
+                            const isDraftingHide = hidingImageDraft?.listingId === l.id && hidingImageDraft?.url === url;
+                            return (
+                              <div key={idx} className="relative">
+                                <img
+                                  src={url}
+                                  alt={`${l.title} photo ${idx + 1}`}
+                                  className="w-28 h-28 object-cover rounded-lg"
+                                  style={{ opacity: isHidden ? 0.4 : 1, border: flagEntry ? `2px solid ${MARIGOLD}` : "none" }}
+                                />
+                                {flagEntry && (
+                                  <span
+                                    className="absolute top-1 right-1 text-xs px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: MARIGOLD, color: INK }}
+                                    title={flagEntry.reasons.join("; ")}
+                                  >
+                                    ⚠ Flagged
+                                  </span>
+                                )}
+                                {isHidden && (
+                                  <span
+                                    className="absolute top-1 left-1 text-xs px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: BERRY, color: "white" }}
+                                  >
+                                    Hidden
+                                  </span>
+                                )}
+                                {isDraftingHide ? (
+                                  <div
+                                    className="absolute inset-0 p-1.5 flex flex-col justify-end gap-1"
+                                    style={{ backgroundColor: "rgba(27,36,48,0.85)" }}
+                                  >
+                                    <input
+                                      autoFocus
+                                      value={hideImageReason}
+                                      onChange={(e) => setHideImageReason(e.target.value)}
+                                      placeholder="Reason (optional)"
+                                      className="w-full px-1.5 py-1 rounded text-xs"
+                                      style={{ border: "none" }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => {
+                                          adminToggleImageVisibility(l.id, url, true, hideImageReason.trim());
+                                          setHidingImageDraft(null);
+                                          setHideImageReason("");
+                                        }}
+                                        className="flex-1 text-xs py-0.5 rounded font-medium"
+                                        style={{ backgroundColor: BERRY, color: "white" }}
+                                      >
+                                        Confirm
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setHidingImageDraft(null);
+                                          setHideImageReason("");
+                                        }}
+                                        className="flex-1 text-xs py-0.5 rounded font-medium"
+                                        style={{ backgroundColor: "rgba(255,255,255,0.2)", color: "white" }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() =>
+                                      isHidden
+                                        ? adminToggleImageVisibility(l.id, url, false)
+                                        : setHidingImageDraft({ listingId: l.id, url })
+                                    }
+                                    className="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5 rounded-b-lg"
+                                    style={{ backgroundColor: "rgba(27,36,48,0.75)", color: "white" }}
+                                  >
+                                    {isHidden ? "Unhide" : "Hide"}
+                                  </button>
+                                )}
+                                {flagEntry && !isDraftingHide && (
+                                  <button
+                                    onClick={() => dismissImageFlag(l.id, url)}
+                                    className="absolute bottom-5 left-0 right-0 text-center text-xs py-0.5"
+                                    style={{ backgroundColor: "rgba(232,169,77,0.9)", color: INK }}
+                                  >
+                                    Dismiss flag
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {adminTab === "members" && hasAdminPermission(currentMember, "seller_verification") && (
+              <div>
+                {hasAdminPermission(currentMember, "user_management") && (
+                  <button
+                    onClick={() => setAddMemberOpen(true)}
+                    className="mb-3 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                    style={{ backgroundColor: INK, color: "white" }}
+                  >
+                    <Plus size={16} />
+                    Add member
+                  </button>
+                )}
+                {verifiedSellerApplications.filter((application) => application.status === "pending").length > 0 && (
+                  <div className="mb-4 p-4 rounded-xl border" style={{ borderColor: MARIGOLD, backgroundColor: "#FBF0DC" }}>
+                    <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Verified-seller applications awaiting approval</h4>
+                    <div className="space-y-2">{verifiedSellerApplications.filter((application) => application.status === "pending").map((application) => (
+                      <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
+                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested ceiling ₦{Number(application.requested_limit).toLocaleString("en-NG")}</p><p className="text-xs mt-1" style={{ color: SLATE }}>{application.id_type || "Identification"}</p></div>
+                        <div className="flex gap-3 flex-wrap">
+                          <button onClick={() => viewVerifiedSellerIdentification(application, "front")} className="text-xs font-medium underline" style={{ color: INK }}>View ID front</button>
+                          {application.has_id_back && <button onClick={() => viewVerifiedSellerIdentification(application, "back")} className="text-xs font-medium underline" style={{ color: INK }}>View ID back</button>}
+                          <button onClick={() => viewVerifiedSellerBankStatement(application)} className="text-xs font-medium underline" style={{ color: INK }}>View bank statement</button>
+                          {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                            <button onClick={() => adminAutoVerifySeller(application)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: INK, color: "white" }}>Auto-verify</button>
+                          )}
+                          <button onClick={() => adminApproveMember(application.username)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Verified Seller</button>
+                          <button onClick={() => { setRejectModalUsername(application.username); setRejectReasonDraft(""); }} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
+                        </div>
+                      </div>
+                    ))}</div>
+                  </div>
+                )}
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                  <div className="mb-4 p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                      <div>
+                        <h4 className="font-semibold text-sm" style={{ color: INK }}>Verified Seller daily approval reports</h4>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Super Admin only. Reports are sent daily after 8:00 AM Lagos time, retained securely, and every download is logged.</p>
+                      </div>
+                      <button onClick={runVerifiedSellerReportNow} className="px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: INK, color: "white" }}>Generate report now</button>
+                    </div>
+                    <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {verifiedSellerReports.map((report) => (
+                        <div key={report.id} className="p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}>
+                          <strong>{String(report.report_date).slice(0, 10)}</strong><br />
+                          {report.application_count} approval{Number(report.application_count) === 1 ? "" : "s"} · {report.email_status}
+                          <div className="flex gap-3 mt-2">
+                            <button onClick={() => downloadVerifiedSellerReport(report)} className="font-semibold underline">Download PDF</button>
+                            <button onClick={() => revealVerifiedSellerReportPassword(report)} className="font-semibold underline" style={{ color: BERRY }}>Reveal password</button>
+                          </div>
+                        </div>
+                      ))}
+                      {!verifiedSellerReports.length && <p className="text-xs" style={{ color: SLATE }}>No Verified Seller reports have been generated yet.</p>}
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                  Admin staff are listed separately from regular members, each sorted A–Z — documents for each
+                  member are under "View documents" below their info.
+                </p>
+                <div className="flex gap-2 flex-wrap mb-3">
+                  <input value={adminMemberSearch} onChange={(e) => setAdminMemberSearch(e.target.value)}
+                    placeholder="Search name, username, email, phone or country"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminMemberFilter} onChange={(e) => setAdminMemberFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All members</option><option value="admins">Admin staff</option><option value="pending">Seller applications</option>
+                    <option value="approved">Approved sellers</option><option value="buyers">Buyer only</option><option value="suspended">Suspended</option>
+                    <option value="verified">Identity verified</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  {members
+                    .filter((m) => {
+                      if (adminMemberFilter === "admins" && !m.isAdmin) return false;
+                      if (adminMemberFilter === "pending" && m.verificationStatus !== "pending") return false;
+                      if (adminMemberFilter === "approved" && (!m.isApproved || m.isAdmin)) return false;
+                      if (adminMemberFilter === "buyers" && (m.isAdmin || m.isApproved || m.verificationStatus === "pending")) return false;
+                      if (adminMemberFilter === "suspended" && !m.isSuspended) return false;
+                      if (adminMemberFilter === "verified" && !m.isVerified) return false;
+                      const q = adminMemberSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      return [m.displayName, m.username, m.email, m.phone, m.country, m.officeLocation]
+                        .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                    })
+                    .slice()
+                    .sort((a, b) => {
+                      if (!!a.isAdmin !== !!b.isAdmin) return a.isAdmin ? -1 : 1;
+                      return (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "");
+                    })
+                    .map((m, i, sorted) => {
+                    const hasDocs =
+                      m.idType || m.licenseNumber || m.bankStatementUrl || (m.licensePhotos && m.licensePhotos.length > 0);
+                    const docsOpen = expandedDocsUsername === m.username;
+                    const showAdminHeader = i === 0 && m.isAdmin;
+                    const showMemberHeader = !m.isAdmin && (i === 0 || sorted[i - 1].isAdmin);
+                    return (
+                    <React.Fragment key={m.username}>
+                      {showAdminHeader && (
+                        <h4 className="text-xs font-semibold uppercase tracking-wide pt-1" style={{ color: SLATE }}>
+                          Admin staff
+                        </h4>
+                      )}
+                      {showMemberHeader && (
+                        <h4 className="text-xs font-semibold uppercase tracking-wide pt-3" style={{ color: SLATE }}>
+                          Members
+                        </h4>
+                      )}
+                    <div
+                      className="p-3 rounded-lg border bg-white"
+                      style={{ borderColor: "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
+                          {m.displayName}
+                          {m.isAdmin && <Tag color={MARIGOLD}>Admin</Tag>}
+                          {m.isVerified && <Tag color={SAGE}>Identity verified</Tag>}
+                          {m.isApproved === false && m.verificationStatus === "pending" && (
+                            <Tag color={MARIGOLD}>Seller application pending</Tag>
+                          )}
+                          {m.isApproved === false && m.verificationStatus === "rejected" && (
+                            <Tag color={BERRY}>Seller application rejected</Tag>
+                          )}
+                          {m.isApproved === false &&
+                            (m.verificationStatus === "none" || !m.verificationStatus) && (
+                            <Tag color={SLATE}>Buyer only</Tag>
+                          )}
+                          {m.isSuspended && <Tag color={BERRY}>Suspended</Tag>}
+                        </div>
+                        <div className="text-xs" style={{ color: SLATE }}>
+                          @{m.username} · {m.email || "no email"} · {m.phone || "no phone"} · {m.officeLocation || "no office set"}
+                        </div>
+                        {hasDocs && (
+                          <button
+                            onClick={() => setExpandedDocsUsername(docsOpen ? null : m.username)}
+                            className="text-xs font-medium underline mt-1"
+                            style={{ color: INK }}
+                          >
+                            {docsOpen ? "Hide documents" : `View documents${m.licensePhotos?.length ? ` (${m.licensePhotos.length} photo${m.licensePhotos.length > 1 ? "s" : ""})` : ""}`}
+                          </button>
+                        )}
+                        {(hasAdminPermission(currentMember, "user_management") || hasAdminPermission(currentMember, "seller_verification")) && (
+                          <button
+                            onClick={() => openAdminNotes("member", m.backendId, `Member: ${m.displayName} (@${m.username})`)}
+                            className="text-xs font-medium underline mt-1 ml-3"
+                            style={{ color: SLATE }}
+                          >
+                            Internal notes
+                          </button>
+                        )}
+                      </div>
+                      {!m.isAdmin && (
+                        <div className="flex items-center gap-3 shrink-0 flex-wrap justify-end">
+                          {m.isApproved === false &&
+                            m.verificationStatus === "pending" &&
+                            hasAdminPermission(currentMember, "seller_verification") && (
+                            <button
+                              onClick={() => adminApproveMember(m.username)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SAGE }}
+                            >
+                              Approve seller
+                            </button>
+                          )}
+                          {m.isApproved === false &&
+                            m.verificationStatus === "pending" &&
+                            hasAdminPermission(currentMember, "seller_verification") && (
+                            <button
+                              onClick={() => {
+                                setRejectModalUsername(m.username);
+                                setRejectReasonDraft("");
+                              }}
+                              className="text-xs font-medium underline"
+                              style={{ color: BERRY }}
+                            >
+                              Reject
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => openAdminWarnings(m)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              Warnings
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => adminToggleVerify(m.username)}
+                              className="text-xs font-medium underline"
+                              style={{ color: SLATE }}
+                            >
+                              {m.isVerified ? "Unverify" : "Verify"}
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button
+                              onClick={() => adminToggleSuspend(m.username)}
+                              className="text-xs font-medium underline"
+                              style={{ color: m.isSuspended ? SAGE : BERRY }}
+                            >
+                              {m.isSuspended ? "Unsuspend" : "Suspend"}
+                            </button>
+                          )}
+                          {hasAdminPermission(currentMember, "user_management") && (
+                            <button onClick={() => adminRemoveMember(m.username)} aria-label="Remove member">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {(currentMember?.adminRole === "super_admin" || !currentMember?.adminRole) &&
+                        m.username !== currentUser && (
+                          <div className="shrink-0">
+                            <label className="block text-xs mb-1" style={{ color: SLATE }}>
+                              Admin role
+                            </label>
+                            <select
+                              value={m.adminRole || ""}
+                              onChange={(e) => adminSetRole(m.username, e.target.value || null)}
+                              className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                              style={{ borderColor: "#DDD8CC" }}
+                            >
+                              <option value="">Not an admin</option>
+                              {ADMIN_ROLE_ORDER.map((r) => (
+                                <option key={r} value={r}>
+                                  {ADMIN_ROLE_LABELS[r]}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                      {docsOpen && (
+                        <div className="mt-3 pt-3" style={{ borderTop: "1px solid #DDD8CC" }}>
+                          <div className="text-xs space-y-1 mb-2" style={{ color: SLATE }}>
+                            <div>Account type: {m.accountType === "business" ? "Business" : "Personal"}</div>
+                            {m.idType && <div>ID type: {m.idType}</div>}
+                            {m.idCountry && <div>Issuing country: {m.idCountry}</div>}
+                            {m.licenseNumber && <div>License number: {m.licenseNumber}</div>}
+                            {m.idVerificationExempt && <div>US-based — ID verification exempt</div>}
+                            {m.verificationStatus === "rejected" && m.rejectionReason && (
+                              <div>Rejection reason: {m.rejectionReason}</div>
+                            )}
+                          </div>
+                          {m.bankStatementUrl && (
+                            <div className="mb-2">
+                              <p className="text-xs font-medium mb-1" style={{ color: INK }}>
+                                Bank statement
+                              </p>
+                              {m.bankStatementUrl.startsWith("data:image") ? (
+                                <a href={m.bankStatementUrl} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={m.bankStatementUrl}
+                                    alt={`${m.displayName} bank statement`}
+                                    className="w-24 h-24 object-cover rounded-lg border"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  />
+                                </a>
+                              ) : (
+                                <a
+                                  href={m.bankStatementUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs font-medium underline"
+                                  style={{ color: INK }}
+                                >
+                                  View bank statement
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {m.licensePhotos && m.licensePhotos.length > 0 ? (
+                            <div className="flex flex-wrap gap-2">
+                              {m.licensePhotos.map((src, idx) => (
+                                <a key={idx} href={src} target="_blank" rel="noreferrer">
+                                  <img
+                                    src={src}
+                                    alt={`${m.displayName} document ${idx + 1}`}
+                                    className="w-24 h-24 object-cover rounded-lg border"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  />
+                                </a>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs" style={{ color: SLATE }}>
+                              No photos uploaded.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {adminTab === "staff" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
+              const q = adminStaffSearch.trim().toLowerCase();
+              const filtered = adminStaff.filter((s) => {
+                const active = !!s.is_admin;
+                const role = active ? (s.admin_role || "super_admin") : "revoked";
+                if (adminStaffFilter === "active" && !active) return false;
+                if (adminStaffFilter === "revoked" && active) return false;
+                if (adminStaffFilter === "no2fa" && !!s.two_factor_enabled) return false;
+                if (adminStaffFilter === "suspended" && !s.is_suspended) return false;
+                if (adminStaffFilter !== "all" && !["active", "revoked", "no2fa", "suspended"].includes(adminStaffFilter) && role !== adminStaffFilter) return false;
+                if (!q) return true;
+                return [s.display_name, s.username, s.email, role, ADMIN_ROLE_LABELS[role]].filter(Boolean).join(" ").toLowerCase().includes(q);
+              });
+              const activeCount = adminStaff.filter((s) => s.is_admin).length;
+              const mfaMissing = adminStaff.filter((s) => s.is_admin && !s.two_factor_enabled).length;
+              return (
+                <div>
+                  <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold" style={{ color: INK }}>Admin / Staff Accounts</h3>
+                      <p className="text-sm mt-1" style={{ color: SLATE }}>
+                        Manage privileged staff access, roles, multi-factor status and active sessions. Super Admin can issue a 10-minute recovery password; role changes invalidate existing sessions automatically.
+                      </p>
+                    </div>
+                    <button onClick={fetchAdminStaff} className="px-3 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      {loadingAdminStaff ? "Refreshing…" : "Refresh"}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                    {[
+                      ["Active staff", activeCount],
+                      ["Former/revoked", Math.max(0, adminStaff.length - activeCount)],
+                      ["2FA attention", mfaMissing],
+                      ["Super Admins", adminStaff.filter((s) => s.is_admin && (!s.admin_role || s.admin_role === "super_admin")).length],
+                    ].map(([label, value]) => (
+                      <div key={label} className="p-3 bg-white border rounded-xl" style={{ borderColor: "#DDD8CC" }}>
+                        <div className="text-xs" style={{ color: SLATE }}>{label}</div>
+                        <div className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2 flex-wrap mb-4">
+                    <input
+                      value={adminStaffSearch}
+                      onChange={(e) => setAdminStaffSearch(e.target.value)}
+                      placeholder="Search staff name, username, email or role"
+                      className="px-3 py-2 rounded-lg border outline-none text-sm flex-1 min-w-[220px]"
+                      style={{ borderColor: "#DDD8CC" }}
+                    />
+                    <select value={adminStaffFilter} onChange={(e) => setAdminStaffFilter(e.target.value)} className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
+                      <option value="all">All staff</option>
+                      <option value="active">Active</option>
+                      <option value="revoked">Revoked</option>
+                      <option value="no2fa">2FA attention</option>
+                      <option value="suspended">Suspended</option>
+                      {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
+                    </select>
+                  </div>
+
+                  {adminStaffError && (
+                    <div className="p-3 rounded-lg border mb-4 text-sm" style={{ borderColor: BERRY, color: BERRY, backgroundColor: BERRY + "08" }}>
+                      {adminStaffError}
+                    </div>
+                  )}
+
+                  {!loadingAdminStaff && !adminStaffError && adminStaff.length === 0 && (
+                    <div className="p-5 rounded-xl border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: SLATE }}>
+                      No staff records loaded yet. Click Refresh.
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {filtered.map((staff) => {
+                      const active = !!staff.is_admin;
+                      const role = active ? (staff.admin_role || "super_admin") : null;
+                      const isSelf = staff.username === currentUser;
+                      const expanded = expandedStaffId === staff.id;
+                      return (
+                        <div key={staff.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div className="min-w-0">
+                              <div className="font-semibold flex items-center gap-2 flex-wrap" style={{ color: INK }}>
+                                {staff.display_name || staff.username}
+                                {active ? <Tag color={SAGE}>Active staff</Tag> : <Tag color={SLATE}>Access revoked</Tag>}
+                                {staff.is_suspended && <Tag color={BERRY}>Suspended</Tag>}
+                                {active && staff.two_factor_enabled ? <Tag color={SAGE}>2FA on</Tag> : active ? <Tag color={BERRY}>2FA attention</Tag> : null}
+                                {isSelf && <Tag color={MARIGOLD}>You</Tag>}
+                              </div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>@{staff.username} · {staff.email || "no email"}</div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                Role: <strong>{active ? (ADMIN_ROLE_LABELS[role] || role) : "None"}</strong>
+                                {staff.last_login_at ? ` · Last login ${new Date(staff.last_login_at).toLocaleString()}` : " · No recorded login"}
+                              </div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                {staff.last_action_at ? `Last admin action ${new Date(staff.last_action_at).toLocaleString()}` : "No recorded admin actions"}
+                                {` · ${Number(staff.action_count || 0)} logged action${Number(staff.action_count || 0) === 1 ? "" : "s"}`}
+                              </div>
+                            </div>
+
+                            {!isSelf && (
+                              <div className="flex gap-2 flex-wrap items-end">
+                                <div>
+                                  <label className="block text-[11px] mb-1" style={{ color: SLATE }}>Role</label>
+                                  <select
+                                    value={role || ""}
+                                    onChange={async (e) => {
+                                      const nextRole = e.target.value || null;
+                                      const reason = window.prompt("Optional reason for this role/access change:", "") || "";
+                                      const ok = await adminSetRole(staff.username, nextRole, reason);
+                                      if (ok) await fetchAdminStaff();
+                                    }}
+                                    className="px-2 py-1.5 rounded-lg border bg-white text-xs"
+                                    style={{ borderColor: "#DDD8CC" }}
+                                  >
+                                    <option value="">No admin access</option>
+                                    {ADMIN_ROLE_ORDER.map((r) => <option key={r} value={r}>{ADMIN_ROLE_LABELS[r]}</option>)}
+                                  </select>
+                                </div>
+                                {active && (
+                                  <>
+                                    <button
+                                      onClick={() => generateAdminTemporaryPassword(staff)}
+                                      disabled={adminTempPasswordGeneratingId === staff.id}
+                                      className="px-3 py-2 rounded-lg border text-xs font-medium disabled:opacity-50"
+                                      style={{ borderColor: MARIGOLD, color: INK }}
+                                    >
+                                      {adminTempPasswordGeneratingId === staff.id ? "Generating…" : "10-min password"}
+                                    </button>
+                                    <button onClick={() => revokeAdminStaffSessions(staff)} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>
+                                      Revoke sessions
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  onClick={async () => { await adminToggleSuspend(staff.username); await fetchAdminStaff(); }}
+                                  className="px-3 py-2 rounded-lg border text-xs font-medium"
+                                  style={{ borderColor: staff.is_suspended ? SAGE : BERRY, color: staff.is_suspended ? SAGE : BERRY }}
+                                >
+                                  {staff.is_suspended ? "Unsuspend" : "Suspend"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+
+                          <button onClick={() => setExpandedStaffId(expanded ? null : staff.id)} className="text-xs underline mt-3" style={{ color: SLATE }}>
+                            {expanded ? "Hide role history" : "View role history"}
+                          </button>
+                          {expanded && (
+                            <div className="mt-3 pt-3 space-y-2" style={{ borderTop: "1px solid #EEE9DE" }}>
+                              {(staff.role_history || []).length === 0 ? (
+                                <p className="text-xs" style={{ color: SLATE }}>No role changes recorded since Staff Management was enabled.</p>
+                              ) : (staff.role_history || []).map((h) => (
+                                <div key={h.id} className="text-xs p-2 rounded-lg" style={{ backgroundColor: CANVAS, color: SLATE }}>
+                                  <strong style={{ color: INK }}>{h.old_role ? (ADMIN_ROLE_LABELS[h.old_role] || h.old_role) : "No admin access"}</strong>
+                                  {" → "}
+                                  <strong style={{ color: INK }}>{h.new_role ? (ADMIN_ROLE_LABELS[h.new_role] || h.new_role) : "No admin access"}</strong>
+                                  {` · ${new Date(h.created_at).toLocaleString()}`}
+                                  {h.changed_by_username ? ` · by @${h.changed_by_username}` : ""}
+                                  {h.reason ? <div className="mt-1">Reason: {h.reason}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {adminTab === "sellerPerformance" && hasAdminPermission(currentMember, "seller_verification") && (
+              <div>
+                <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Seller performance & risk review</h3>
+                    <p className="text-xs mt-1 max-w-2xl" style={{ color: SLATE }}>
+                      Operational indicators based on real marketplace activity. Scores help prioritize manual review only — they never suspend, reject, or penalize a seller automatically.
+                    </p>
+                  </div>
+                  <button onClick={fetchSellerPerformance} disabled={sellerPerformanceLoading}
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium border disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK, backgroundColor: "white" }}>
+                    {sellerPerformanceLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+
+                {sellerPerformanceError && (
+                  <div className="p-3 rounded-lg border mb-4 text-sm" style={{ borderColor: BERRY, color: BERRY, backgroundColor: "white" }}>
+                    {sellerPerformanceError}
+                  </div>
+                )}
+
+                {sellerPerformanceData && (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                      {[
+                        { label: "Sellers", value: sellerPerformanceData.summary?.sellerCount || 0 },
+                        { label: "Needs review", value: sellerPerformanceData.summary?.needsReview || 0 },
+                        { label: "Open disputes", value: sellerPerformanceData.summary?.openDisputes || 0 },
+                        { label: "Active ship reminders", value: sellerPerformanceData.summary?.activeShipReminders || 0 },
+                      ].map((card) => (
+                        <div key={card.label} className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>{card.label}</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{card.value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap mb-4">
+                      {["all", "review", "watch", "good"].map((key) => (
+                        <button key={key} onClick={() => setSellerPerformanceFilter(key)}
+                          className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                          style={{
+                            borderColor: sellerPerformanceFilter === key ? INK : "#DDD8CC",
+                            backgroundColor: sellerPerformanceFilter === key ? INK : "white",
+                            color: sellerPerformanceFilter === key ? "white" : SLATE,
+                          }}>
+                          {key === "all" ? "All" : key === "review" ? "Needs review" : key === "watch" ? "Watch" : "Good standing"}
+                        </button>
+                      ))}
+                      <input value={sellerPerformanceSearch} onChange={(e) => setSellerPerformanceSearch(e.target.value)}
+                        placeholder="Search seller, username, email or phone"
+                        className="min-w-[240px] flex-1 px-3 py-1.5 rounded-lg border text-sm outline-none bg-white"
+                        style={{ borderColor: "#DDD8CC" }} />
+                    </div>
+
+                    <div className="space-y-3">
+                      {(sellerPerformanceData.sellers || [])
+                        .filter((seller) => {
+                          if (sellerPerformanceFilter !== "all" && seller.healthBand !== sellerPerformanceFilter) return false;
+                          const q = sellerPerformanceSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return [seller.displayName, seller.username, seller.email, seller.phone]
+                            .some((v) => String(v || "").toLowerCase().includes(q));
+                        })
+                        .map((seller) => {
+                          const expanded = expandedSellerPerformanceId === seller.userId;
+                          const bandColor = seller.healthBand === "review" ? BERRY : seller.healthBand === "watch" ? MARIGOLD : SAGE;
+                          return (
+                            <div key={seller.userId} className="rounded-lg border bg-white overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="p-4 flex items-center justify-between gap-4 flex-wrap">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold" style={{ color: INK }}>{seller.displayName || seller.username}</span>
+                                    <Tag color={bandColor}>{seller.healthLabel}</Tag>
+                                    {seller.isSuspended && <Tag color={BERRY}>Suspended</Tag>}
+                                    {seller.verificationStatus === "pending" && <Tag color={MARIGOLD}>Verification pending</Tag>}
+                                  </div>
+                                  <div className="text-xs mt-1" style={{ color: SLATE }}>
+                                    @{seller.username} · {seller.orderCount} order{seller.orderCount === 1 ? "" : "s"} · {seller.reviewCount} review{seller.reviewCount === 1 ? "" : "s"}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-5 flex-wrap">
+                                  <div className="text-right">
+                                    <div className="text-[10px] uppercase" style={{ color: SLATE }}>Health score</div>
+                                    <div className="text-xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: bandColor }}>{seller.healthScore}/100</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-[10px] uppercase" style={{ color: SLATE }}>Rating</div>
+                                    <div className="text-sm font-semibold" style={{ color: INK }}>{seller.reviewCount ? `${seller.averageRating.toFixed(1)} / 5` : "No reviews"}</div>
+                                  </div>
+                                  <button onClick={() => setExpandedSellerPerformanceId(expanded ? null : seller.userId)}
+                                    className="text-xs font-medium underline" style={{ color: INK }}>
+                                    {expanded ? "Hide details" : "View details"}
+                                  </button>
+                                </div>
+                              </div>
+
+                              {expanded && (
+                                <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+                                    {[
+                                      ["Completed deliveries", seller.completedDeliveries],
+                                      ["Returns", `${seller.returnedCount} (${seller.returnRate.toFixed(1)}%)`],
+                                      ["Cancellations", `${seller.cancelledCount} (${seller.cancelRate.toFixed(1)}%)`],
+                                      ["Open disputes", seller.openDisputes],
+                                      ["All disputes", seller.disputeCount],
+                                      ["Warnings", seller.warningCount],
+                                      ["Ship reminders", seller.shipReminderCount],
+                                      ["Avg. time to ship", seller.averageHoursToShip == null ? "—" : `${seller.averageHoursToShip.toFixed(1)}h`],
+                                    ].map(([label, value]) => (
+                                      <div key={label} className="p-2.5 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                        <div className="text-[10px] uppercase tracking-wide" style={{ color: SLATE }}>{label}</div>
+                                        <div className="text-sm font-semibold mt-0.5" style={{ color: INK }}>{value}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+
+                                  <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                      <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Why this score</div>
+                                      {seller.riskSignals.length ? (
+                                        <div className="space-y-1.5">
+                                          {seller.riskSignals.map((signal, idx) => (
+                                            <div key={idx} className="text-xs flex items-start gap-2" style={{ color: signal.severity === "high" ? BERRY : SLATE }}>
+                                              <span>•</span><span>{signal.message}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="text-xs" style={{ color: SAGE }}>No performance warning signals detected.</p>}
+                                    </div>
+                                    <div className="text-xs space-y-1.5" style={{ color: SLATE }}>
+                                      <div><strong style={{ color: INK }}>Gross merchandise:</strong> {formatMoney(seller.grossMerchandise, "NGN")}</div>
+                                      <div><strong style={{ color: INK }}>Available seller balance:</strong> {formatMoney(seller.availableBalance, "NGN")}</div>
+                                      <div><strong style={{ color: INK }}>Last login:</strong> {seller.lastLoginAt ? new Date(seller.lastLoginAt).toLocaleString() : "No login recorded"}</div>
+                                      <div><strong style={{ color: INK }}>Joined:</strong> {seller.joinedAt ? new Date(seller.joinedAt).toLocaleDateString() : "—"}</div>
+                                      <div><strong style={{ color: INK }}>Verification:</strong> {seller.verificationStatus || "none"}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {adminTab === "buyerRisk" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Buyer risk & fraud review</h3>
+                    <p className="text-xs mt-1 max-w-2xl" style={{ color: SLATE }}>
+                      Operational risk signals for human review only. Stallyard does not automatically suspend or punish a buyer from this score.
+                    </p>
+                  </div>
+                  <button onClick={fetchBuyerRisk} disabled={buyerRiskLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {buyerRiskLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+
+                {buyerRiskError && <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: "#FDECEC", color: BERRY }}>{buyerRiskError}</div>}
+
+                {buyerRiskData && (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: "Buyers", value: buyerRiskData.summary?.buyerCount || 0 },
+                        { label: "High risk", value: buyerRiskData.summary?.highRisk || 0 },
+                        { label: "Watch", value: buyerRiskData.summary?.watch || 0 },
+                        { label: "Open reports", value: buyerRiskData.summary?.openReports || 0 },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="p-3 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs" style={{ color: SLATE }}>{label}</div>
+                          <div className="text-xl font-semibold mt-1" style={{ color: INK }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 flex-wrap items-center">
+                      {[['all','All'],['low','Low'],['watch','Watch'],['high','High']].map(([key,label]) => (
+                        <button key={key} onClick={() => setBuyerRiskFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                          style={{ borderColor: buyerRiskFilter === key ? INK : "#DDD8CC", backgroundColor: buyerRiskFilter === key ? INK : "white", color: buyerRiskFilter === key ? "white" : SLATE }}>
+                          {label}
+                        </button>
+                      ))}
+                      <input value={buyerRiskSearch} onChange={(e) => setBuyerRiskSearch(e.target.value)}
+                        placeholder="Search buyer, email, phone..." className="px-3 py-2 rounded-lg border text-sm flex-1 min-w-[220px] outline-none"
+                        style={{ borderColor: "#DDD8CC", color: INK }} />
+                    </div>
+
+                    <div className="space-y-3">
+                      {(buyerRiskData.buyers || [])
+                        .filter((buyer) => {
+                          if (buyerRiskFilter !== 'all' && buyer.riskBand !== buyerRiskFilter) return false;
+                          const q = buyerRiskSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return [buyer.username, buyer.displayName, buyer.email, buyer.phone].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                        })
+                        .map((buyer) => {
+                          const expanded = expandedBuyerRiskId === buyer.userId;
+                          const bandColor = buyer.riskBand === 'high' ? BERRY : buyer.riskBand === 'watch' ? MARIGOLD : SAGE;
+                          return (
+                            <div key={buyer.userId} className="rounded-xl border bg-white overflow-hidden" style={{ borderColor: bandColor + '70' }}>
+                              <button onClick={() => setExpandedBuyerRiskId(expanded ? null : buyer.userId)} className="w-full text-left p-4">
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                  <div>
+                                    <div className="font-semibold" style={{ color: INK }}>{buyer.displayName || buyer.username}</div>
+                                    <div className="text-xs mt-0.5" style={{ color: SLATE }}>@{buyer.username} · {buyer.email || 'No email'}</div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Tag color={bandColor}>{buyer.riskBand === 'high' ? 'High risk' : buyer.riskBand === 'watch' ? 'Watch' : 'Low risk'}</Tag>
+                                    <span className="text-sm font-semibold" style={{ color: INK }}>{buyer.riskScore}/100 risk</span>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-3">
+                                  {[
+                                    ['Orders', buyer.orderCount],
+                                    ['Returns', `${buyer.returnRate.toFixed(1)}%`],
+                                    ['Disputes', `${buyer.disputeRate.toFixed(1)}%`],
+                                    ['Refunds', buyer.refundCount],
+                                    ['Failed pays', buyer.failedPaymentCount],
+                                  ].map(([label,value]) => (
+                                    <div key={label} className="p-2 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                      <div className="text-[11px]" style={{ color: SLATE }}>{label}</div>
+                                      <div className="text-sm font-semibold" style={{ color: INK }}>{value}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </button>
+                              {expanded && (
+                                <div className="px-4 pb-4 border-t" style={{ borderColor: "#EEE9DE" }}>
+                                  <div className="grid sm:grid-cols-2 gap-4 mt-4">
+                                    <div>
+                                      <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Why this buyer is flagged</div>
+                                      {buyer.riskSignals.length ? (
+                                        <div className="space-y-1.5">
+                                          {buyer.riskSignals.map((signal, idx) => (
+                                            <div key={idx} className="text-xs flex items-start gap-2" style={{ color: signal.severity === 'high' ? BERRY : SLATE }}><span>•</span><span>{signal.message}</span></div>
+                                          ))}
+                                        </div>
+                                      ) : <p className="text-xs" style={{ color: SAGE }}>No meaningful buyer-risk signals detected.</p>}
+                                    </div>
+                                    <div className="text-xs space-y-1.5" style={{ color: SLATE }}>
+                                      <div><strong style={{ color: INK }}>Completed purchases:</strong> {buyer.completedItems}</div>
+                                      <div><strong style={{ color: INK }}>Cancelled items:</strong> {buyer.cancelledItems}</div>
+                                      <div><strong style={{ color: INK }}>Return requests:</strong> {buyer.returnCount}</div>
+                                      <div><strong style={{ color: INK }}>Disputes:</strong> {buyer.disputeCount} ({buyer.openDisputes} open)</div>
+                                      <div><strong style={{ color: INK }}>Refunds:</strong> {buyer.refundCount}</div>
+                                      <div><strong style={{ color: INK }}>Suspicious activity reports:</strong> {buyer.reportCount} ({buyer.openReportCount} open)</div>
+                                      <div><strong style={{ color: INK }}>Failed payments:</strong> {buyer.failedPaymentCount}</div>
+                                      <div><strong style={{ color: INK }}>Last login:</strong> {buyer.lastLoginAt ? new Date(buyer.lastLoginAt).toLocaleString() : 'No login recorded'}</div>
+                                      <div><strong style={{ color: INK }}>Verification:</strong> email {buyer.isEmailVerified ? '✓' : '—'} · phone {buyer.isPhoneVerified ? '✓' : '—'}</div>
+                                      <div><strong style={{ color: INK }}>Account:</strong> {buyer.isSuspended ? 'Suspended' : 'Active'}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {adminTab === "casualVerification" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-5">
+                  <div><h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Casual seller verification</h3><p className="text-sm mt-1" style={{ color: SLATE }}>Permanent identity evidence and daily PDF records. Access is recorded.</p></div>
+                  <button onClick={fetchCasualSellerVerification} className="px-3 py-2 rounded-lg border text-sm">{casualSellerAdminLoading ? "Loading…" : "Refresh"}</button>
+                </div>
+                <div className="grid lg:grid-cols-3 gap-5">
+                  <div className="lg:col-span-2 space-y-3">
+                    {(casualSellerApplications || []).map((application) => (
+                      <div key={application.id} className="p-4 rounded-xl border bg-white flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: "#DDD8CC" }}>
+                        <div><div className="flex items-center gap-2"><strong style={{ color: INK }}>{application.legal_name}</strong><Tag color={application.status === "approved" ? SAGE : application.status === "suspended" ? BERRY : MARIGOLD}>{application.status}</Tag></div><p className="text-xs mt-1" style={{ color: SLATE }}>@{application.username} · {application.reference} · selfie-and-liveness verification</p></div>
+                        <button onClick={() => openCasualApplicationEvidence(application)} className="px-3 py-1.5 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>Review evidence</button>
+                      </div>
+                    ))}
+                    {!casualSellerApplications.length && <p className="text-sm" style={{ color: SLATE }}>No casual-seller applications yet.</p>}
+                  </div>
+                  <div className="p-4 rounded-xl border bg-white h-fit" style={{ borderColor: "#DDD8CC" }}>
+                    <h4 className="font-semibold mb-3" style={{ color: INK }}>Daily PDF reports</h4>
+                    <div className="space-y-2">{casualSellerReports.map((report) => <div key={report.id} className="w-full text-left p-2 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: INK }}><strong>{String(report.report_date).slice(0, 10)}</strong><br />{report.application_count} applications · {report.email_status}<div className="flex gap-3 mt-2"><button onClick={() => downloadCasualSellerReport(report)} className="font-semibold underline">Download PDF</button><button onClick={() => revealCasualSellerReportPassword(report)} className="font-semibold underline" style={{ color: BERRY }}>Reveal password</button></div></div>)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {adminTab === "orders" && hasAdminPermission(currentMember, "order_access") && (() => {
+              const activeOrder = activeAdminOrderId != null
+                ? orders.find((o) => Number(o.id) === Number(activeAdminOrderId))
+                : null;
+
+              if (activeOrder) {
+                const orderDispute = adminDisputes.find((d) => Number(d.order_id) === Number(activeOrder.id));
+                const sellerUsernames = [...new Set((activeOrder.items || []).map((i) => i.ownerUsername).filter(Boolean))];
+                const sellerWithdrawals = withdrawals.filter((w) => sellerUsernames.includes(w.sellerUsername));
+                const sellerPayout = Number(activeOrder.subtotal || 0) + Number(activeOrder.shippingTotal || 0) - Number(activeOrder.commissionAmount || 0);
+                const paystackCheck = paystackChecks[activeOrder.id];
+                const lifecycle = [
+                  { label: "Order placed", at: activeOrder.createdAt, done: true },
+                  { label: "Payment held", at: activeOrder.createdAt, done: ["held", "released", "refund_pending", "refunded"].includes(activeOrder.paymentStatus) },
+                  { label: "Seller shipped", at: (activeOrder.items || []).map((i) => i.shippedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => i.shippedAt || ["shipped", "delivered", "returned"].includes(i.fulfillmentStatus)) },
+                  { label: "Delivery proof uploaded", at: null, done: (activeOrder.items || []).some((i) => !!i.proofOfDeliveryUrl) },
+                  { label: "Buyer confirmed delivery", at: (activeOrder.items || []).map((i) => i.buyerConfirmedAt).filter(Boolean).sort((a,b) => a-b)[0] || null, done: (activeOrder.items || []).some((i) => !!i.buyerConfirmedAt) },
+                  { label: "Seller payment released", at: null, done: activeOrder.paymentStatus === "released" },
+                  { label: "Refund completed", at: activeOrder.refundedAt || null, done: activeOrder.paymentStatus === "refunded" || activeOrder.refundStatus === "processed" },
+                ];
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setActiveAdminOrderId(null)}
+                        className="text-sm font-medium underline"
+                        style={{ color: SLATE }}
+                      >
+                        ← Back to orders
+                      </button>
+                      <div className="flex gap-2 flex-wrap">
+                        {activeOrder.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                        <Tag color={activeOrder.paymentStatus === "released" ? SAGE : activeOrder.paymentStatus === "held" ? MARIGOLD : BERRY}>
+                          {activeOrder.paymentStatus || "unknown"}
+                        </Tag>
+                        {activeOrder.refundStatus && <Tag color={activeOrder.refundStatus === "processed" ? SAGE : activeOrder.refundStatus === "failed" ? BERRY : MARIGOLD}>Refund {activeOrder.refundStatus}</Tag>}
+                      </div>
+                    </div>
+
+                    <div className="p-5 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div>
+                          <p className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Order detail</p>
+                          <h3 className="text-2xl mt-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>{orderNumber(activeOrder.id)}</h3>
+                          <p className="text-sm mt-1" style={{ color: SLATE }}>Placed {new Date(activeOrder.createdAt).toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(activeOrder.total, activeOrder.currency)}</div>
+                          <div className="text-xs mt-1" style={{ color: SLATE }}>{activeOrder.currency}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Buyer & delivery address</h4>
+                        <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                          <div><strong style={{ color: INK }}>Buyer:</strong> {activeOrder.buyerName || activeOrder.buyerUsername || "Unknown"}</div>
+                          {activeOrder.buyerUsername && <div><strong style={{ color: INK }}>Username:</strong> @{activeOrder.buyerUsername}</div>}
+                          <div className="pt-2">
+                            <strong style={{ color: INK }}>Ship to:</strong><br />
+                            {[activeOrder.shippingAddress?.fullName, activeOrder.shippingAddress?.street, activeOrder.shippingAddress?.city, activeOrder.shippingAddress?.state, activeOrder.shippingAddress?.zip, activeOrder.shippingAddress?.country].filter(Boolean).join(", ") || "No shipping address recorded"}
+                            {activeOrder.shippingAddress?.phone && <div className="mt-1"><strong>Contact:</strong> {activeOrder.shippingAddress.phone}</div>}
+                            {activeOrder.shippingAddress?.deliveryInstructions && <div className="mt-1"><strong>Delivery instructions:</strong> {activeOrder.shippingAddress.deliveryInstructions}</div>}
+                            {activeOrder.shippingAddress?.preferredDeliveryTime && <div className="mt-1"><strong>Preferred time:</strong> {activeOrder.shippingAddress.preferredDeliveryTime}</div>}
+                            {(activeOrder.shippingAddress?.locationPhotos || []).length > 0 && <div className="flex gap-2 flex-wrap mt-2">{activeOrder.shippingAddress.locationPhotos.map((photo, index) => <img key={index} src={photo} alt={`Delivery location ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" />)}</div>}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Money breakdown</h4>
+                        <div className="text-sm space-y-2" style={{ color: SLATE }}>
+                          <div className="flex justify-between"><span>Items subtotal</span><strong style={{ color: INK }}>{formatMoney(activeOrder.subtotal, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Shipping</span><strong style={{ color: INK }}>{formatMoney(activeOrder.shippingTotal, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Tax</span><strong style={{ color: INK }}>{formatMoney(activeOrder.taxAmount, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Stallyard commission ({Math.round(Number(activeOrder.commissionRate || 0) * 100)}%)</span><strong style={{ color: INK }}>{formatMoney(activeOrder.commissionAmount, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between pt-2 border-t" style={{ borderColor: "#EFEBE0" }}><span>Seller payable</span><strong style={{ color: SAGE }}>{formatMoney(sellerPayout, activeOrder.currency)}</strong></div>
+                          <div className="flex justify-between"><span>Buyer total</span><strong style={{ color: INK }}>{formatMoney(activeOrder.total, activeOrder.currency)}</strong></div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Payment & Paystack</h4>
+                      <div className="grid md:grid-cols-2 gap-3 text-sm" style={{ color: SLATE }}>
+                        <div><strong style={{ color: INK }}>Payment status:</strong> {activeOrder.paymentStatus || "Unknown"}</div>
+                        <div><strong style={{ color: INK }}>Paystack reference:</strong> <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{activeOrder.paystackReference || "Not recorded"}</span></div>
+                        {(activeOrder.payouts || []).length > 0 && (
+                          <div className="mt-2"><strong style={{ color: INK }}>Seller bank payouts:</strong>{activeOrder.payouts.map((payout) => <div key={payout.id} className="mt-1 pl-2">Seller #{payout.sellerId} · {formatMoney(payout.amount, "NGN")} · {payout.status}{payout.reference ? ` · ${payout.reference}` : ""}{payout.failureReason ? ` · ${payout.failureReason}` : ""}{["failed", "reversed", "needs_bank"].includes(payout.status) && <button type="button" className="ml-2 underline font-medium" onClick={async () => { const res = await authFetch(`${BACKEND_URL}/seller-payouts/${payout.id}/retry`, { method: "POST" }); const data = await res.json().catch(() => ({})); if (!res.ok) return showToast(data.error || "Payout retry failed"); setOrders((all) => all.map((order) => order.id === activeOrder.id ? { ...order, payouts: order.payouts.map((p) => p.id === payout.id ? { ...p, status: data.payout.status, reference: data.payout.paystack_reference, failureReason: data.payout.failure_reason || "" } : p) } : order)); showToast("Payout retry submitted to Paystack"); }}>Retry safely</button>}</div>)}</div>
+                        )}
+                        <div><strong style={{ color: INK }}>Channel:</strong> {activeOrder.paymentChannel || "—"}</div>
+                        <div><strong style={{ color: INK }}>Card / bank:</strong> {[activeOrder.paymentCardType, activeOrder.paymentBank, activeOrder.paymentLast4 ? `•••• ${activeOrder.paymentLast4}` : ""].filter(Boolean).join(" · ") || "—"}</div>
+                      </div>
+                      {hasAdminPermission(currentMember, "finance") && (
+                        <div className="mt-3 flex items-center gap-3 flex-wrap">
+                          <button
+                            onClick={() => verifyPaystackReconciliation(activeOrder.id)}
+                            disabled={paystackCheckingOrderId === activeOrder.id || !activeOrder.paystackReference}
+                            className="px-3 py-2 rounded-lg text-xs font-medium border disabled:opacity-50"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
+                          >
+                            {paystackCheckingOrderId === activeOrder.id ? "Checking Paystack…" : "Verify with Paystack"}
+                          </button>
+                          {paystackCheck && (
+                            <span className="text-xs" style={{ color: paystackCheck.matches === false ? BERRY : SAGE }}>
+                              {paystackCheck.matches === false ? "Paystack mismatch — review required" : "Paystack verification matched"}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Items, shipment & delivery</h4>
+                      <div className="space-y-4">
+                        {(activeOrder.items || []).map((i) => {
+                          const tokenStatus = i.deliveryTokenRedeemedAt ? "Redeemed" : i.deliveryTokenGeneratedAt ? "Generated after payment — visible only to buyer" : "Not generated";
+                          return (
+                            <div key={i.id} className="p-3 rounded-lg border" style={{ borderColor: "#EFEBE0" }}>
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div>
+                                  <div className="font-medium" style={{ color: INK }}>{i.emoji} {i.title}</div>
+                                  <div className="text-xs mt-1" style={{ color: SLATE }}>Seller: {i.sellerName || i.ownerUsername || "Unknown"} · Qty {i.qty}</div>
+                                </div>
+                                <div className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(Number(i.price || 0) * Number(i.qty || 1), activeOrder.currency)}</div>
+                              </div>
+                              <div className="grid md:grid-cols-2 gap-2 text-xs mt-3" style={{ color: SLATE }}>
+                                <div><strong style={{ color: INK }}>Fulfillment:</strong> {FULFILLMENT_LABEL[i.fulfillmentStatus] || i.fulfillmentStatus}</div>
+                                <div><strong style={{ color: INK }}>Carrier:</strong> {i.carrier || "—"}</div>
+                                <div><strong style={{ color: INK }}>Tracking:</strong> {i.trackingNumber || "—"}</div>
+                                <div><strong style={{ color: INK }}>Shipped:</strong> {i.shippedAt ? new Date(i.shippedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Delivery token:</strong> {tokenStatus}</div>
+                                <div><strong style={{ color: INK }}>Buyer confirmed:</strong> {i.buyerConfirmedAt ? new Date(i.buyerConfirmedAt).toLocaleString() : "Not yet"}</div>
+                                <div><strong style={{ color: INK }}>Return:</strong> {i.returnStatus || "None"}</div>
+                                <div><strong style={{ color: INK }}>Return tracking:</strong> {i.returnTrackingNumber || "—"}</div>
+                              </div>
+                              {i.returnReason && <p className="text-xs mt-2" style={{ color: BERRY }}><strong>Return reason:</strong> {i.returnReason}{i.returnNote ? ` — ${i.returnNote}` : ""}</p>}
+                              <div className="mt-3 flex gap-2 flex-wrap">
+                                {i.proofOfDeliveryUrl && (
+                                  <a href={i.proofOfDeliveryUrl} target="_blank" rel="noreferrer">
+                                    <img src={i.proofOfDeliveryUrl} alt="Proof of delivery" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                )}
+                                {(i.returnEvidenceUrls || []).map((url, idx) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer">
+                                    <img src={url} alt={`Return evidence ${idx + 1}`} className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: orderDispute ? BERRY : "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Dispute</h4>
+                        {orderDispute ? (
+                          <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                            <div><strong style={{ color: INK }}>Case:</strong> #{orderDispute.id}</div>
+                            <div><strong style={{ color: INK }}>Status:</strong> {orderDispute.status}</div>
+                            <div><strong style={{ color: INK }}>Reason:</strong> {orderDispute.reason || "—"}</div>
+                            {orderDispute.resolution && <div><strong style={{ color: INK }}>Decision:</strong> {orderDispute.resolution}</div>}
+                            <button type="button" onClick={() => { setActiveDisputeCaseId(orderDispute.id); setAdminTab("disputes"); }} className="text-xs font-medium underline mt-2" style={{ color: BERRY }}>Open dispute case</button>
+                          </div>
+                        ) : <p className="text-sm" style={{ color: SLATE }}>No dispute case for this order.</p>}
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Refund</h4>
+                        <div className="text-sm space-y-1" style={{ color: SLATE }}>
+                          <div><strong style={{ color: INK }}>Status:</strong> {activeOrder.refundStatus || (activeOrder.paymentStatus === "refunded" ? "processed" : "No refund")}</div>
+                          {activeOrder.refundType && <div><strong style={{ color: INK }}>Type:</strong> {activeOrder.refundType === "partial" ? "Partial refund" : "Full refund"}</div>}
+                          {activeOrder.refundAmount > 0 && <div><strong style={{ color: INK }}>Amount:</strong> {formatMoney(activeOrder.refundAmount, activeOrder.currency)}</div>}
+                          {activeOrder.refundReason && <div><strong style={{ color: INK }}>Reason:</strong> {activeOrder.refundReason}</div>}
+                          {activeOrder.paystackRefundId && <div><strong style={{ color: INK }}>Paystack refund ID:</strong> {activeOrder.paystackRefundId}</div>}
+                          {activeOrder.refundRequestedAt && <div><strong style={{ color: INK }}>Requested:</strong> {new Date(activeOrder.refundRequestedAt).toLocaleString()}</div>}
+                          {activeOrder.refundedAt && <div><strong style={{ color: INK }}>Completed:</strong> {new Date(activeOrder.refundedAt).toLocaleString()}</div>}
+                          {activeOrder.refundFailureReason && <div style={{ color: BERRY }}><strong>Problem:</strong> {activeOrder.refundFailureReason}</div>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-3" style={{ color: INK }}>Lifecycle</h4>
+                      <div className="space-y-2">
+                        {lifecycle.map((step) => (
+                          <div key={step.label} className="flex items-center gap-3 text-sm">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: step.done ? SAGE : "#DDD8CC" }} />
+                            <span style={{ color: step.done ? INK : SLATE }}>{step.label}</span>
+                            <span className="text-xs" style={{ color: SLATE }}>{step.at ? new Date(step.at).toLocaleString() : step.done ? "Completed" : "Pending"}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                      <h4 className="font-semibold mb-2" style={{ color: INK }}>Seller withdrawal activity</h4>
+                      <p className="text-xs mb-3" style={{ color: SLATE }}>Withdrawals are seller-level records and are not directly tied to a single order, so these entries are shown only as context for sellers on this order.</p>
+                      {sellerWithdrawals.length === 0 ? <p className="text-sm" style={{ color: SLATE }}>No withdrawal activity recorded for this order's seller(s).</p> : (
+                        <div className="space-y-2">
+                          {sellerWithdrawals.slice(0, 8).map((w) => (
+                            <div key={w.id} className="flex justify-between gap-3 text-sm border-t pt-2" style={{ borderColor: "#EFEBE0", color: SLATE }}>
+                              <span>{w.sellerUsername} · {w.status} · {new Date(w.requestedAt).toLocaleString()}</span>
+                              <strong style={{ color: INK }}>{formatMoney(w.amount, activeOrder.currency)}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {hasAdminPermission(currentMember, "finance") && (
+                      <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-2" style={{ color: INK }}>Admin money actions</h4>
+                        <p className="text-xs mb-3" style={{ color: SLATE }}>Use money actions only after reviewing the payment, delivery evidence, and any dispute or return above.</p>
+                        <div className="flex items-center gap-4 flex-wrap">
+                          {activeOrder.paymentStatus === "held" && !activeOrder.isDisputed && (
+                            <button onClick={() => releasePayout(activeOrder.id)} className="text-sm font-medium underline" style={{ color: SAGE }}>Release payout</button>
+                          )}
+                          {["held", "released"].includes(activeOrder.paymentStatus) && (
+                            <button onClick={() => refundOrder(activeOrder.id)} className="text-sm font-medium underline" style={{ color: BERRY }}>Refund buyer</button>
+                          )}
+                          {activeOrder.isDisputed && <span className="text-xs" style={{ color: BERRY }}>Payout release is blocked while the dispute is active.</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div className="space-y-3">
+                  <div className="flex gap-2 flex-wrap">
+                    <input value={adminOrderSearch} onChange={(e) => setAdminOrderSearch(e.target.value)}
+                      placeholder="Search order #, buyer, seller, item or Paystack ref"
+                      className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                      style={{ borderColor: "#DDD8CC", color: INK }} />
+                    <select value={adminOrderStatusFilter} onChange={(e) => setAdminOrderStatusFilter(e.target.value)}
+                      className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      <option value="all">All payments</option><option value="held">Held</option><option value="released">Released</option>
+                      <option value="refund_pending">Refund pending</option><option value="refunded">Refunded</option><option value="disputed">Disputed</option>
+                    </select>
+                  </div>
+                  {orders.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No orders placed yet.</p>}
+                  {orders
+                    .filter((o) => {
+                      if (adminOrderStatusFilter === "disputed") { if (!o.isDisputed) return false; }
+                      else if (adminOrderStatusFilter !== "all" && o.paymentStatus !== adminOrderStatusFilter) return false;
+                      const q = adminOrderSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      const sellers = (o.items || []).map((i) => `${i.sellerName || ""} ${i.ownerUsername || ""}`).join(" ");
+                      const items = (o.items || []).map((i) => i.title || "").join(" ");
+                      return [o.id, orderNumber(String(o.id)), o.buyerName, o.buyerUsername, o.paystackReference, sellers, items]
+                        .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                    })
+                    .slice().sort((a, b) => b.createdAt - a.createdAt)
+                    .map((o) => (
+                      <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                        <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                          <span className="text-sm font-medium flex items-center gap-2 flex-wrap" style={{ color: INK }}>
+                            {o.buyerName}
+                            {o.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                            {o.paymentStatus === "held" && <Tag color={MARIGOLD}>Held</Tag>}
+                            {o.paymentStatus === "released" && <Tag color={SAGE}>Released</Tag>}
+                            {o.paymentStatus === "refunded" && <Tag color={BERRY}>Refunded</Tag>}
+                            {o.paymentStatus === "refund_pending" && <Tag color={MARIGOLD}>Refund pending</Tag>}
+                          </span>
+                          <span className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(o.total, o.currency)}</span>
+                        </div>
+                        <div className="text-xs mb-2 flex items-center gap-2" style={{ color: SLATE }}>
+                          <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{orderNumber(o.id)}</span>
+                          · {new Date(o.createdAt).toLocaleString()}
+                        </div>
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>{(o.items || []).map((i) => i.title).filter(Boolean).join(", ") || "No item details available"}</div>
+                        <div className="flex items-center justify-between gap-3 flex-wrap pt-2 border-t" style={{ borderColor: "#EFEBE0" }}>
+                          <div className="text-xs" style={{ color: SLATE }}>
+                            Commission {formatMoney(Number(o.commissionAmount || 0), o.currency)} · Seller payable {formatMoney(Number(o.subtotal || 0) + Number(o.shippingTotal || 0) - Number(o.commissionAmount || 0), o.currency)}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button type="button" onClick={() => openAdminNotes("order", o.id, `Order ${orderNumber(o.id)}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
+                            <button type="button" onClick={() => setActiveAdminOrderId(o.id)} className="px-3 py-2 rounded-lg text-xs font-medium" style={{ backgroundColor: INK, color: "white" }}>View order detail</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              );
+            })()}
+
+            {adminTab === "settings" && (
+              <div className="max-w-sm">
+                {hasAdminPermission(currentMember, "finance") && (
+                  <>
+                    <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                      Commission rate
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      Percentage taken from every sale before the seller payout.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.5"
+                        value={Math.round(settings.commissionRate * 1000) / 10}
+                        onChange={(e) =>
+                          setSettings({ ...settings, commissionRate: Number(e.target.value) / 100 })
+                        }
+                        className="w-24 px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <span style={{ color: SLATE }}>%</span>
+                      <button
+                        onClick={() => persistSettings(settings)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                    <p className="text-xs mt-3" style={{ color: SLATE }}>
+                      Applies to new orders going forward — existing orders keep the rate they were placed under.
+                    </p>
+
+                    <label className="block text-sm font-medium mb-1 mt-6" style={{ color: INK }}>
+                      Tax rate
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      A flat rate applied to every checkout's item subtotal (not shipping), added on top of what
+                      the buyer pays.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={Math.round((settings.taxRate || 0) * 1000) / 10}
+                        onChange={(e) => setSettings({ ...settings, taxRate: Number(e.target.value) / 100 })}
+                        className="w-24 px-3 py-2 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <span style={{ color: SLATE }}>%</span>
+                      <button
+                        onClick={() => persistSettings(settings)}
+                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Save
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {hasAdminPermission(currentMember, "content_management") && (
+                <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
+                  <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                    Sign up / sign in page image
+                  </label>
+                  <p className="text-xs mb-3" style={{ color: SLATE }}>
+                    Shown as the side photo on the sign up and sign in screens. Falls back to a default photo if
+                    none is set.
+                  </p>
+                  {settings.authImage && (
+                    <img
+                      src={settings.authImage}
+                      alt="Sign up page"
+                      className="w-full h-40 object-cover rounded-lg mb-3"
+                    />
+                  )}
+                  <div className="flex items-center gap-3">
+                    <label
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium cursor-pointer"
+                      style={{ borderColor: "#DDD8CC", color: SLATE, backgroundColor: "white" }}
+                    >
+                      {authImageUploading ? "Uploading…" : settings.authImage ? "Change image" : "Choose image"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleAuthImageSelect}
+                        disabled={authImageUploading}
+                        className="hidden"
+                      />
+                    </label>
+                    {settings.authImage && (
+                      <button
+                        onClick={removeAuthImage}
+                        className="text-sm font-medium"
+                        style={{ color: BERRY }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+                )}
+              </div>
+            )}
+
+            {adminTab === "content" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div>
+                <div className="flex gap-2 mb-5">
+                  {[
+                    { id: "banners", label: `Banners (${content.banners.length})` },
+                    { id: "articles", label: `Help articles (${content.articles.length})` },
+                    { id: "faqs", label: `FAQs (${content.faqs.length})` },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setContentTab(t.id)}
+                      className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                      style={{
+                        borderColor: contentTab === t.id ? INK : "#DDD8CC",
+                        backgroundColor: contentTab === t.id ? INK : "white",
+                        color: contentTab === t.id ? "white" : SLATE,
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {contentTab === "banners" && (
+                  <div>
+                    <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                      <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                        New banner message
+                      </label>
+                      <div className="flex gap-2 mb-3">
+                        <input
+                          value={bannerForm.message}
+                          onChange={(e) => setBannerForm({ ...bannerForm, message: e.target.value })}
+                          placeholder="e.g. Free shipping on orders over $50 this week!"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <select
+                          value={bannerForm.tone}
+                          onChange={(e) => setBannerForm({ ...bannerForm, tone: e.target.value })}
+                          className="px-2 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <option value="info">Info</option>
+                          <option value="success">Success</option>
+                          <option value="alert">Alert</option>
+                        </select>
+                      </div>
+
+                      <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                        Media <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                      </label>
+                      <div className="flex gap-2 mb-3">
+                        {[
+                          { id: "none", label: "None" },
+                          { id: "image", label: "Image" },
+                          { id: "video", label: "Video" },
+                        ].map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setBannerForm({ ...bannerForm, mediaType: opt.id })}
+                            className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                            style={{
+                              borderColor: bannerForm.mediaType === opt.id ? INK : "#DDD8CC",
+                              backgroundColor: bannerForm.mediaType === opt.id ? INK : "white",
+                              color: bannerForm.mediaType === opt.id ? "white" : SLATE,
+                            }}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {bannerForm.mediaType === "image" && (
+                        <div className="mb-3">
+                          {bannerForm.imageUrl ? (
+                            <div className="relative inline-block mb-2">
+                              <img
+                                src={bannerForm.imageUrl}
+                                alt="Banner preview"
+                                className="h-24 rounded-lg border object-cover"
+                                style={{ borderColor: "#DDD8CC" }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setBannerForm({ ...bannerForm, imageUrl: "" })}
+                                className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center text-white"
+                                style={{ backgroundColor: BERRY }}
+                                aria-label="Remove image"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ) : (
+                            <label
+                              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm cursor-pointer"
+                              style={{ borderColor: "#DDD8CC", color: SLATE }}
+                            >
+                              {bannerImageUploading ? "Uploading…" : "Choose image"}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleBannerImageSelect}
+                                disabled={bannerImageUploading}
+                                className="hidden"
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
+
+                      {bannerForm.mediaType === "video" && (
+                        <div className="mb-3">
+                          <input
+                            value={bannerForm.videoUrl}
+                            onChange={(e) => setBannerForm({ ...bannerForm, videoUrl: e.target.value })}
+                            placeholder="Direct video URL, e.g. https://example.com/promo.mp4"
+                            className="w-full px-3 py-2 rounded-lg border outline-none text-sm"
+                            style={{ borderColor: "#DDD8CC" }}
+                          />
+                          <p className="text-xs mt-1" style={{ color: SLATE }}>
+                            Use a direct .mp4/.webm link — YouTube/Vimeo share links won't play inline.
+                          </p>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={async () => {
+                          await addBanner(bannerForm);
+                          setBannerForm({ message: "", tone: "info", mediaType: "none", imageUrl: "", videoUrl: "" });
+                        }}
+                        className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Add banner
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {content.banners.length === 0 && (
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          No banners yet.
+                        </p>
+                      )}
+                      {content.banners.map((b) => (
+                        <div
+                          key={b.id}
+                          className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <div className="min-w-0 flex items-center gap-2">
+                            {b.mediaType === "image" && b.imageUrl && (
+                              <img src={b.imageUrl} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                            )}
+                            {b.mediaType === "video" && b.videoUrl && (
+                              <span className="text-base shrink-0" title="Has video">🎬</span>
+                            )}
+                            <Tag
+                              color={
+                                b.tone === "alert" ? BERRY : b.tone === "success" ? SAGE : "#3B6E8F"
+                              }
+                            >
+                              {b.tone}
+                            </Tag>
+                            <span className="text-sm truncate" style={{ color: INK }}>
+                              {b.message}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button
+                              onClick={() => updateBanner(b.id, { isActive: !b.isActive })}
+                              className="text-xs font-medium underline"
+                              style={{ color: b.isActive ? BERRY : SAGE }}
+                            >
+                              {b.isActive ? "Hide" : "Show"}
+                            </button>
+                            <button onClick={() => removeBanner(b.id)} aria-label="Delete banner">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {contentTab === "articles" && (
+                  <div>
+                    <button
+                      onClick={() => {
+                        setArticleForm({ title: "", body: "" });
+                        setEditingArticleId(null);
+                        setArticleModalOpen(true);
+                      }}
+                      className="mb-4 flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+                      style={{ backgroundColor: INK, color: "white" }}
+                    >
+                      <Plus size={16} />
+                      New article
+                    </button>
+                    <div className="space-y-2">
+                      {content.articles.length === 0 && (
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          No help articles yet.
+                        </p>
+                      )}
+                      {content.articles.map((a) => (
+                        <div
+                          key={a.id}
+                          className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium truncate" style={{ color: INK }}>
+                              {a.title}
+                            </div>
+                            <div className="text-xs truncate" style={{ color: SLATE }}>
+                              {a.body}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button
+                              onClick={() => {
+                                setArticleForm({ title: a.title, body: a.body });
+                                setEditingArticleId(a.id);
+                                setArticleModalOpen(true);
+                              }}
+                              aria-label="Edit article"
+                            >
+                              <Pencil size={16} style={{ color: SLATE }} />
+                            </button>
+                            <button onClick={() => removeArticle(a.id)} aria-label="Delete article">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {contentTab === "faqs" && (
+                  <div>
+                    <div className="p-4 rounded-lg border bg-white mb-4" style={{ borderColor: "#DDD8CC" }}>
+                      <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                        {editingFaqId ? "Edit FAQ" : "New FAQ"}
+                      </label>
+                      <input
+                        value={faqForm.question}
+                        onChange={(e) => setFaqForm({ ...faqForm, question: e.target.value })}
+                        placeholder="Question"
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <textarea
+                        value={faqForm.answer}
+                        onChange={(e) => setFaqForm({ ...faqForm, answer: e.target.value })}
+                        placeholder="Answer"
+                        rows={2}
+                        className="w-full mb-2 px-3 py-2 rounded-lg border outline-none text-sm"
+                        style={{ borderColor: "#DDD8CC" }}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            if (editingFaqId) {
+                              await updateFaq(editingFaqId, faqForm);
+                            } else {
+                              await addFaq(faqForm);
+                            }
+                            setFaqForm({ question: "", answer: "" });
+                            setEditingFaqId(null);
+                          }}
+                          className="px-4 py-2 rounded-lg text-sm font-medium"
+                          style={{ backgroundColor: MARIGOLD, color: INK }}
+                        >
+                          {editingFaqId ? "Save changes" : "Add FAQ"}
+                        </button>
+                        {editingFaqId && (
+                          <button
+                            onClick={() => {
+                              setFaqForm({ question: "", answer: "" });
+                              setEditingFaqId(null);
+                            }}
+                            className="px-4 py-2 rounded-lg text-sm font-medium border"
+                            style={{ borderColor: "#DDD8CC", color: SLATE }}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {content.faqs.length === 0 && (
+                        <p className="text-sm" style={{ color: SLATE }}>
+                          No FAQs yet.
+                        </p>
+                      )}
+                      {content.faqs.map((f) => (
+                        <div
+                          key={f.id}
+                          className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white"
+                          style={{ borderColor: "#DDD8CC" }}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium truncate" style={{ color: INK }}>
+                              {f.question}
+                            </div>
+                            <div className="text-xs truncate" style={{ color: SLATE }}>
+                              {f.answer}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button
+                              onClick={() => {
+                                setFaqForm({ question: f.question, answer: f.answer });
+                                setEditingFaqId(f.id);
+                              }}
+                              aria-label="Edit FAQ"
+                            >
+                              <Pencil size={16} style={{ color: SLATE }} />
+                            </button>
+                            <button onClick={() => removeFaq(f.id)} aria-label="Delete FAQ">
+                              <Trash2 size={16} style={{ color: BERRY }} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {adminTab === "reconciliation" && hasAdminPermission(currentMember, "finance") && (
+              <div>
+                <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: INK }}>Payment reconciliation</h3>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      Compare buyer payments, held/released funds, commission, refunds, and seller withdrawals. Red flags mean the money trail needs review.
+                    </p>
+                  </div>
+                  <button
+                    onClick={fetchReconciliation}
+                    disabled={reconciliationLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  >
+                    {reconciliationLoading ? "Refreshing…" : "Refresh totals"}
+                  </button>
+                </div>
+
+                {reconciliationError && (
+                  <div className="p-3 mb-4 rounded-lg text-sm" style={{ backgroundColor: BERRY + "10", color: BERRY }}>
+                    {reconciliationError}
+                  </div>
+                )}
+                {reconciliationLoading && !reconciliationData && (
+                  <p className="text-sm" style={{ color: SLATE }}>Loading finance records…</p>
+                )}
+                {reconciliationData && (() => {
+                  const records = reconciliationData.records || [];
+                  const q = reconciliationSearch.trim().toLowerCase();
+                  const filtered = records.filter((r) => {
+                    if (reconciliationFilter === "flagged" && !(r.flags || []).length) return false;
+                    if (reconciliationFilter === "held" && r.paymentStatus !== "held") return false;
+                    if (reconciliationFilter === "released" && r.paymentStatus !== "released") return false;
+                    if (reconciliationFilter === "refunds" && !["refund_pending", "refunded"].includes(r.paymentStatus)) return false;
+                    if (!q) return true;
+                    return [orderNumber(r.orderId), r.buyerUsername, r.paystackReference, r.paymentStatus]
+                      .filter(Boolean).join(" ").toLowerCase().includes(q);
+                  });
+                  return (
+                    <>
+                      <div className="space-y-4 mb-6">
+                        {(reconciliationData.byCurrency || []).map((c) => (
+                          <div key={c.currency} className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className="font-semibold" style={{ color: INK }}>{c.currency} money position</h4>
+                              <Tag color={(reconciliationData.alerts?.high || 0) > 0 ? BERRY : SAGE}>
+                                {reconciliationData.alerts?.total || 0} reconciliation alert{(reconciliationData.alerts?.total || 0) === 1 ? "" : "s"}
+                              </Tag>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              {[
+                                ["Buyer payments", c.grossPayments],
+                                ["Held", c.held],
+                                ["Released", c.released],
+                                ["Seller payable (released)", c.releasedSellerPayable],
+                                ["Recorded commission", c.recordedCommission],
+                                ["Refund pending", c.refundPending],
+                                ["Refunded", c.refunded],
+                                ["Tax recorded", c.tax],
+                              ].map(([label, amount]) => (
+                                <div key={label} className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                                  <div className="text-[11px] uppercase tracking-wide" style={{ color: SLATE }}>{label}</div>
+                                  <div className="font-semibold mt-1" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(amount, c.currency)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="p-4 rounded-xl border bg-white mb-6" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold mb-3" style={{ color: INK }}>Seller withdrawals</h4>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div><div className="text-xs" style={{ color: SLATE }}>Paid</div><div className="font-semibold" style={{ color: INK }}>{formatMoney(reconciliationData.withdrawals?.paid || 0, "NGN")}</div></div>
+                          <div><div className="text-xs" style={{ color: SLATE }}>Processing</div><div className="font-semibold" style={{ color: MARIGOLD }}>{formatMoney(reconciliationData.withdrawals?.processing || 0, "NGN")}</div></div>
+                          <div><div className="text-xs" style={{ color: SLATE }}>Failed</div><div className="font-semibold" style={{ color: BERRY }}>{formatMoney(reconciliationData.withdrawals?.failed || 0, "NGN")}</div></div>
+                        </div>
+                        <p className="text-[11px] mt-2" style={{ color: SLATE }}>Withdrawals are shown in NGN because Stallyard is currently Nigeria-only.</p>
+                      </div>
+
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {[
+                          ["all", "All"], ["flagged", "Flagged"], ["held", "Held"], ["released", "Released"], ["refunds", "Refunds"],
+                        ].map(([key, label]) => (
+                          <button key={key} onClick={() => setReconciliationFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                            style={{ borderColor: reconciliationFilter === key ? INK : "#DDD8CC", backgroundColor: reconciliationFilter === key ? INK : "white", color: reconciliationFilter === key ? "white" : SLATE }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <input value={reconciliationSearch} onChange={(e) => setReconciliationSearch(e.target.value)} placeholder="Search order, buyer, Paystack reference or status"
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-4" style={{ borderColor: "#DDD8CC", color: INK }} />
+
+                      <div className="space-y-3">
+                        {filtered.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No records match this view.</p>}
+                        {filtered.map((r) => {
+                          const check = paystackChecks[r.orderId];
+                          const hasFlags = (r.flags || []).length > 0;
+                          return (
+                            <div key={r.orderId} className="p-4 rounded-lg border bg-white" style={{ borderColor: hasFlags ? BERRY + "66" : "#DDD8CC" }}>
+                              <div className="flex items-start justify-between gap-3 flex-wrap">
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{orderNumber(r.orderId)}</span>
+                                    <Tag color={r.paymentStatus === "released" ? SAGE : r.paymentStatus === "held" ? MARIGOLD : BERRY}>{r.paymentStatus}</Tag>
+                                    {hasFlags && <Tag color={BERRY}>{r.flags.length} alert{r.flags.length === 1 ? "" : "s"}</Tag>}
+                                  </div>
+                                  <p className="text-xs mt-1" style={{ color: SLATE }}>Buyer: {r.buyerUsername || "Unknown"}</p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(r.total, r.currency)}</div>
+                                  <div className="text-[11px]" style={{ color: SLATE }}>Seller payable: {formatMoney(r.sellerPayable, r.currency)}</div>
+                                </div>
+                              </div>
+                              <div className="grid sm:grid-cols-3 gap-2 text-xs mt-3 pt-3 border-t" style={{ color: SLATE, borderColor: "#EFEBE0" }}>
+                                <div><strong style={{ color: INK }}>Commission:</strong> {formatMoney(r.commissionAmount, r.currency)}</div>
+                                <div><strong style={{ color: INK }}>Tax:</strong> {formatMoney(r.taxAmount, r.currency)}</div>
+                                <div className="break-all"><strong style={{ color: INK }}>Paystack:</strong> {r.paystackReference || "Missing"}</div>
+                              </div>
+                              {hasFlags && (
+                                <div className="mt-3 space-y-1">
+                                  {r.flags.map((f) => <div key={f.code} className="text-xs" style={{ color: f.severity === "high" ? BERRY : MARIGOLD }}>• {f.message}</div>)}
+                                </div>
+                              )}
+                              {check && (
+                                <div className="mt-3 p-3 rounded-lg text-xs" style={{ backgroundColor: check.matches ? SAGE + "12" : BERRY + "10", color: check.matches ? SAGE : BERRY }}>
+                                  <strong>{check.matches ? "Paystack match confirmed" : "Paystack mismatch"}</strong>
+                                  {` — Paystack ${formatMoney(check.paystack?.amount || 0, check.paystack?.currency || r.currency)}, status ${check.paystack?.status || "unknown"}.`}
+                                </div>
+                              )}
+                              <button onClick={() => verifyPaystackReconciliation(r.orderId)} disabled={paystackCheckingOrderId === r.orderId || !r.paystackReference}
+                                className="mt-3 text-xs font-medium underline disabled:opacity-40" style={{ color: INK }}>
+                                {paystackCheckingOrderId === r.orderId ? "Checking Paystack…" : "Verify with Paystack"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {adminTab === "refunds" && hasAdminPermission(currentMember, "finance") && (
+              <div>
+                {(() => {
+                  const refundOrders = orders
+                    .filter((o) => o.refundStatus || o.paymentStatus === "refunded" || o.paymentStatus === "refund_pending")
+                    .sort((a, b) => (b.refundRequestedAt || b.createdAt) - (a.refundRequestedAt || a.createdAt));
+                  const q = refundAdminSearch.trim().toLowerCase();
+                  const filtered = refundOrders.filter((o) => {
+                    const status = o.paymentStatus === "refunded" ? "processed" : (o.refundStatus || "pending");
+                    const bucket = status === "failed" ? "failed"
+                      : status === "request_unknown" || status === "needs-attention" ? "attention"
+                      : status === "processed" ? "processed"
+                      : "pending";
+                    if (refundAdminFilter !== "all" && bucket !== refundAdminFilter) return false;
+                    if (!q) return true;
+                    const haystack = [orderNumber(o.id), o.buyerName, o.buyerUsername, o.paystackReference, o.paystackRefundId, o.refundReason]
+                      .filter(Boolean).join(" ").toLowerCase();
+                    return haystack.includes(q);
+                  });
+                  const counts = {
+                    all: refundOrders.length,
+                    pending: refundOrders.filter((o) => o.paymentStatus === "refund_pending" && !["failed", "request_unknown", "needs-attention"].includes(o.refundStatus)).length,
+                    attention: refundOrders.filter((o) => ["request_unknown", "needs-attention"].includes(o.refundStatus)).length,
+                    failed: refundOrders.filter((o) => o.refundStatus === "failed").length,
+                    processed: refundOrders.filter((o) => o.paymentStatus === "refunded" || o.refundStatus === "processed").length,
+                  };
+                  const pendingAmount = refundOrders
+                    .filter((o) => o.paymentStatus === "refund_pending")
+                    .reduce((sum, o) => sum + Number(o.total || 0), 0);
+                  return (
+                    <>
+                      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold" style={{ color: INK }}>Refund management</h3>
+                          <p className="text-xs mt-1" style={{ color: SLATE }}>Track every Paystack refund from request through final processing. Only Paystack-confirmed processed refunds are shown as refunded.</p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs" style={{ color: SLATE }}>Currently pending</div>
+                          <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(pendingAmount, "NGN")}</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 flex-wrap mb-3">
+                        {[
+                          ["all", "All", counts.all],
+                          ["pending", "Pending", counts.pending],
+                          ["attention", "Needs attention", counts.attention],
+                          ["failed", "Failed", counts.failed],
+                          ["processed", "Processed", counts.processed],
+                        ].map(([key, label, count]) => (
+                          <button key={key} onClick={() => setRefundAdminFilter(key)} className="px-3 py-1.5 rounded-full text-xs font-medium border"
+                            style={{ borderColor: refundAdminFilter === key ? INK : "#DDD8CC", backgroundColor: refundAdminFilter === key ? INK : "white", color: refundAdminFilter === key ? "white" : SLATE }}>
+                            {label} ({count})
+                          </button>
+                        ))}
+                      </div>
+                      <input value={refundAdminSearch} onChange={(e) => setRefundAdminSearch(e.target.value)} placeholder="Search order, buyer, Paystack reference, refund ID or reason"
+                        className="w-full px-3 py-2 rounded-lg border text-sm mb-4" style={{ borderColor: "#DDD8CC", color: INK }} />
+                      {filtered.length === 0 ? (
+                        <p className="text-sm p-4 rounded-lg border bg-white" style={{ color: SLATE, borderColor: "#DDD8CC" }}>No refunds match this view.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {filtered.map((o) => {
+                            const status = o.paymentStatus === "refunded" ? "processed" : (o.refundStatus || "pending");
+                            const needsAttention = ["request_unknown", "needs-attention"].includes(status);
+                            const statusLabel = status === "request_unknown" ? "Request unknown"
+                              : status === "needs-attention" ? "Needs attention"
+                              : status === "processed" ? "Processed"
+                              : status === "failed" ? "Failed"
+                              : status === "requesting" ? "Requesting"
+                              : status.charAt(0).toUpperCase() + status.slice(1);
+                            const statusColor = status === "processed" ? SAGE : status === "failed" ? BERRY : needsAttention ? BERRY : MARIGOLD;
+                            const requestedBy = members.find((m) => m.backendId === o.refundRequestedBy);
+                            return (
+                              <div key={o.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: needsAttention || status === "failed" ? BERRY + "66" : "#DDD8CC" }}>
+                                <div className="flex items-start justify-between gap-3 flex-wrap">
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-semibold text-sm" style={{ color: INK, fontFamily: "'IBM Plex Mono', monospace" }}>{orderNumber(o.id)}</span>
+                                      <Tag color={statusColor}>{statusLabel}</Tag>
+                                      {o.isDisputed && <Tag color={BERRY}>Disputed</Tag>}
+                                    </div>
+                                    <p className="text-xs mt-1" style={{ color: SLATE }}>Buyer: {o.buyerName || o.buyerUsername}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>{formatMoney(o.total, o.currency)}</div>
+                                    <div className="text-[11px]" style={{ color: SLATE }}>Full refund</div>
+                                  </div>
+                                </div>
+                                <div className="grid sm:grid-cols-2 gap-x-5 gap-y-2 text-xs mt-3 pt-3 border-t" style={{ color: SLATE, borderColor: "#EFEBE0" }}>
+                                  <div><strong style={{ color: INK }}>Reason:</strong> {o.refundReason || "Not recorded"}</div>
+                                  <div><strong style={{ color: INK }}>Requested:</strong> {o.refundRequestedAt ? new Date(o.refundRequestedAt).toLocaleString() : "Unknown"}</div>
+                                  <div><strong style={{ color: INK }}>Requested by:</strong> {requestedBy?.displayName || requestedBy?.username || (o.refundRequestedBy ? `Admin #${o.refundRequestedBy}` : "Unknown")}</div>
+                                  <div><strong style={{ color: INK }}>Completed:</strong> {o.refundedAt ? new Date(o.refundedAt).toLocaleString() : "—"}</div>
+                                  <div className="break-all"><strong style={{ color: INK }}>Paystack transaction:</strong> {o.paystackReference || "—"}</div>
+                                  <div className="break-all"><strong style={{ color: INK }}>Paystack refund ID:</strong> {o.paystackRefundId || "—"}</div>
+                                </div>
+                                {o.refundFailureReason && (
+                                  <div className="mt-3 p-3 rounded-lg text-xs" style={{ backgroundColor: BERRY + "10", color: BERRY }}>
+                                    <strong>Paystack / processing note:</strong> {o.refundFailureReason}
+                                  </div>
+                                )}
+                                <div className="flex gap-3 mt-3 flex-wrap">
+                                  {status === "failed" && o.paymentStatus !== "refund_pending" && (
+                                    <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Retry refund</button>
+                                  )}
+                                  {needsAttention && (
+                                    <span className="text-xs font-medium" style={{ color: BERRY }}>Manual review required — verify this transaction in Paystack before taking another money action.</span>
+                                  )}
+                                  <button onClick={() => setAdminTab("orders")} className="text-xs font-medium underline" style={{ color: SLATE }}>Open orders</button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            {adminTab === "withdrawals" && hasAdminPermission(currentMember, "finance") && (
+              <div className="space-y-2">
+                <p className="text-xs mb-2" style={{ color: SLATE }}>
+                  Withdrawals process automatically once a seller requests one — nothing to approve here.
+                  This is a read-only history.
+                </p>
+                {withdrawals.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No withdrawal requests yet.
+                  </p>
+                )}
+                {withdrawals
+                  .slice()
+                  .sort((a, b) => b.requestedAt - a.requestedAt)
+                  .map((w) => (
+                    <div
+                      key={w.id}
+                      className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-white flex-wrap"
+                      style={{ borderColor: "#DDD8CC" }}
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
+                          {members.find((m) => m.username === w.sellerUsername)?.displayName || w.sellerUsername}
+                          <Tag
+                            color={
+                              w.status === "paid" ? SAGE : w.status === "failed" ? BERRY : MARIGOLD
+                            }
+                          >
+                            {w.status === "paid" ? "Paid" : w.status === "failed" ? "Failed" : "Processing"}
+                          </Tag>
+                        </div>
+                        <div className="text-xs" style={{ color: SLATE }}>
+                          Requested {new Date(w.requestedAt).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          })}
+                          {w.status === "failed" && w.failureReason ? ` — ${w.failureReason}` : ""}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span
+                          style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
+                          className="font-medium"
+                        >
+                          ${w.amount.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "disputes" && hasAdminPermission(currentMember, "dispute_resolution") && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-lg" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Dispute cases</h3>
+                    <p className="text-xs" style={{ color: SLATE }}>
+                      Review both sides, delivery/return evidence, payment status, private notes, and the final decision. The dispute payment lock now stays on until the chosen financial outcome is actually completed. Paystack refunds resolve only after Paystack confirms processing; seller-release cases resolve in the same transaction as the release.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 text-xs">
+                    <Tag color={BERRY}>{adminDisputes.filter((d) => d.status === "open").length} open</Tag>
+                    <Tag color={MARIGOLD}>{adminDisputes.filter((d) => d.status === "in_review").length} reviewing</Tag>
+                    <Tag color={SAGE}>{adminDisputes.filter((d) => d.status === "resolved").length} resolved</Tag>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <input value={adminDisputeSearch} onChange={(e) => setAdminDisputeSearch(e.target.value)}
+                    placeholder="Search case, order, buyer, seller or reason"
+                    className="flex-1 min-w-[240px] px-3 py-2 rounded-lg border bg-white text-sm"
+                    style={{ borderColor: "#DDD8CC", color: INK }} />
+                  <select value={adminDisputeStatusFilter} onChange={(e) => setAdminDisputeStatusFilter(e.target.value)}
+                    className="px-3 py-2 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All cases</option><option value="open">Open</option><option value="in_review">In review</option><option value="resolved">Resolved</option>
+                  </select>
+                </div>
+                {adminDisputes.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>No dispute cases yet.</p>
+                )}
+                {adminDisputes
+                  .filter((d) => {
+                    if (adminDisputeStatusFilter !== "all" && d.status !== adminDisputeStatusFilter) return false;
+                    const q = adminDisputeSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return [d.id, d.order_id, d.buyer_name, d.buyer_username, d.reason, d.buyer_statement, ...(d.items || []).flatMap((i) => [i.seller_name, i.seller_username, i.title])]
+                      .filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
+                  })
+                  .map((d) => {
+                  const o = orders.find((order) => Number(order.id) === Number(d.order_id));
+                  const expanded = activeDisputeCaseId === d.id;
+                  const draft = disputeAdminDrafts[d.id] || {};
+                  const statusValue = draft.status ?? d.status ?? "open";
+                  const resolutionValue = draft.resolution ?? d.resolution ?? "";
+                  const resolutionNoteValue = draft.resolutionNote ?? d.resolution_note ?? "";
+                  const adminNotesValue = draft.adminNotes ?? d.admin_notes ?? "";
+                  const evidence = [
+                    ...(Array.isArray(d.evidence_urls) ? d.evidence_urls : []),
+                    ...(o?.items || []).flatMap((i) => [i.proofOfDeliveryUrl, ...(i.returnEvidenceUrls || [])].filter(Boolean)),
+                  ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
+                  return (
+                    <div key={d.id} className="rounded-xl border bg-white overflow-hidden" style={{ borderColor: d.status === "resolved" ? "#DDD8CC" : BERRY }}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveDisputeCaseId(expanded ? null : d.id)}
+                        className="w-full text-left p-4"
+                      >
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold" style={{ color: INK }}>Case #{d.id} · {orderNumber(String(d.order_id))}</span>
+                              <Tag color={d.status === "resolved" ? SAGE : d.status === "in_review" ? MARIGOLD : BERRY}>
+                                {d.status === "in_review" ? "In review" : d.status === "resolved" ? "Resolved" : "Open"}
+                              </Tag>
+                              {o?.paymentStatus && <Tag color={o.paymentStatus === "held" ? MARIGOLD : o.paymentStatus === "released" ? SAGE : BERRY}>{o.paymentStatus}</Tag>}
+                            </div>
+                            <p className="text-xs mt-1" style={{ color: SLATE }}>
+                              Buyer: {d.buyer_name || d.buyer_username || o?.buyerName || "Unknown"} · Seller: {d.seller_names || d.seller_usernames || (o?.items || []).map((i) => i.sellerName).filter(Boolean).join(", ") || "Unknown"}
+                            </p>
+                            <p className="text-xs mt-1" style={{ color: INK }}><span className="font-medium">Reason:</span> {d.reason || "Not specified"}</p>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}>
+                              {formatMoney(Number(d.total ?? o?.total ?? 0), d.currency || o?.currency || "NGN")}
+                            </div>
+                            <div className="text-xs" style={{ color: SLATE }}>
+                              Opened {new Date(d.opened_at || o?.createdAt || Date.now()).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                      {expanded && (
+                        <div className="p-4 pt-0 border-t" style={{ borderColor: "#EFEBE0" }}>
+                          <div className="flex justify-end mt-3">
+                            <button type="button" onClick={() => openAdminNotes("dispute", d.id, `Dispute case #${d.id}`)} className="px-3 py-2 rounded-lg text-xs font-medium border" style={{ borderColor: "#DDD8CC", color: SLATE }}>Internal notes</button>
+                          </div>
+                          <div className="grid md:grid-cols-2 gap-3 mt-4">
+                            <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                              <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Buyer statement</div>
+                              <p className="text-xs whitespace-pre-wrap" style={{ color: SLATE }}>{d.buyer_statement || "No buyer statement provided."}</p>
+                            </div>
+                            <div className="p-3 rounded-lg" style={{ backgroundColor: CANVAS }}>
+                              <div className="text-xs font-semibold mb-1" style={{ color: INK }}>Seller statement</div>
+                              <p className="text-xs whitespace-pre-wrap" style={{ color: SLATE }}>{d.seller_statement || "Seller has not responded yet."}</p>
+                            </div>
+                          </div>
+
+                          {o && (
+                            <div className="mt-3 p-3 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Order & delivery timeline</div>
+                              <div className="text-xs mb-2" style={{ color: SLATE }}>
+                                Order placed {new Date(o.createdAt).toLocaleString()} · Payment: {o.paymentStatus}
+                              </div>
+                              {(o.items || []).map((i) => (
+                                <div key={i.id} className="text-xs py-1 border-t" style={{ borderColor: "#EFEBE0", color: SLATE }}>
+                                  <span className="font-medium" style={{ color: INK }}>{i.title}</span> · {FULFILLMENT_LABEL[i.fulfillmentStatus] || i.fulfillmentStatus}
+                                  {i.shippedAt ? ` · shipped ${new Date(i.shippedAt).toLocaleString()}` : ""}
+                                  {i.buyerConfirmedAt ? ` · delivery confirmed ${new Date(i.buyerConfirmedAt).toLocaleString()}` : ""}
+                                  {i.returnStatus ? ` · return ${i.returnStatus}` : ""}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="mt-3">
+                            <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Evidence</div>
+                            {evidence.length === 0 ? (
+                              <p className="text-xs" style={{ color: SLATE }}>No delivery or return evidence images are attached to this case yet.</p>
+                            ) : (
+                              <div className="flex gap-2 flex-wrap">
+                                {evidence.map((url, idx) => (
+                                  <a key={url} href={url} target="_blank" rel="noreferrer" className="block">
+                                    <img src={url} alt={`Dispute evidence ${idx + 1}`} className="w-20 h-20 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="grid md:grid-cols-2 gap-3 mt-4">
+                            <label className="text-xs font-medium" style={{ color: INK }}>
+                              Case status
+                              <select
+                                value={statusValue}
+                                onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), status: e.target.value } }))}
+                                className="mt-1 w-full px-3 py-2 rounded-lg border bg-white outline-none"
+                                style={{ borderColor: "#DDD8CC" }}
+                              >
+                                <option value="open">Open</option>
+                                <option value="in_review">In review</option>
+                                <option
+                                  value="resolved"
+                                  disabled={
+                                    (resolutionValue === "buyer_refund" && o?.paymentStatus !== "refunded") ||
+                                    (resolutionValue === "seller_release" && o?.paymentStatus !== "released") ||
+                                    (resolutionValue === "partial_refund" && !(o?.refundType === "partial" && o?.refundStatus === "processed" && o?.paymentStatus === "released"))
+                                  }
+                                >Resolved</option>
+                              </select>
+                            </label>
+                            <label className="text-xs font-medium" style={{ color: INK }}>
+                              Decision
+                              <select
+                                value={resolutionValue}
+                                onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), resolution: e.target.value } }))}
+                                className="mt-1 w-full px-3 py-2 rounded-lg border bg-white outline-none"
+                                style={{ borderColor: "#DDD8CC" }}
+                              >
+                                <option value="">No decision yet</option>
+                                <option value="buyer_refund">Refund buyer</option>
+                                <option value="seller_release">Release to seller</option>
+                                <option value="partial_refund">Partial refund / negotiated outcome</option>
+                                <option value="no_action">No financial action</option>
+                                <option value="cancelled">Case cancelled</option>
+                              </select>
+                            </label>
+                          </div>
+                          <label className="block text-xs font-medium mt-3" style={{ color: INK }}>
+                            Decision explanation (visible in the case record)
+                            <textarea
+                              value={resolutionNoteValue}
+                              onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), resolutionNote: e.target.value } }))}
+                              rows={3}
+                              className="mt-1 w-full px-3 py-2 rounded-lg border outline-none resize-y"
+                              style={{ borderColor: "#DDD8CC" }}
+                              placeholder="Explain why the case was decided this way…"
+                            />
+                          </label>
+                          <label className="block text-xs font-medium mt-3" style={{ color: INK }}>
+                            Private admin notes (never shown to buyer or seller)
+                            <textarea
+                              value={adminNotesValue}
+                              onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), adminNotes: e.target.value } }))}
+                              rows={3}
+                              className="mt-1 w-full px-3 py-2 rounded-lg border outline-none resize-y"
+                              style={{ borderColor: "#DDD8CC" }}
+                              placeholder="Internal observations, calls, fraud concerns, follow-up items…"
+                            />
+                          </label>
+                          <div className="flex items-center gap-3 flex-wrap mt-3">
+                            <button
+                              onClick={() => saveAdminDisputeCase(d)}
+                              disabled={savingDisputeCaseId === d.id}
+                              className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+                              style={{ backgroundColor: INK, color: "white" }}
+                            >
+                              {savingDisputeCaseId === d.id ? "Saving…" : "Save case"}
+                            </button>
+                            {o && ["held", "released"].includes(o.paymentStatus) && resolutionValue === "buyer_refund" && (
+                              <button onClick={() => refundOrder(o.id)} className="text-xs font-medium underline" style={{ color: BERRY }}>Send Paystack refund</button>
+                            )}
+                            {o && o.paymentStatus === "refund_pending" && resolutionValue === "buyer_refund" && (
+                              <span className="text-xs" style={{ color: MARIGOLD }}>Waiting for Paystack to confirm the refund. The dispute remains locked.</span>
+                            )}
+                            {resolutionValue === "partial_refund" && o && (
+                              <div className="w-full p-3 rounded-lg border" style={{ borderColor: "#E8D7B5", backgroundColor: "#FFF9EE" }}>
+                                <div className="text-xs font-semibold mb-2" style={{ color: INK }}>Partial refund through Paystack</div>
+                                <div className="flex gap-2 flex-wrap items-end">
+                                  <label className="text-xs">
+                                    Refund amount ({CURRENCIES[o.currency]?.symbol || "₦"})
+                                    <input
+                                      type="number" min="0.01" step="0.01"
+                                      value={(disputeAdminDrafts[d.id] || {}).partialRefundAmount || ""}
+                                      onChange={(e) => setDisputeAdminDrafts((all) => ({ ...all, [d.id]: { ...(all[d.id] || {}), partialRefundAmount: e.target.value } }))}
+                                      className="mt-1 w-40 px-3 py-2 rounded-lg border bg-white outline-none"
+                                      style={{ borderColor: "#DDD8CC" }}
+                                      placeholder="0.00"
+                                    />
+                                  </label>
+                                  {hasAdminPermission(currentMember, "finance") ? (
+                                    <button
+                                      onClick={() => partialRefundOrder(d, o, (disputeAdminDrafts[d.id] || {}).partialRefundAmount, resolutionNoteValue)}
+                                      disabled={o.paymentStatus === "refund_pending"}
+                                      className="px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+                                      style={{ backgroundColor: BERRY, color: "white" }}
+                                    >
+                                      {o.paymentStatus === "refund_pending" ? "Refund pending…" : "Send partial refund"}
+                                    </button>
+                                  ) : (
+                                    <span className="text-xs" style={{ color: SLATE }}>A Finance Admin or Super Admin must send the money after the dispute decision is recorded.</span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] mt-2" style={{ color: SLATE }}>For safety, partial refunds are currently supported only on single-seller orders. The dispute stays locked until Paystack confirms the refund; then the remaining seller proceeds are released automatically.</p>
+                                {o.refundType === "partial" && o.refundAmount > 0 && (
+                                  <p className="text-xs mt-2" style={{ color: o.refundStatus === "processed" ? SAGE : MARIGOLD }}>
+                                    Partial refund: {formatMoney(o.refundAmount, o.currency)} · {o.refundStatus || "pending"}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                            {o && o.paymentStatus === "held" && resolutionValue === "seller_release" && statusValue !== "resolved" && (
+                              <button onClick={() => releasePayout(o.id)} className="text-xs font-medium underline" style={{ color: SAGE }}>Release seller payment & resolve case</button>
+                            )}
+                            {d.resolved_at && <span className="text-xs" style={{ color: SLATE }}>Resolved {new Date(d.resolved_at).toLocaleString()}{d.resolved_by_name ? ` by ${d.resolved_by_name}` : ""}</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {adminTab === "reports" && hasAdminPermission(currentMember, "dispute_resolution") && (
+              <div className="space-y-3">
+                {messageReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No reported messages.
+                  </p>
+                )}
+                {messageReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          Reported by {r.reporter_display_name || r.reporter_username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      {r.listing_title && (
+                        <div className="text-xs mb-2" style={{ color: SLATE }}>
+                          Re: {r.listing_title}
+                        </div>
+                      )}
+                      <div
+                        className="text-sm p-3 rounded-lg mb-2"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        <div className="text-xs font-medium mb-1" style={{ color: SLATE }}>
+                          From {r.sender_display_name || r.sender_username}
+                        </div>
+                        {r.message_image_url && (
+                          <img
+                            src={r.message_image_url}
+                            alt="Reported attachment"
+                            className="rounded-lg mb-1 max-w-full"
+                            style={{ maxHeight: "160px" }}
+                          />
+                        )}
+                        {r.message_body || <em>No text</em>}
+                      </div>
+                      {r.reason && (
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>
+                          <span className="font-medium">Reason:</span> {r.reason}
+                        </div>
+                      )}
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveMessageReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "reviewReports" && hasAdminPermission(currentMember, "dispute_resolution") && (
+              <div className="space-y-3">
+                {reviewReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No reported reviews.
+                  </p>
+                )}
+                {reviewReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          Reported by {r.reporter_display_name || r.reporter_username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="text-xs mb-2" style={{ color: SLATE }}>
+                        Review of {r.review_seller_display_name || r.review_seller_username}, by{" "}
+                        {r.review_buyer_display_name || r.review_buyer_username}
+                      </div>
+                      <div
+                        className="text-sm p-3 rounded-lg mb-2"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        <StarDisplay value={r.review_rating} />
+                        <div className="mt-1">{r.review_comment || <em>No comment</em>}</div>
+                      </div>
+                      {r.reason && (
+                        <div className="text-xs mb-3" style={{ color: SLATE }}>
+                          <span className="font-medium">Reason:</span> {r.reason}
+                        </div>
+                      )}
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveReviewReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "sellerReports" && hasAdminPermission(currentMember, "seller_report_review") && (
+              <div className="space-y-3">
+                <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Seller reports</h3>
+                {sellerReports.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No seller reports.</p>}
+                {sellerReports.map((r) => (
+                  <div key={r.id} className="p-4 rounded-lg border bg-white" style={{ borderColor: ["open", "in_review"].includes(r.status) ? BERRY : "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2 flex-wrap"><span className="text-sm font-medium" style={{ color: INK }}>{r.reference} · Report against {r.seller_display_name || r.seller_username}</span><Tag color={r.status === "resolved" ? SAGE : r.status === "dismissed" ? SLATE : MARIGOLD}>{r.status.replace("_", " ")}</Tag></div>
+                    <div className="text-xs mt-1" style={{ color: SLATE }}>Reported by {r.reporter_display_name || r.reporter_username}{r.order_id ? ` · ${orderNumber(r.order_id)}` : ""} · {new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs font-medium mt-2" style={{ color: INK }}>{String(r.reason).replaceAll("_", " ")}</div>
+                    <div className="text-sm p-3 rounded-lg mt-2" style={{ backgroundColor: CANVAS, color: INK }}>{r.details}</div>
+                    {(r.evidence_urls || []).length > 0 && <div className="flex gap-2 mt-2 flex-wrap">{r.evidence_urls.map((url, index) => <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Report evidence ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" /></a>)}</div>}
+                    {r.admin_note && <div className="text-xs mt-2" style={{ color: SLATE }}>Admin note: {r.admin_note}</div>}
+                    {["open", "in_review"].includes(r.status) && <div className="flex gap-3 mt-3">{r.status === "open" && <button onClick={() => updateSellerReport(r.id, "in_review")} className="text-xs font-medium underline" style={{ color: MARIGOLD }}>Start review</button>}<button onClick={() => updateSellerReport(r.id, "resolved")} className="text-xs font-medium underline" style={{ color: SAGE }}>Resolve</button><button onClick={() => updateSellerReport(r.id, "dismissed")} className="text-xs font-medium underline" style={{ color: SLATE }}>Dismiss</button></div>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {adminTab === "accountReports" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold" style={{ color: INK }}>Seller reports</h3>
+                {sellerReports.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No seller reports.</p>}
+                {sellerReports.map((r) => (
+                  <div key={`seller-report-${r.id}`} className="p-4 rounded-lg border bg-white" style={{ borderColor: ["open", "in_review"].includes(r.status) ? BERRY : "#DDD8CC" }}>
+                    <div className="flex justify-between gap-2 flex-wrap">
+                      <div className="text-sm font-medium" style={{ color: INK }}>{r.reference} · Report against {r.seller_display_name || r.seller_username}</div>
+                      <Tag color={r.status === "resolved" ? SAGE : r.status === "dismissed" ? SLATE : MARIGOLD}>{r.status.replace("_", " ")}</Tag>
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: SLATE }}>Reported by {r.reporter_display_name || r.reporter_username}{r.order_id ? ` · Order ${orderNumber(r.order_id)}` : ""} · {new Date(r.created_at).toLocaleString()}</div>
+                    <div className="text-xs font-medium mt-2" style={{ color: INK }}>{String(r.reason).replaceAll("_", " ")}</div>
+                    <div className="text-sm p-3 rounded-lg mt-2" style={{ backgroundColor: CANVAS, color: INK }}>{r.details}</div>
+                    {(r.evidence_urls || []).length > 0 && <div className="flex gap-2 mt-2 flex-wrap">{r.evidence_urls.map((url, index) => <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Report evidence ${index + 1}`} className="w-20 h-20 object-cover rounded-lg border" /></a>)}</div>}
+                    {r.admin_note && <div className="text-xs mt-2" style={{ color: SLATE }}>Admin note: {r.admin_note}</div>}
+                    {["open", "in_review"].includes(r.status) && <div className="flex gap-3 mt-3 flex-wrap">
+                      {r.status === "open" && <button onClick={() => updateSellerReport(r.id, "in_review")} className="text-xs font-medium underline" style={{ color: MARIGOLD }}>Start review</button>}
+                      <button onClick={() => updateSellerReport(r.id, "resolved")} className="text-xs font-medium underline" style={{ color: SAGE }}>Resolve</button>
+                      <button onClick={() => updateSellerReport(r.id, "dismissed")} className="text-xs font-medium underline" style={{ color: SLATE }}>Dismiss</button>
+                    </div>}
+                  </div>
+                ))}
+                <h3 className="text-lg font-semibold pt-4" style={{ color: INK }}>Account security reports</h3>
+                {accountReports.length === 0 && (
+                  <p className="text-sm" style={{ color: SLATE }}>
+                    No account reports.
+                  </p>
+                )}
+                {accountReports
+                  .slice()
+                  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                  .map((r) => (
+                    <div
+                      key={r.id}
+                      className="p-4 rounded-lg border bg-white"
+                      style={{ borderColor: r.status === "open" ? BERRY : "#DDD8CC" }}
+                    >
+                      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                        <span className="text-sm font-medium flex items-center gap-2" style={{ color: INK }}>
+                          {r.display_name || r.username}
+                          {r.status === "resolved" && <Tag color={SAGE}>Resolved</Tag>}
+                        </span>
+                        <span className="text-xs" style={{ color: SLATE }}>
+                          {new Date(r.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <div
+                        className="text-sm p-3 rounded-lg mb-3"
+                        style={{ backgroundColor: CANVAS, color: INK }}
+                      >
+                        {r.message}
+                      </div>
+                      {r.status === "open" && (
+                        <button
+                          onClick={() => adminResolveAccountReport(r.id)}
+                          className="text-xs font-medium underline"
+                          style={{ color: SAGE }}
+                        >
+                          Mark as resolved
+                        </button>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {adminTab === "reportsExport" && (() => {
+              const isSuperAdmin = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
+              const canFinance = isSuperAdmin || hasAdminPermission(currentMember, "finance");
+              const canSellers = isSuperAdmin || hasAdminPermission(currentMember, "seller_verification") || canFinance;
+              const reportOptions = [
+                ...(canFinance ? [
+                  ["orders", "Orders"], ["sales", "Sales"], ["commissions", "Commissions"],
+                  ["payouts", "Seller payouts"], ["refunds", "Refunds"], ["taxes", "Taxes"],
+                ] : []),
+                ...(canSellers ? [["sellers", "Sellers"]] : []),
+              ];
+              const effectiveReportType = reportOptions.some(([value]) => value === adminReportType) ? adminReportType : (reportOptions[0]?.[0] || "sellers");
+              const summary = adminReportData?.summary || {};
+              const currencies = summary.currencies && typeof summary.currencies === "object" ? Object.entries(summary.currencies) : [];
+              return (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Reports & exports</h3>
+                    <p className="text-sm mt-1" style={{ color: SLATE }}>
+                      Generate operational and financial reports from Stallyard's database, preview the results, and download them as CSV for accounting or recordkeeping.
+                    </p>
+                  </div>
+
+                  <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="grid md:grid-cols-4 gap-3 items-end">
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>Report</span>
+                        <select value={effectiveReportType} onChange={(e) => { setAdminReportType(e.target.value); setAdminReportData(null); setAdminReportError(""); }}
+                          className="w-full border rounded-lg px-3 py-2 bg-white" style={{ borderColor: "#DDD8CC" }}>
+                          {reportOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>From</span>
+                        <input type="date" value={adminReportFrom} onChange={(e) => setAdminReportFrom(e.target.value)}
+                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
+                      </label>
+                      <label className="text-sm" style={{ color: INK }}>
+                        <span className="block text-xs font-medium mb-1" style={{ color: SLATE }}>To</span>
+                        <input type="date" value={adminReportTo} onChange={(e) => setAdminReportTo(e.target.value)}
+                          className="w-full border rounded-lg px-3 py-2" style={{ borderColor: "#DDD8CC" }} />
+                      </label>
+                      <button onClick={() => fetchAdminReport(effectiveReportType)} disabled={adminReportLoading}
+                        className="px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+                        style={{ backgroundColor: INK, color: "white" }}>
+                        {adminReportLoading ? "Generating…" : "Generate report"}
+                      </button>
+                    </div>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      {[
+                        ["7 days", 7], ["30 days", 30], ["90 days", 90],
+                      ].map(([label, days]) => (
+                        <button key={label} onClick={() => {
+                          const to = new Date(); const from = new Date(); from.setDate(from.getDate() - days);
+                          setAdminReportFrom(from.toISOString().slice(0, 10)); setAdminReportTo(to.toISOString().slice(0, 10));
+                        }} className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>{label}</button>
+                      ))}
+                      <button onClick={() => { setAdminReportFrom(""); setAdminReportTo(""); }}
+                        className="px-3 py-1.5 rounded-lg border text-xs" style={{ borderColor: "#DDD8CC", color: SLATE }}>All time</button>
+                    </div>
+                  </div>
+
+                  {adminReportError && (
+                    <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
+                      {adminReportError}
+                    </div>
+                  )}
+
+                  {adminReportData && (
+                    <>
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                          <div className="font-semibold" style={{ color: INK }}>{(adminReportData.type || adminReportType).replace(/_/g, " ")} report</div>
+                          <div className="text-xs" style={{ color: SLATE }}>
+                            {adminReportData.rows.length.toLocaleString()} row{adminReportData.rows.length === 1 ? "" : "s"} · generated {adminReportData.generatedAt ? new Date(adminReportData.generatedAt).toLocaleString() : "now"}
+                          </div>
+                        </div>
+                        <button onClick={downloadAdminReportCsv} disabled={!adminReportData.rows.length}
+                          className="px-4 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                          style={{ borderColor: SAGE, color: SAGE }}>Download CSV</button>
+                      </div>
+
+                      {currencies.length > 0 && (
+                        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                          {currencies.map(([currency, c]) => (
+                            <div key={currency} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>{currency}</div>
+                              <div className="text-lg font-semibold mt-1" style={{ color: INK }}>{formatMoney(c.gross || 0, currency)} gross</div>
+                              <div className="text-xs mt-1" style={{ color: SLATE }}>{c.orders || 0} orders · {formatMoney(c.commission || 0, currency)} commission · {formatMoney(c.tax || 0, currency)} tax</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {adminReportData.type === "payouts" && (
+                        <div className="grid sm:grid-cols-3 gap-3">
+                          {[['Paid', summary.paid, SAGE], ['Processing', summary.processing, MARIGOLD], ['Failed', summary.failed, BERRY]].map(([label, value, color]) => (
+                            <div key={label} className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                              <div className="text-xs" style={{ color: SLATE }}>{label}</div><div className="text-xl font-semibold mt-1" style={{ color }}>{formatMoney(value || 0, "NGN")}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: "#DDD8CC" }}>
+                        {adminReportData.rows.length === 0 ? (
+                          <div className="p-6 text-center text-sm" style={{ color: SLATE }}>No records matched this report and date range.</div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs min-w-[900px]">
+                              <thead style={{ backgroundColor: CANVAS }}><tr>{adminReportData.columns.map((c) => <th key={c} className="text-left px-3 py-2 font-semibold whitespace-nowrap" style={{ color: INK }}>{c.replace(/_/g, " ")}</th>)}</tr></thead>
+                              <tbody>
+                                {adminReportData.rows.slice(0, 100).map((row, idx) => (
+                                  <tr key={idx} className="border-t" style={{ borderColor: "#EEE9DE" }}>
+                                    {adminReportData.columns.map((c) => {
+                                      const value = row?.[c];
+                                      const display = typeof value === "boolean" ? (value ? "Yes" : "No") : (value === null || value === undefined || value === "" ? "—" : String(value));
+                                      return <td key={c} className="px-3 py-2 whitespace-nowrap max-w-[260px] overflow-hidden text-ellipsis" style={{ color: SLATE }}>{display}</td>;
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                        {adminReportData.rows.length > 100 && <div className="px-4 py-3 border-t text-xs" style={{ borderColor: "#EEE9DE", color: SLATE }}>Preview shows first 100 rows. The CSV download contains all {adminReportData.rows.length.toLocaleString()} rows.</div>}
+                      </div>
+
+                      <p className="text-xs" style={{ color: SLATE }}>
+                        CSV files open in Excel, Google Sheets, and most accounting tools. Report generation is recorded in the admin audit log.
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
+
+            {adminTab === "systemHealth" && (!currentMember.adminRole || currentMember.adminRole === "super_admin") && (
+              <div className="space-y-5">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>System health</h3>
+                    <p className="text-sm mt-1" style={{ color: SLATE }}>
+                      Live checks for Stallyard's critical infrastructure. These checks do not send emails, charge cards, or consume moderation requests.
+                    </p>
+                  </div>
+                  <button onClick={fetchSystemHealth} disabled={systemHealthLoading}
+                    className="px-3 py-2 rounded-lg border text-sm font-medium disabled:opacity-50"
+                    style={{ borderColor: "#DDD8CC", color: INK }}>
+                    {systemHealthLoading ? "Checking…" : "Run health check"}
+                  </button>
+                </div>
+
+                {systemHealthError && (
+                  <div className="rounded-xl border p-4 text-sm" style={{ borderColor: BERRY + "55", backgroundColor: BERRY + "0D", color: BERRY }}>
+                    {systemHealthError}
+                  </div>
+                )}
+
+                {systemHealth && (() => {
+                  const services = Array.isArray(systemHealth.services) ? systemHealth.services : [];
+                  const statusStyle = (status) => status === "healthy"
+                    ? { bg: SAGE + "18", border: SAGE + "55", color: SAGE, label: "Healthy" }
+                    : status === "configured"
+                    ? { bg: MARIGOLD + "18", border: MARIGOLD + "55", color: "#8A6D3B", label: "Configured" }
+                    : status === "not_configured"
+                    ? { bg: "#66708512", border: "#66708544", color: SLATE, label: "Not configured" }
+                    : { bg: BERRY + "0D", border: BERRY + "55", color: BERRY, label: "Needs attention" };
+                  const healthyCount = services.filter((s) => s.status === "healthy").length;
+                  const problemCount = services.filter((s) => s.status === "unhealthy").length;
+                  return (
+                    <>
+                      <div className="grid sm:grid-cols-3 gap-3">
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Overall</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ color: problemCount ? BERRY : SAGE }}>
+                            {problemCount ? "Needs attention" : "Operational"}
+                          </div>
+                        </div>
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Live checks healthy</div>
+                          <div className="text-2xl font-semibold mt-1" style={{ color: INK }}>{healthyCount}</div>
+                        </div>
+                        <div className="bg-white border rounded-xl p-4" style={{ borderColor: "#DDD8CC" }}>
+                          <div className="text-xs uppercase tracking-wide" style={{ color: SLATE }}>Last checked</div>
+                          <div className="text-sm font-medium mt-2" style={{ color: INK }}>
+                            {systemHealth.checkedAt ? new Date(systemHealth.checkedAt).toLocaleString() : "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {services.map((service) => {
+                          const s = statusStyle(service.status);
+                          return (
+                            <div key={service.key} className="rounded-xl border p-4" style={{ borderColor: s.border, backgroundColor: s.bg }}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold" style={{ color: INK }}>{service.name}</div>
+                                  <div className="text-xs mt-0.5" style={{ color: SLATE }}>{service.purpose}</div>
+                                </div>
+                                <span className="text-[11px] font-semibold px-2 py-1 rounded-full whitespace-nowrap"
+                                  style={{ backgroundColor: "white", color: s.color }}>{s.label}</span>
+                              </div>
+                              <p className="text-sm mt-3" style={{ color: service.status === "unhealthy" ? BERRY : INK }}>
+                                {service.message || "No details"}
+                              </p>
+                              <div className="flex justify-between gap-3 mt-3 text-xs" style={{ color: SLATE }}>
+                                <span>{service.liveCheck ? "Live check" : "Configuration check"}</span>
+                                {service.latencyMs != null && <span>{service.latencyMs} ms</span>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                        <h4 className="font-semibold" style={{ color: INK }}>How to read this page</h4>
+                        <p className="text-sm mt-2" style={{ color: SLATE }}>
+                          <strong>Healthy</strong> means Stallyard successfully contacted the service. <strong>Configured</strong> means credentials are present, but the check intentionally avoids making a billable or user-facing API request. <strong>Needs attention</strong> means a live check failed. No secret keys are returned to the browser.
+                        </p>
+                      </div>
+                    </>
+                  );
+                })()}
+
+                {!systemHealth && !systemHealthLoading && !systemHealthError && (
+                  <div className="bg-white rounded-xl border p-6 text-center" style={{ borderColor: "#DDD8CC", color: SLATE }}>
+                    Run a health check to see the current status of Stallyard's services.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {adminTab === "auditLog" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (() => {
+              const now = Date.now();
+              const cutoff = auditDateFilter === "24h" ? now - 24 * 60 * 60 * 1000
+                : auditDateFilter === "7d" ? now - 7 * 24 * 60 * 60 * 1000
+                : auditDateFilter === "30d" ? now - 30 * 24 * 60 * 60 * 1000
+                : 0;
+              const q = auditSearch.trim().toLowerCase();
+              const actions = [...new Set(auditLog.map((entry) => entry.action).filter(Boolean))].sort();
+              const filtered = auditLog.filter((entry) => {
+                if (auditActionFilter !== "all" && entry.action !== auditActionFilter) return false;
+                if (cutoff && new Date(entry.created_at).getTime() < cutoff) return false;
+                if (!q) return true;
+                return [entry.action, entry.details, entry.display_name, entry.username]
+                  .filter(Boolean)
+                  .some((value) => String(value).toLowerCase().includes(q));
+              });
+              return (
+              <div>
+                <div className="flex items-start justify-between gap-3 mb-4">
+                  <div>
+                    <h3 className="font-semibold" style={{ color: INK }}>Admin audit log</h3>
+                    <p className="text-xs mt-1" style={{ color: SLATE }}>
+                      Sensitive admin actions are recorded here so you can see who changed what and when. Entries are append-only from the dashboard.
+                    </p>
+                  </div>
+                  <button onClick={fetchAuditLog} className="px-3 py-2 rounded-lg border text-xs font-medium" style={{ borderColor: "#DDD8CC", color: INK }}>Refresh</button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+                  <input
+                    value={auditSearch}
+                    onChange={(e) => setAuditSearch(e.target.value)}
+                    placeholder="Search admin, action, or details"
+                    className="px-3 py-2 rounded-lg border text-sm bg-white"
+                    style={{ borderColor: "#DDD8CC", color: INK }}
+                  />
+                  <select value={auditActionFilter} onChange={(e) => setAuditActionFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All actions</option>
+                    {actions.map((action) => <option key={action} value={action}>{action.replaceAll("_", " ")}</option>)}
+                  </select>
+                  <select value={auditDateFilter} onChange={(e) => setAuditDateFilter(e.target.value)} className="px-3 py-2 rounded-lg border text-sm bg-white" style={{ borderColor: "#DDD8CC", color: INK }}>
+                    <option value="all">All dates</option>
+                    <option value="24h">Last 24 hours</option>
+                    <option value="7d">Last 7 days</option>
+                    <option value="30d">Last 30 days</option>
+                  </select>
+                </div>
+                {loadingAuditLog ? (
+                  <p className="text-sm" style={{ color: SLATE }}>Loading...</p>
+                ) : auditLog.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>No audit log entries yet.</p>
+                ) : filtered.length === 0 ? (
+                  <p className="text-sm" style={{ color: SLATE }}>No audit entries match those filters.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {filtered.map((entry) => (
+                      <div key={entry.id} className="p-3 rounded-lg border bg-white text-sm" style={{ borderColor: "#DDD8CC" }}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div style={{ color: INK }}>{entry.details}</div>
+                          <span className="text-[10px] px-2 py-1 rounded-full whitespace-nowrap" style={{ backgroundColor: "#F1EEE6", color: SLATE }}>
+                            {(entry.action || "admin_action").replaceAll("_", " ")}
+                          </span>
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: SLATE }}>
+                          {entry.display_name || entry.username || "Unknown admin"} · {new Date(entry.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              );
+            })()}
+
+            {adminTab === "supportTickets" && hasAdminPermission(currentMember, "support_tickets") && (
+              <div className="space-y-4">
+                {activeTicketId ? (() => {
+                  const ticket = adminTickets.find((t) => t.id === activeTicketId) || null;
+                  return (
+                    <div className="bg-white rounded-xl border p-4" style={{ borderColor: "#DDD8CC" }}>
+                      <button
+                        onClick={() => { setActiveTicketId(null); setTicketMessages([]); }}
+                        className="text-sm font-medium underline mb-4"
+                        style={{ color: SLATE }}
+                      >
+                        ← Back to support tickets
+                      </button>
+                      <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                        <div>
+                          <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>{ticket?.subject || "Support ticket"}</h3>
+                          {ticket && <p className="text-xs mt-1" style={{ color: SLATE }}>From {ticket.display_name || ticket.username} · {new Date(ticket.updated_at).toLocaleString()}</p>}
+                        </div>
+                        {ticket && (
+                          <select
+                            value={ticket.status}
+                            onChange={(e) => adminUpdateTicketStatus(ticket.id, e.target.value)}
+                            className="px-2 py-1 rounded-lg border outline-none text-xs bg-white"
+                            style={{ borderColor: "#DDD8CC" }}
+                          >
+                            <option value="open">Open</option>
+                            <option value="in_progress">In progress</option>
+                            <option value="resolved">Resolved</option>
+                          </select>
+                        )}
+                      </div>
+                      {loadingTicketMessages ? (
+                        <p className="text-sm" style={{ color: SLATE }}>Loading…</p>
+                      ) : (
+                        <div className="space-y-3 mb-4 max-h-[50vh] overflow-y-auto">
+                          {ticketMessages.map((m) => {
+                            const fromAdmin = m.is_admin;
+                            return (
+                              <div key={m.id} className={`flex ${fromAdmin ? "justify-start" : "justify-end"}`}>
+                                <div className="max-w-[80%] px-3 py-2 rounded-lg text-sm" style={{ backgroundColor: fromAdmin ? "#F1EFE7" : INK, color: fromAdmin ? INK : "white" }}>
+                                  <div className="text-xs font-medium mb-1" style={{ color: fromAdmin ? SLATE : "#C9CCD3" }}>{m.display_name || m.username}</div>
+                                  {m.body}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={newTicketMessageInput}
+                          onChange={(e) => setNewTicketMessageInput(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && sendTicketMessage()}
+                          placeholder="Write an admin reply…"
+                          className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <button onClick={sendTicketMessage} disabled={sendingTicketMessage} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <>
+                    {adminTickets.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No support tickets.</p>}
+                    {adminTickets.slice().sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)).map((t) => (
+                      <div key={t.id} className="flex items-center gap-2">
+                        <button
+                          onClick={() => openTicketThread(t.id)}
+                          className="flex-1 text-left flex items-center justify-between gap-3 p-4 rounded-lg border bg-white"
+                          style={{ borderColor: t.status === "open" ? BERRY : "#DDD8CC" }}
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate" style={{ color: INK }}>{t.subject}</div>
+                            <div className="text-xs" style={{ color: SLATE }}>{t.display_name || t.username} · {new Date(t.updated_at).toLocaleString()}</div>
+                          </div>
+                          <Tag color={t.status === "resolved" ? SAGE : t.status === "in_progress" ? MARIGOLD : BERRY}>{TICKET_STATUS_LABEL[t.status] || t.status}</Tag>
+                        </button>
+                        <button type="button" onClick={() => openAdminNotes("support_ticket", t.id, `Support ticket #${t.id}: ${t.subject}`)} className="px-3 py-2 rounded-lg text-xs font-medium border bg-white shrink-0" style={{ borderColor: "#DDD8CC", color: SLATE }}>Notes</button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       {adminNotesTarget && (
@@ -17043,15 +19118,13 @@ function MarketplaceStallyard() {
               <button onClick={() => setView("help")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Fees
               </button>
-              <a
-                href="https://legal.stallyard.com/user-agreement/"
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => { setSelected(null); setView("user-agreement"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                 className="text-sm text-left"
                 style={{ color: "#E5E7EB" }}
               >
                 User Agreement
-              </a>
+              </button>
             </div>
           </div>
         </div>
@@ -17121,8 +19194,6 @@ function MarketplaceStallyard() {
                 >
                   <img
                     src={selected.images[activeImg]}
-                    srcSet={responsiveListingSrcSet(selected.images[activeImg])}
-                    sizes="(max-width: 640px) calc(100vw - 32px), 448px"
                     alt={`${selected.title} — photo ${activeImg + 1} of ${selected.images.length}`}
                     className="w-full h-56 object-cover rounded-xl cursor-zoom-in"
                     onClick={() => setGalleryZoomOpen(true)}
@@ -17173,7 +19244,7 @@ function MarketplaceStallyard() {
                         aria-label={`View photo ${idx + 1}`}
                         aria-current={idx === activeImg}
                       >
-                        <img src={src} srcSet={responsiveListingSrcSet(src)} sizes="56px" alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+                        <img src={src} alt="" className="w-full h-full object-cover" />
                       </button>
                     ))}
                   </div>
@@ -17189,7 +19260,7 @@ function MarketplaceStallyard() {
               className="text-2xl mb-3"
               style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
             >
-              {formatMoney(Number(selected.price))}
+              ${Number(selected.price).toFixed(2)}
             </div>
             <p className="text-sm mb-4" style={{ color: SLATE }}>
               {selected.description || "No description provided."}
@@ -17423,8 +19494,6 @@ function MarketplaceStallyard() {
           </button>
           <img
             src={selected.images[activeImg]}
-            srcSet={responsiveListingSrcSet(selected.images[activeImg])}
-            sizes="100vw"
             alt={`${selected.title} — zoomed photo ${activeImg + 1} of ${selected.images.length}`}
             className="max-w-full max-h-full object-contain"
             style={{
@@ -18230,7 +20299,7 @@ function MarketplaceStallyard() {
                           {i.title} × {i.qty}
                         </span>
                         <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
-                          {formatMoney((i.price * i.qty))}
+                          ${(i.price * i.qty).toFixed(2)}
                         </span>
                       </div>
                     ))}
@@ -18735,52 +20804,6 @@ function MarketplaceStallyard() {
           </div>
         </div>
       )}
-      {deliveryPhotoTarget && <LiveDeliveryPhotoCamera onSave={saveLiveDeliveryPhoto} onClose={() => setDeliveryPhotoTarget(null)} busy={uploadingPodKey !== null} />}
-      {deliverySelfieCameraTarget && (
-        <div
-          className="fixed inset-0 z-[110] flex items-center justify-center p-4"
-          style={{ backgroundColor: "rgba(10,15,22,.86)" }}
-        >
-          <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl">
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <div>
-                <h3 className="text-lg font-semibold" style={{ color: INK }}>Live delivery-person selfie</h3>
-                <p className="text-xs mt-1" style={{ color: SLATE }}>
-                  This must be taken now. Selecting a saved picture is not available.
-                </p>
-              </div>
-              <button type="button" onClick={closeDeliverySelfieCamera} aria-label="Close live selfie camera">
-                <X size={22} />
-              </button>
-            </div>
-            <div className="relative overflow-hidden rounded-xl bg-black aspect-square">
-              <video
-                ref={deliverySelfieVideoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full h-full object-cover -scale-x-100"
-              />
-              {!deliverySelfieCameraReady && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-white">Starting live camera…</div>
-              )}
-              <div className="absolute inset-[12%] rounded-full border-2 border-white/80 pointer-events-none" />
-            </div>
-            <p className="text-xs mt-3" style={{ color: SLATE }}>
-              Center the delivery person’s full face inside the guide. Remove sunglasses, hats, and face coverings.
-            </p>
-            <button
-              type="button"
-              onClick={captureLiveDeliverySelfie}
-              disabled={!deliverySelfieCameraReady || uploadingDeliverySelfieKey !== null}
-              className="w-full mt-3 py-3 rounded-lg font-semibold disabled:opacity-50"
-              style={{ backgroundColor: MARIGOLD, color: INK }}
-            >
-              {uploadingDeliverySelfieKey ? "Saving live selfie…" : "Take live selfie"}
-            </button>
-          </div>
-        </div>
-      )}
       {casualVerificationOpen && (
         <CasualSellerVerificationModal
           onClose={() => setCasualVerificationOpen(false)}
@@ -18810,21 +20833,3 @@ function MarketplaceStallyard() {
     </div>
   );
 }
-
-export default function Stallyard() {
-  const driverRoute = typeof window !== "undefined"
-    ? window.location.pathname.match(/^\/driver\/delivery\/([A-Za-z0-9_-]{30,120})\/?$/)
-    : null;
-
-  if (driverRoute) {
-    return (
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Opening secure delivery…</div>}>
-        <DriverDelivery accessToken={driverRoute[1]} />
-      </Suspense>
-    );
-  }
-
-  return <MarketplaceStallyard />;
-}
-
-
