@@ -48,6 +48,11 @@ export default function DriverDelivery({ accessToken }) {
   const [submitting, setSubmitting] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [paymentBusy, setPaymentBusy] = useState("");
+  const [bankForm, setBankForm] = useState({ bankName: "", accountName: "", accountNumber: "" });
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportForm, setReportForm] = useState({ category: "non_payment", details: "" });
+  const [reportSent, setReportSent] = useState(false);
   const [error, setError] = useState("");
 
   const clearSession = () => {
@@ -159,6 +164,75 @@ export default function DriverDelivery({ accessToken }) {
   const saveDeliveryProof = async (dataUrl) => {
     const saved = await runDeliveryStep("proof", { proofOfDelivery: dataUrl });
     if (saved) setCameraOpen(false);
+  };
+
+  const saveBankDetails = async (event) => {
+    event.preventDefault();
+    if (!sessionToken || paymentBusy) return;
+    setPaymentBusy("bank");
+    setError("");
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/driver-deliveries/${encodeURIComponent(accessToken)}/payment-details`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(bankForm),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Your bank details could not be saved.");
+      setAssignment(data.assignment || assignment);
+      setBankForm({ bankName: "", accountName: "", accountNumber: "" });
+    } catch (requestError) {
+      setError(requestError.message || "Your bank details could not be saved.");
+    } finally {
+      setPaymentBusy("");
+    }
+  };
+
+  const confirmDriverPayment = async () => {
+    if (!sessionToken || paymentBusy) return;
+    setPaymentBusy("confirm");
+    setError("");
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/driver-deliveries/${encodeURIComponent(accessToken)}/confirm-payment`,
+        { method: "POST", headers: { Authorization: `Bearer ${sessionToken}` } }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Payment could not be confirmed.");
+      setAssignment(data.assignment || assignment);
+    } catch (requestError) {
+      setError(requestError.message || "Payment could not be confirmed.");
+    } finally {
+      setPaymentBusy("");
+    }
+  };
+
+  const submitSellerReport = async (event) => {
+    event.preventDefault();
+    if (!sessionToken || paymentBusy) return;
+    setPaymentBusy("report");
+    setError("");
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/driver-deliveries/${encodeURIComponent(accessToken)}/report-seller`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(reportForm),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "The report could not be submitted.");
+      setReportSent(true);
+      setReportOpen(false);
+    } catch (requestError) {
+      setError(requestError.message || "The report could not be submitted.");
+    } finally {
+      setPaymentBusy("");
+    }
   };
 
   const cardStyle = {
@@ -299,6 +373,22 @@ export default function DriverDelivery({ accessToken }) {
           cardStyle={cardStyle}
         />
 
+        <DriverPayment
+          assignment={assignment}
+          bankForm={bankForm}
+          setBankForm={setBankForm}
+          busy={paymentBusy}
+          onSaveBank={saveBankDetails}
+          onConfirmPayment={confirmDriverPayment}
+          reportOpen={reportOpen}
+          setReportOpen={setReportOpen}
+          reportForm={reportForm}
+          setReportForm={setReportForm}
+          reportSent={reportSent}
+          onSubmitReport={submitSellerReport}
+          cardStyle={cardStyle}
+        />
+
         <p className="mt-4 text-xs text-center" style={{ color: SLATE }}>
           This page only grants access to this delivery. Never ask for or use the seller&apos;s Stallyard password.
         </p>
@@ -408,6 +498,130 @@ function DriverWorkflow({ assignment, busy, onAction, onOpenCamera, cardStyle })
           <p className="mt-1 text-sm">The proof was saved. The buyer sends the private delivery token to the seller separately.</p>
         </div>
       )}
+    </section>
+  );
+}
+
+function DriverPayment({
+  assignment,
+  bankForm,
+  setBankForm,
+  busy,
+  onSaveBank,
+  onConfirmPayment,
+  reportOpen,
+  setReportOpen,
+  reportForm,
+  setReportForm,
+  reportSent,
+  onSubmitReport,
+  cardStyle,
+}) {
+  const method = assignment.paymentMethod || "cash";
+  const status = assignment.paymentStatus || "pending";
+  const delivered = assignment.status === "delivered";
+
+  return (
+    <section className="mt-4 p-5" style={cardStyle}>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Driver payment</h2>
+          <p className="mt-1 text-sm" style={{ color: SLATE }}>
+            The seller pays the agreed {formatMoney(assignment.deliveryFee)} driver fee directly by {String(method).replace(/_/g, " ")}.
+          </p>
+        </div>
+        <span className="px-3 py-1 rounded-full text-xs font-semibold" style={{
+          backgroundColor: status === "confirmed" ? "#EDF6EF" : "#FFF5E5",
+          color: status === "confirmed" ? SAGE : BERRY,
+        }}>
+          {status === "confirmed" ? "Payment confirmed" : status === "seller_marked_paid" ? "Seller marked paid" : "Payment pending"}
+        </span>
+      </div>
+
+      {method === "bank_transfer" && !assignment.hasDriverBankDetails && !assignment.sellerMarkedPaidAt && (
+        <form onSubmit={onSaveBank} className="mt-4 p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: "#FAF9F6" }}>
+          <div className="text-sm font-semibold" style={{ color: INK }}>Add your bank details</div>
+          <p className="mt-1 text-xs" style={{ color: SLATE }}>Only the assigned seller can see these encrypted details for this delivery.</p>
+          <div className="grid sm:grid-cols-2 gap-3 mt-3">
+            <label className="text-xs" style={{ color: INK }}>
+              <span className="block mb-1 font-medium">Bank name</span>
+              <input value={bankForm.bankName} onChange={(e) => setBankForm((v) => ({ ...v, bankName: e.target.value }))} maxLength={100} required className="w-full px-3 py-2 rounded-lg border bg-white outline-none" style={{ borderColor: "#CFC8B8" }} />
+            </label>
+            <label className="text-xs" style={{ color: INK }}>
+              <span className="block mb-1 font-medium">Account number</span>
+              <input inputMode="numeric" value={bankForm.accountNumber} onChange={(e) => setBankForm((v) => ({ ...v, accountNumber: e.target.value.replace(/\D/g, "").slice(0, 10) }))} maxLength={10} required className="w-full px-3 py-2 rounded-lg border bg-white outline-none" style={{ borderColor: "#CFC8B8", fontFamily: "'IBM Plex Mono', monospace" }} />
+            </label>
+            <label className="text-xs sm:col-span-2" style={{ color: INK }}>
+              <span className="block mb-1 font-medium">Name on account</span>
+              <input value={bankForm.accountName} onChange={(e) => setBankForm((v) => ({ ...v, accountName: e.target.value }))} maxLength={120} required className="w-full px-3 py-2 rounded-lg border bg-white outline-none" style={{ borderColor: "#CFC8B8" }} />
+            </label>
+          </div>
+          <button type="submit" disabled={Boolean(busy) || bankForm.accountNumber.length !== 10} className="w-full mt-3 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>
+            {busy === "bank" ? "Saving…" : "Save bank details"}
+          </button>
+        </form>
+      )}
+
+      {method === "bank_transfer" && assignment.hasDriverBankDetails && status !== "confirmed" && (
+        <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: "#EDF6EF", color: SAGE }}>
+          <div className="text-sm font-semibold">Bank details saved securely</div>
+          <p className="mt-1 text-xs">The seller can now use them to pay the agreed driver fee.</p>
+        </div>
+      )}
+
+      {delivered && status === "pending" && (
+        <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: "#FFF5E5", color: INK }}>
+          <div className="text-sm font-semibold">Waiting for seller payment</div>
+          <p className="mt-1 text-xs" style={{ color: SLATE }}>Do not confirm payment until the cash or bank transfer has actually been received.</p>
+        </div>
+      )}
+
+      {delivered && status === "seller_marked_paid" && (
+        <div className="mt-4">
+          <p className="text-sm" style={{ color: SLATE }}>The seller marked the driver fee paid. Confirm only after you verify that you received it.</p>
+          {assignment.sellerPaymentReference && <p className="mt-1 text-xs" style={{ color: SLATE }}>Reference: {assignment.sellerPaymentReference}</p>}
+          <button type="button" onClick={onConfirmPayment} disabled={Boolean(busy)} className="w-full mt-3 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{ backgroundColor: SAGE, color: "white" }}>
+            {busy === "confirm" ? "Confirming…" : "I received the driver fee"}
+          </button>
+        </div>
+      )}
+
+      {status === "confirmed" && (
+        <div className="mt-4 p-4 rounded-xl" style={{ backgroundColor: "#EDF6EF", color: SAGE }}>
+          <div className="font-semibold">Driver fee received</div>
+          <p className="mt-1 text-sm">You confirmed payment on {formatDate(assignment.driverConfirmedPaidAt)}.</p>
+        </div>
+      )}
+
+      <div className="mt-4 pt-4 border-t" style={{ borderColor: "#EFEBE0" }}>
+        {reportSent ? (
+          <div className="text-sm font-medium" style={{ color: SAGE }}>Your report was submitted for Stallyard review.</div>
+        ) : !reportOpen ? (
+          <button type="button" onClick={() => setReportOpen(true)} className="text-sm font-semibold underline" style={{ color: BERRY }}>Report seller</button>
+        ) : (
+          <form onSubmit={onSubmitReport}>
+            <div className="text-sm font-semibold" style={{ color: INK }}>Report a problem with the seller</div>
+            <label className="block mt-3 text-xs font-medium" style={{ color: INK }}>
+              Reason
+              <select value={reportForm.category} onChange={(e) => setReportForm((v) => ({ ...v, category: e.target.value }))} className="w-full mt-1 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#CFC8B8" }}>
+                <option value="non_payment">Driver fee not paid</option>
+                <option value="unsafe_request">Unsafe or prohibited request</option>
+                <option value="harassment">Harassment or abusive conduct</option>
+                <option value="incorrect_package">Package did not match the assignment</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label className="block mt-3 text-xs font-medium" style={{ color: INK }}>
+              What happened?
+              <textarea value={reportForm.details} onChange={(e) => setReportForm((v) => ({ ...v, details: e.target.value.slice(0, 1000) }))} rows={4} minLength={10} maxLength={1000} required className="w-full mt-1 px-3 py-2 rounded-lg border bg-white resize-y" style={{ borderColor: "#CFC8B8" }} />
+            </label>
+            <div className="flex gap-2 mt-3">
+              <button type="submit" disabled={Boolean(busy) || reportForm.details.trim().length < 10} className="px-4 py-2 rounded-lg font-semibold disabled:opacity-50" style={{ backgroundColor: BERRY, color: "white" }}>{busy === "report" ? "Submitting…" : "Submit report"}</button>
+              <button type="button" onClick={() => setReportOpen(false)} disabled={Boolean(busy)} className="px-4 py-2 rounded-lg border font-semibold bg-white" style={{ borderColor: INK, color: INK }}>Cancel</button>
+            </div>
+          </form>
+        )}
+      </div>
     </section>
   );
 }
