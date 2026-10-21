@@ -2435,6 +2435,11 @@ function MarketplaceStallyard() {
   const [submittingSuspiciousReport, setSubmittingSuspiciousReport] = useState(false);
   const [accountReports, setAccountReports] = useState([]);
   const [sellerReports, setSellerReports] = useState([]);
+  const [adminLocalDeliveries, setAdminLocalDeliveries] = useState([]);
+  const [localDriverReports, setLocalDriverReports] = useState([]);
+  const [localDeliveryLoading, setLocalDeliveryLoading] = useState(false);
+  const [localDeliverySearch, setLocalDeliverySearch] = useState("");
+  const [localDeliveryFilter, setLocalDeliveryFilter] = useState("all");
   const [sellerReportTarget, setSellerReportTarget] = useState(null);
   const [sellerReportReceipt, setSellerReportReceipt] = useState(null);
   const [showAllSellerReports, setShowAllSellerReports] = useState(false);
@@ -2844,6 +2849,8 @@ function MarketplaceStallyard() {
         setSavedAddresses([]);
         setAdminDisputes([]);
         setSellerReports([]);
+        setAdminLocalDeliveries([]);
+        setLocalDriverReports([]);
         setMyDisputes([]);
         setDeliveryAssignments({});
         setDeliveryAssignmentDrafts({});
@@ -2973,6 +2980,22 @@ function MarketplaceStallyard() {
           }
         } catch {
           // couldn't reach backend for seller reports — leave empty
+        }
+        try {
+          const [deliveriesRes, driverReportsRes] = await Promise.all([
+            authFetch(`${BACKEND_URL}/admin/local-deliveries`),
+            authFetch(`${BACKEND_URL}/admin/local-driver-reports`),
+          ]);
+          if (deliveriesRes.ok) {
+            const { deliveries } = await deliveriesRes.json();
+            setAdminLocalDeliveries(deliveries || []);
+          }
+          if (driverReportsRes.ok) {
+            const { reports } = await driverReportsRes.json();
+            setLocalDriverReports(reports || []);
+          }
+        } catch {
+          // Local-delivery administration is available only to permitted staff.
         }
       }
       if (!isAdmin) {
@@ -4708,6 +4731,64 @@ function MarketplaceStallyard() {
       setSellerReports((reports) => reports.map((report) => report.id === reportId ? { ...report, ...data.report } : report));
       showToast(`Seller report marked ${status.replace("_", " ")}`);
     } catch { showToast("Couldn't reach the server — try again"); }
+  };
+
+  const fetchAdminLocalDeliveries = async () => {
+    setLocalDeliveryLoading(true);
+    try {
+      const [deliveriesRes, reportsRes] = await Promise.all([
+        authFetch(`${BACKEND_URL}/admin/local-deliveries`),
+        authFetch(`${BACKEND_URL}/admin/local-driver-reports`),
+      ]);
+      const deliveriesData = await deliveriesRes.json().catch(() => ({}));
+      const reportsData = await reportsRes.json().catch(() => ({}));
+      if (!deliveriesRes.ok) return showToast(deliveriesData.error || "Couldn't load local deliveries");
+      if (!reportsRes.ok) return showToast(reportsData.error || "Couldn't load driver reports");
+      setAdminLocalDeliveries(deliveriesData.deliveries || []);
+      setLocalDriverReports(reportsData.reports || []);
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    } finally {
+      setLocalDeliveryLoading(false);
+    }
+  };
+
+  const updateLocalDriverReport = async (reportId, status) => {
+    const adminNote = window.prompt("Internal review note (optional)") || "";
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/local-driver-reports/${reportId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, adminNote }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.report) return showToast(data.error || "Couldn't update the driver report");
+      setLocalDriverReports((reports) => reports.map((report) => report.id === reportId ? { ...report, ...data.report } : report));
+      await fetchAdminLocalDeliveries();
+      showToast(`Driver report marked ${status.replace("_", " ")}`);
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
+  };
+
+  const adminRevokeLocalDelivery = async (assignmentId) => {
+    const reason = window.prompt("Why are you revoking this driver's delivery access?") || "";
+    if (reason.trim().length < 5) return reason && showToast("Enter at least 5 characters");
+    try {
+      const res = await authFetch(`${BACKEND_URL}/admin/local-deliveries/${assignmentId}/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showToast(data.error || "Couldn't revoke driver access");
+      setAdminLocalDeliveries((deliveries) => deliveries.map((delivery) =>
+        delivery.id === assignmentId ? { ...delivery, status: "revoked", revokedAt: new Date().toISOString() } : delivery
+      ));
+      showToast("Driver access revoked and recorded in the audit log");
+    } catch {
+      showToast("Couldn't reach the server — try again");
+    }
   };
 
   const openAdminPanel = () => {
@@ -16564,6 +16645,7 @@ function MarketplaceStallyard() {
               adminDisputeSearch,
               adminDisputeStatusFilter,
               adminDisputes,
+              adminLocalDeliveries,
               adminListingSearch,
               adminListingStatusFilter,
               adminMemberFilter,
@@ -16597,6 +16679,7 @@ function MarketplaceStallyard() {
               adminToggleImageVisibility,
               adminToggleSuspend,
               adminToggleVerify,
+              adminRevokeLocalDelivery,
               adminTotpCodeInput,
               adminTotpError,
               adminTotpSetup,
@@ -16638,6 +16721,7 @@ function MarketplaceStallyard() {
               expandedStaffId,
               faqForm,
               fetchAdminReport,
+              fetchAdminLocalDeliveries,
               fetchAdminStaff,
               fetchAuditLog,
               fetchBuyerRisk,
@@ -16662,6 +16746,10 @@ function MarketplaceStallyard() {
               loadingAdminStaff,
               loadingAuditLog,
               loadingTicketMessages,
+              localDeliveryFilter,
+              localDeliveryLoading,
+              localDeliverySearch,
+              localDriverReports,
               members,
               messageReports,
               newTicketMessageInput,
@@ -16753,6 +16841,8 @@ function MarketplaceStallyard() {
               setHideImageReason,
               setHidingImageDraft,
               setHomepageAds,
+              setLocalDeliveryFilter,
+              setLocalDeliverySearch,
               setNewTicketMessageInput,
               setOrders,
               setReconciliationFilter,
@@ -16777,6 +16867,7 @@ function MarketplaceStallyard() {
               updateBanner,
               updateFaq,
               updateSellerReport,
+              updateLocalDriverReport,
               verifiedSellerApplications,
               verifiedSellerReports,
               verifyPaystackReconciliation,
