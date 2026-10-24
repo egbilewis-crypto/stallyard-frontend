@@ -9585,6 +9585,12 @@ function MarketplaceStallyard() {
 
   if (view === "signup" || view === "signin") {
     const isSignUp = view === "signup";
+    const submitAuthFromKeyboard = (event) => {
+      if (event.key !== "Enter" || event.repeat || event.nativeEvent?.isComposing) return;
+      event.preventDefault();
+      if (isSignUp) register();
+      else login();
+    };
     return (
       <div className="min-h-screen w-full flex" style={{ backgroundColor: "white", fontFamily: "'Work Sans', sans-serif" }}>
         {/* Photo panel */}
@@ -10087,6 +10093,7 @@ function MarketplaceStallyard() {
                     <input
                       value={authForm.username}
                       onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
+                      onKeyDown={submitAuthFromKeyboard}
                       placeholder={isSignUp ? "Username" : "Username or email"}
                       className="w-full px-3 py-2 rounded-lg border outline-none"
                       style={{ borderColor: "#DDD8CC" }}
@@ -10109,6 +10116,7 @@ function MarketplaceStallyard() {
                         type={showAuthPassword ? "text" : "password"}
                         value={authForm.password}
                         onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                        onKeyDown={submitAuthFromKeyboard}
                         placeholder="Password"
                         className="w-full px-3 py-2 pr-12 rounded-lg border outline-none"
                         style={{ borderColor: "#DDD8CC" }}
