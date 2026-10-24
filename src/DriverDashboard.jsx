@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { NIGERIA_LGAS, NIGERIA_STATES } from "./NigeriaLocations.js";
+import { NIGERIA_LGAS, NIGERIA_STATES } from "./NigeriaLocations.jsx";
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
