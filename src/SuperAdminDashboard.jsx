@@ -3433,7 +3433,8 @@ export default function SuperAdminDashboard({ scope }) {
                                 <Tag color={d.driverIdentityStatus === "approved" ? SAGE : d.driverIdentityStatus === "rejected" ? BERRY : MARIGOLD}>{String(d.driverIdentityStatus || "pending").replaceAll("_", " ")}</Tag>
                               </div>
                               <div className="flex gap-3 mt-3 items-start flex-wrap">
-                                {d.driverIdentitySelfieUrl && <a href={d.driverIdentitySelfieUrl} target="_blank" rel="noreferrer"><img src={d.driverIdentitySelfieUrl} alt="Driver identity selfie" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a>}
+                                {d.driverIdentitySelfieUrl && <div><div className="text-xs mb-1" style={{ color: SLATE }}>Live selfie</div><a href={d.driverIdentitySelfieUrl} target="_blank" rel="noreferrer"><img src={d.driverIdentitySelfieUrl} alt="Driver identity selfie" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a></div>}
+                                {d.driverIdDocumentUrl && <div><div className="text-xs mb-1" style={{ color: SLATE }}>ID document</div><a href={d.driverIdDocumentUrl} target="_blank" rel="noreferrer"><img src={d.driverIdDocumentUrl} alt="Driver identity document" className="w-32 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a></div>}
                                 <div className="text-xs space-y-1" style={{ color: SLATE }}>
                                   <div><strong style={{ color: INK }}>Legal name:</strong> {d.driverLegalName || "Unavailable"}</div>
                                   <div className="capitalize"><strong style={{ color: INK }}>ID:</strong> {String(d.driverIdType || "unknown").replaceAll("_", " ")}{d.driverIdLast4 ? ` · ending ${d.driverIdLast4}` : ""}</div>
