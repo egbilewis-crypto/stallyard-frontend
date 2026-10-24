@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { NIGERIA_LGAS, NIGERIA_STATES } from "./NigeriaLocations.js";
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -9,8 +10,6 @@ const SLATE = "#667085";
 const BACKEND_URL = typeof window !== "undefined" && /(^|\.)stallyard\.com$/i.test(window.location.hostname)
   ? "https://api.stallyard.com"
   : "https://stallyard-backend-production.up.railway.app";
-
-const NIGERIA_STATES = ["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","Federal Capital Territory","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara"];
 
 const api = (path, options = {}) => fetch(`${BACKEND_URL}${path}`, { ...options, credentials: "include" });
 const money = (value) => new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 2 }).format(Number(value || 0));
@@ -48,7 +47,7 @@ export default function DriverDashboard() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [signedOut, setSignedOut] = useState(false);
-  const [form, setForm] = useState({ legalName:"",phone:"",state:"",city:"",vehicleType:"motorcycle",vehicleDescription:"",licensePlate:"",bankName:"",accountName:"",accountNumber:"",isAvailable:true });
+  const [form, setForm] = useState({ legalName:"",phone:"",state:"",lga:"",city:"",vehicleType:"motorcycle",vehicleDescription:"",licensePlate:"",bankName:"",accountName:"",accountNumber:"",isAvailable:true });
   const [identity, setIdentity] = useState({ idType:"nin",idNumber:"",selfie:"",document:"" });
   const [cameraOpen, setCameraOpen] = useState(false);
 
@@ -65,7 +64,7 @@ export default function DriverDashboard() {
       if (dashboard.profile) {
         setForm((value) => ({ ...value,
           legalName:dashboard.profile.legalName || "",phone:dashboard.profile.phone || "",
-          state:dashboard.profile.state || "",city:dashboard.profile.city || "",
+          state:dashboard.profile.state || "",lga:dashboard.profile.lga || "",city:dashboard.profile.city || "",
           vehicleType:dashboard.profile.vehicleType || "motorcycle",vehicleDescription:dashboard.profile.vehicleDescription || "",
           licensePlate:dashboard.profile.licensePlate || "",bankName:"",
           accountName:"",accountNumber:"",isAvailable:dashboard.profile.isAvailable !== false,
@@ -131,6 +130,7 @@ export default function DriverDashboard() {
   };
 
   const approvedProfileLocked = ["approved","suspended"].includes(profile?.verificationStatus);
+  const needsLgaCompletion = approvedProfileLocked && !profile?.lga;
 
   if (loading) return <Page><div className="p-6 text-center">Opening Driver Dashboard…</div></Page>;
   if (signedOut) return <Page><Card><h1 className="text-2xl font-semibold" style={{color:INK}}>Driver sign-in required</h1><p className="mt-2 text-sm" style={{color:SLATE}}>Use your own Stallyard account. Never use a seller&apos;s password.</p><a href="/signin?return=%2Fdriver%2Fdashboard" className="inline-block mt-4 px-4 py-3 rounded-xl font-semibold" style={{backgroundColor:MARIGOLD,color:INK}}>Sign in to Stallyard</a></Card></Page>;
@@ -163,10 +163,11 @@ export default function DriverDashboard() {
     {tab === "earnings" && <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Earnings history</h2><div className="grid sm:grid-cols-2 gap-3 mt-4"><Metric label="Confirmed earnings" value={money(assignments.filter((a)=>a.paymentStatus==="confirmed").reduce((sum,a)=>sum+Number(a.deliveryFee||0),0))}/><Metric label="Completed deliveries" value={profile?.completedDeliveries || 0}/></div><div className="mt-4 space-y-2">{assignments.filter((a)=>a.status==="delivered").map((a)=><div key={a.id} className="p-3 rounded-lg border text-sm flex justify-between gap-2" style={{borderColor:"#DDD8CC",color:INK}}><span>{a.orderNumber} · {date(a.deliveredAt)}</span><span style={{color:a.paymentStatus==="confirmed"?SAGE:MARIGOLD}}>{money(a.deliveryFee)} · {a.paymentStatus}</span></div>)}</div></Card>}
 
     {tab === "profile" && <div className="space-y-4">
-      <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Driver profile</h2>{approvedProfileLocked&&<div className="mt-3 p-3 rounded-xl text-sm" style={{backgroundColor:"#EDF6EF",color:SAGE}}>Your approved identity, phone, service area, and payment details are locked. You can only change your vehicle information or availability.</div>}<form onSubmit={saveProfile} className="grid sm:grid-cols-2 gap-3 mt-4">
+      <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Driver profile</h2>{approvedProfileLocked&&<div className="mt-3 p-3 rounded-xl text-sm" style={{backgroundColor:"#EDF6EF",color:SAGE}}>{needsLgaCompletion?"Select your LGA once to complete your service area. After saving it, the LGA will be locked with your other approved details.":"Your approved identity, phone, state, LGA, city, and payment details are locked. You can only change your vehicle information or availability."}</div>}<form onSubmit={saveProfile} className="grid sm:grid-cols-2 gap-3 mt-4">
         <Field label="Legal name"><input disabled={approvedProfileLocked} required minLength={3} value={form.legalName} onChange={(e)=>setForm({...form,legalName:e.target.value})}/></Field>
         <Field label="Nigerian phone"><input disabled={approvedProfileLocked} required type="tel" value={form.phone} onChange={(e)=>setForm({...form,phone:e.target.value})}/></Field>
-        <Field label="Service state"><select disabled={approvedProfileLocked} required value={form.state} onChange={(e)=>setForm({...form,state:e.target.value})}><option value="">Select state</option>{NIGERIA_STATES.map((state)=><option key={state}>{state}</option>)}</select></Field>
+        <Field label="Service state"><select disabled={approvedProfileLocked} required value={form.state} onChange={(e)=>setForm({...form,state:e.target.value,lga:""})}><option value="">Select state</option>{NIGERIA_STATES.map((state)=><option key={state} value={state}>{state}</option>)}</select></Field>
+        <Field label="Local Government Area (LGA)"><select disabled={(approvedProfileLocked&&!needsLgaCompletion)||!form.state} required value={form.lga} onChange={(e)=>setForm({...form,lga:e.target.value})}><option value="">{form.state?"Select LGA":"Select state first"}</option>{(NIGERIA_LGAS[form.state]||[]).map((lga)=><option key={lga} value={lga}>{lga}</option>)}</select></Field>
         <Field label="Service city"><input disabled={approvedProfileLocked} required value={form.city} onChange={(e)=>setForm({...form,city:e.target.value})}/></Field>
         <Field label="Vehicle type"><select value={form.vehicleType} onChange={(e)=>setForm({...form,vehicleType:e.target.value})}><option value="motorcycle">Motorcycle</option><option value="car">Car</option><option value="van">Van</option><option value="truck">Truck</option><option value="bicycle">Bicycle</option><option value="on_foot">On foot</option></select></Field>
         <Field label="Licence plate (if applicable)"><input value={form.licensePlate} onChange={(e)=>setForm({...form,licensePlate:e.target.value})}/></Field>
@@ -177,7 +178,7 @@ export default function DriverDashboard() {
         <Field label="Account number"><input disabled={approvedProfileLocked} inputMode="numeric" maxLength={10} value={form.accountNumber} onChange={(e)=>setForm({...form,accountNumber:e.target.value.replace(/\D/g,"").slice(0,10)})} placeholder={profile?.accountNumberLast4?`Saved account ending ${profile.accountNumberLast4}`:"10 digits"}/></Field>
         <Field label="Name on account" wide><input disabled={approvedProfileLocked} value={form.accountName} onChange={(e)=>setForm({...form,accountName:e.target.value})}/></Field>
         <label className="sm:col-span-2 flex items-center gap-2 text-sm" style={{color:INK}}><input type="checkbox" checked={form.isAvailable} onChange={(e)=>setForm({...form,isAvailable:e.target.checked})}/>Available to receive delivery jobs</label>
-        <button disabled={busy==="profile"} className="sm:col-span-2 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{backgroundColor:MARIGOLD,color:INK}}>{busy==="profile"?"Saving…":approvedProfileLocked?"Save vehicle changes":"Save driver profile"}</button>
+        <button disabled={busy==="profile"} className="sm:col-span-2 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{backgroundColor:MARIGOLD,color:INK}}>{busy==="profile"?"Saving…":needsLgaCompletion?"Save LGA and vehicle changes":approvedProfileLocked?"Save vehicle changes":"Save driver profile"}</button>
       </form></Card>
       {profile && <Card><div className="flex justify-between gap-3 flex-wrap"><div><h2 className="text-xl font-semibold" style={{color:INK}}>Identity verification</h2><p className="text-sm mt-1" style={{color:SLATE}}>Verification is completed once and reused for selected deliveries.</p></div><span className="px-3 py-1 rounded-full text-xs font-semibold capitalize" style={{backgroundColor:"#F4F2ED",color:profile.verificationStatus==="approved"?SAGE:profile.verificationStatus==="rejected"?BERRY:MARIGOLD}}>{profile.verificationStatus}</span></div>
         {profile.identitySelfieUrl&&<div className="flex gap-3 mt-4"><img src={profile.identitySelfieUrl} alt="Driver selfie" className="w-24 h-24 rounded-lg object-cover"/><img src={profile.idDocumentUrl} alt="Driver ID" className="w-32 h-24 rounded-lg object-cover"/></div>}
