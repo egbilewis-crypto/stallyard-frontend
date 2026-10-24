@@ -277,6 +277,48 @@ export default function SuperAdminDashboard({ scope }) {
     withdrawals,
   } = scope;
 
+  const [registeredDrivers, setRegisteredDrivers] = React.useState([]);
+  const [registeredDriversLoading, setRegisteredDriversLoading] = React.useState(false);
+
+  const fetchRegisteredDrivers = async () => {
+    setRegisteredDriversLoading(true);
+    try {
+      const response = await authFetch(`${BACKEND_URL}/admin/driver-profiles`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Registered drivers could not be loaded.");
+      setRegisteredDrivers(data.profiles || []);
+    } catch (driverError) {
+      showToast(driverError.message || "Registered drivers could not be loaded.");
+    } finally {
+      setRegisteredDriversLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (view === "admin" && adminTab === "localDeliveries" && hasAdminPermission(currentMember, "seller_report_review")) {
+      fetchRegisteredDrivers();
+    }
+  }, [view, adminTab]);
+
+  const reviewRegisteredDriver = async (driver, status) => {
+    let adminNote = "";
+    if (["rejected", "suspended"].includes(status)) {
+      const reason = window.prompt(`Reason this driver is being ${status}:`, "Identity or account details could not be verified.");
+      if (reason === null) return;
+      adminNote = String(reason).trim();
+      if (adminNote.length < 5) return showToast("Add a short reason.");
+    }
+    const response = await authFetch(`${BACKEND_URL}/admin/driver-profiles/${driver.id}/verification`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, adminNote }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return showToast(data.error || "Driver review could not be saved.");
+    showToast(`Driver ${status}.`);
+    await fetchRegisteredDrivers();
+  };
+
   const reviewLocalDriverIdentity = async (delivery, status) => {
     let adminNote = "";
     if (status === "rejected") {
@@ -3321,6 +3363,23 @@ export default function SuperAdminDashboard({ scope }) {
                     {localDeliveryLoading ? "Refreshing…" : "Refresh"}
                   </button>
                 </div>
+
+                <section className="space-y-3">
+                  <div className="flex justify-between gap-3 flex-wrap items-end">
+                    <div><h4 className="text-lg font-semibold" style={{ color: INK }}>Registered delivery drivers</h4><p className="text-xs mt-1" style={{ color: SLATE }}>Approve identity once before a driver can request marketplace jobs.</p></div>
+                    <button type="button" onClick={fetchRegisteredDrivers} disabled={registeredDriversLoading} className="text-xs font-semibold underline disabled:opacity-50" style={{ color: INK }}>{registeredDriversLoading ? "Loading…" : "Refresh drivers"}</button>
+                  </div>
+                  {!registeredDriversLoading && registeredDrivers.length === 0 && <p className="text-sm" style={{ color: SLATE }}>No registered driver profiles yet.</p>}
+                  {registeredDrivers.map((driver) => (
+                    <div key={driver.id} className="p-4 rounded-xl border bg-white" style={{ borderColor: driver.verificationStatus === "pending" ? MARIGOLD : "#DDD8CC" }}>
+                      <div className="flex justify-between gap-3 flex-wrap"><div><div className="font-semibold" style={{ color: INK }}>{driver.legalName || driver.displayName} · @{driver.username}</div><div className="text-xs mt-1" style={{ color: SLATE }}>{driver.city}, {driver.state} · {String(driver.vehicleType || "vehicle not set").replaceAll("_", " ")} · {driver.completedDeliveries} completed</div></div><Tag color={driver.verificationStatus === "approved" ? SAGE : driver.verificationStatus === "pending" ? MARIGOLD : BERRY}>{driver.verificationStatus}</Tag></div>
+                      <div className="grid sm:grid-cols-3 gap-3 mt-3 text-xs"><div><span style={{ color: SLATE }}>Phone</span><div style={{ color: INK }}>{driver.phone || "Not supplied"}</div></div><div><span style={{ color: SLATE }}>ID</span><div style={{ color: INK }}>{driver.idType ? `${String(driver.idType).replaceAll("_", " ")} ending ${driver.idLast4}` : "Not submitted"}</div></div><div><span style={{ color: SLATE }}>Payment</span><div style={{ color: INK }}>{driver.hasBankDetails ? `Bank saved ending ${driver.accountNumberLast4}` : "Cash only"}</div></div></div>
+                      {(driver.identitySelfieUrl || driver.idDocumentUrl) && <div className="flex gap-3 mt-3 flex-wrap">{driver.identitySelfieUrl && <a href={driver.identitySelfieUrl} target="_blank" rel="noreferrer"><img src={driver.identitySelfieUrl} alt="Driver live selfie" className="w-24 h-24 rounded-lg object-cover border" /></a>}{driver.idDocumentUrl && <a href={driver.idDocumentUrl} target="_blank" rel="noreferrer"><img src={driver.idDocumentUrl} alt="Driver identity document" className="w-36 h-24 rounded-lg object-cover border" /></a>}</div>}
+                      {driver.verificationAdminNote && <div className="mt-3 text-xs" style={{ color: BERRY }}>{driver.verificationAdminNote}</div>}
+                      <div className="flex gap-3 mt-3 flex-wrap">{driver.verificationStatus !== "approved" && driver.identitySelfieUrl && <button onClick={() => reviewRegisteredDriver(driver, "approved")} className="text-xs font-semibold underline" style={{ color: SAGE }}>Approve driver</button>}{driver.verificationStatus === "pending" && <button onClick={() => reviewRegisteredDriver(driver, "rejected")} className="text-xs font-semibold underline" style={{ color: BERRY }}>Reject</button>}{driver.verificationStatus === "approved" && <button onClick={() => reviewRegisteredDriver(driver, "suspended")} className="text-xs font-semibold underline" style={{ color: BERRY }}>Suspend</button>}</div>
+                    </div>
+                  ))}
+                </section>
 
                 <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
