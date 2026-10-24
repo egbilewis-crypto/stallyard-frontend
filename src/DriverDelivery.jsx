@@ -434,6 +434,24 @@ export default function DriverDelivery({ accessToken }) {
           cardStyle={cardStyle}
         />
 
+        {(assignment.pickupAddress || assignment.pickupCity || assignment.pickupState) && (
+          <section className="mt-4 p-5" style={cardStyle}>
+            <h2 className="text-lg font-semibold" style={{ color: INK }}>Package pickup</h2>
+            <p className="mt-2 text-sm" style={{ color: INK }}>
+              {[assignment.pickupAddress, assignment.pickupCity, assignment.pickupState].filter(Boolean).join(", ")}
+            </p>
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([assignment.pickupAddress, assignment.pickupCity, assignment.pickupState].filter(Boolean).join(", "))}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-4 px-4 py-2 rounded-xl border text-sm font-semibold"
+              style={{ borderColor: INK, color: INK }}
+            >
+              Open pickup map
+            </a>
+          </section>
+        )}
+
         <section className="mt-4 p-5" style={cardStyle}>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Delivery destination</h2>
           <p className="mt-2 text-sm" style={{ color: INK }}>{destination}</p>
