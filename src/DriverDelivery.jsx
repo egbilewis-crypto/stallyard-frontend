@@ -48,6 +48,10 @@ export default function DriverDelivery({ accessToken }) {
   const [submitting, setSubmitting] = useState(false);
   const [actionBusy, setActionBusy] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [identityCameraOpen, setIdentityCameraOpen] = useState(false);
+  const [identitySelfie, setIdentitySelfie] = useState("");
+  const [identityBusy, setIdentityBusy] = useState(false);
+  const [identityForm, setIdentityForm] = useState({ legalName: "", idType: "nin", idNumber: "" });
   const [paymentBusy, setPaymentBusy] = useState("");
   const [bankForm, setBankForm] = useState({ bankName: "", accountName: "", accountNumber: "" });
   const [reportOpen, setReportOpen] = useState(false);
@@ -164,6 +168,41 @@ export default function DriverDelivery({ accessToken }) {
   const saveDeliveryProof = async (dataUrl) => {
     const saved = await runDeliveryStep("proof", { proofOfDelivery: dataUrl });
     if (saved) setCameraOpen(false);
+  };
+
+  const captureIdentitySelfie = async (dataUrl) => {
+    setIdentitySelfie(dataUrl);
+    setIdentityCameraOpen(false);
+  };
+
+  const saveDriverIdentity = async (event) => {
+    event.preventDefault();
+    if (!sessionToken || identityBusy) return;
+    if (!identitySelfie) {
+      setError("Take a live selfie before submitting your identity.");
+      return;
+    }
+    setIdentityBusy(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/driver-deliveries/${encodeURIComponent(accessToken)}/identity`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ ...identityForm, liveSelfie: identitySelfie }),
+        }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Your identity could not be submitted.");
+      setAssignment(data.assignment || assignment);
+      setIdentitySelfie("");
+      setIdentityForm({ legalName: "", idType: "nin", idNumber: "" });
+    } catch (requestError) {
+      setError(requestError.message || "Your identity could not be submitted.");
+    } finally {
+      setIdentityBusy(false);
+    }
   };
 
   const saveBankDetails = async (event) => {
@@ -338,6 +377,17 @@ export default function DriverDelivery({ accessToken }) {
           </div>
         </section>
 
+        <DriverIdentity
+          assignment={assignment}
+          form={identityForm}
+          setForm={setIdentityForm}
+          selfie={identitySelfie}
+          busy={identityBusy}
+          onOpenCamera={() => setIdentityCameraOpen(true)}
+          onSubmit={saveDriverIdentity}
+          cardStyle={cardStyle}
+        />
+
         <section className="mt-4 p-5" style={cardStyle}>
           <h2 className="text-lg font-semibold" style={{ color: INK }}>Delivery destination</h2>
           <p className="mt-2 text-sm" style={{ color: INK }}>{destination}</p>
@@ -400,7 +450,87 @@ export default function DriverDelivery({ accessToken }) {
           onClose={() => !actionBusy && setCameraOpen(false)}
         />
       )}
+      {identityCameraOpen && (
+        <LiveDeliveryCamera
+          busy={identityBusy}
+          facingMode="user"
+          title="Live driver selfie"
+          instructions="Face the camera in good light. Saved photos and gallery uploads are not accepted."
+          actionLabel="Take selfie"
+          onSave={captureIdentitySelfie}
+          onClose={() => !identityBusy && setIdentityCameraOpen(false)}
+        />
+      )}
     </main>
+  );
+}
+
+function DriverIdentity({ assignment, form, setForm, selfie, busy, onOpenCamera, onSubmit, cardStyle }) {
+  const status = assignment.driverIdentityStatus || "not_submitted";
+  const maySubmit = assignment.status === "assigned" && ["not_submitted", "rejected"].includes(status);
+  const statusColor = status === "approved" ? SAGE : status === "rejected" ? BERRY : MARIGOLD;
+
+  return (
+    <section className="mt-4 p-5" style={cardStyle}>
+      <div className="flex justify-between items-start gap-3 flex-wrap">
+        <div>
+          <h2 className="text-lg font-semibold" style={{ color: INK }}>Driver identity</h2>
+          <p className="mt-1 text-sm" style={{ color: SLATE }}>Required once before accepting this delivery.</p>
+        </div>
+        <span className="px-3 py-1 rounded-full text-xs font-semibold capitalize" style={{ backgroundColor: `${statusColor}18`, color: statusColor }}>
+          {status.replace(/_/g, " ")}
+        </span>
+      </div>
+
+      {assignment.identitySubmitted && (
+        <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: status === "rejected" ? "#FFF1EF" : "#EDF6EF" }}>
+          <div className="flex gap-3 items-center">
+            {assignment.driverIdentitySelfieUrl && <img src={assignment.driverIdentitySelfieUrl} alt="Driver identity selfie" className="w-20 h-20 rounded-lg object-cover" />}
+            <div className="text-sm" style={{ color: INK }}>
+              <div className="font-semibold">{assignment.driverLegalName || "Identity submitted"}</div>
+              {assignment.driverIdType && <div className="mt-1 capitalize" style={{ color: SLATE }}>{assignment.driverIdType.replace(/_/g, " ")}{assignment.driverIdLast4 ? ` · ending ${assignment.driverIdLast4}` : ""}</div>}
+              {assignment.driverIdentitySubmittedAt && <div className="mt-1 text-xs" style={{ color: SLATE }}>Submitted {formatDate(assignment.driverIdentitySubmittedAt)}</div>}
+            </div>
+          </div>
+          {status === "pending" && <p className="mt-3 text-xs" style={{ color: SLATE }}>Stallyard review is pending. You may accept the assignment while review continues.</p>}
+          {status === "approved" && <p className="mt-3 text-xs" style={{ color: SAGE }}>Identity approved by Stallyard.</p>}
+          {status === "rejected" && <p className="mt-3 text-xs" style={{ color: BERRY }}>{assignment.driverIdentityAdminNote || "Identity was rejected. Submit clear, correct details again."}</p>}
+        </div>
+      )}
+
+      {maySubmit && (
+        <form onSubmit={onSubmit} className="mt-4 space-y-3">
+          <label className="block text-xs font-medium" style={{ color: INK }}>
+            Legal name
+            <input value={form.legalName} onChange={(e) => setForm((v) => ({ ...v, legalName: e.target.value }))} minLength={3} maxLength={120} required autoComplete="name" className="w-full mt-1 px-3 py-2 rounded-lg border bg-white outline-none" style={{ borderColor: "#CFC8B8" }} />
+          </label>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="block text-xs font-medium" style={{ color: INK }}>
+              ID type
+              <select value={form.idType} onChange={(e) => setForm((v) => ({ ...v, idType: e.target.value }))} className="w-full mt-1 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#CFC8B8" }}>
+                <option value="nin">NIN</option>
+                <option value="drivers_license">Driver&apos;s licence</option>
+                <option value="passport">Passport</option>
+                <option value="pvc">Permanent voter card</option>
+              </select>
+            </label>
+            <label className="block text-xs font-medium" style={{ color: INK }}>
+              ID number
+              <input value={form.idNumber} onChange={(e) => setForm((v) => ({ ...v, idNumber: e.target.value.replace(/[^A-Za-z0-9-]/g, "").slice(0, 30) }))} minLength={4} maxLength={30} required autoComplete="off" className="w-full mt-1 px-3 py-2 rounded-lg border bg-white outline-none" style={{ borderColor: "#CFC8B8", fontFamily: "'IBM Plex Mono', monospace" }} />
+            </label>
+          </div>
+          <div className="p-3 rounded-xl border" style={{ borderColor: selfie ? SAGE : "#DDD8CC", backgroundColor: "#FAF9F6" }}>
+            <div className="text-sm font-semibold" style={{ color: INK }}>Live selfie required</div>
+            <p className="mt-1 text-xs" style={{ color: SLATE }}>The camera must take a current photo. Gallery uploads are disabled.</p>
+            {selfie && <img src={selfie} alt="New live driver selfie" className="w-24 h-24 mt-3 rounded-lg object-cover" />}
+            <button type="button" onClick={onOpenCamera} disabled={busy} className="w-full mt-3 px-4 py-3 rounded-xl border font-semibold disabled:opacity-50" style={{ borderColor: INK, color: INK, backgroundColor: "white" }}>{selfie ? "Retake live selfie" : "Open front camera"}</button>
+          </div>
+          <button type="submit" disabled={busy || !selfie || form.legalName.trim().length < 3 || form.idNumber.trim().length < 4} className="w-full px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{busy ? "Submitting…" : status === "rejected" ? "Resubmit identity" : "Submit identity"}</button>
+        </form>
+      )}
+
+      <p className="mt-3 text-xs" style={{ color: SLATE }}>Your full ID number is encrypted. Sellers do not receive it; authorized Stallyard reviewers see only the verification record.</p>
+    </section>
   );
 }
 
@@ -442,11 +572,11 @@ function DriverWorkflow({ assignment, busy, onAction, onOpenCamera, cardStyle })
 
       {step && (
         <div className="mt-4">
-          <p className="text-sm" style={{ color: SLATE }}>{step.help}</p>
+          <p className="text-sm" style={{ color: SLATE }}>{status === "assigned" && !assignment.identitySubmitted ? "Submit your live identity check above before accepting this assignment." : step.help}</p>
           <button
             type="button"
             onClick={() => onAction(step.action)}
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || (status === "assigned" && !assignment.identitySubmitted)}
             className="w-full mt-3 px-4 py-3 rounded-xl font-semibold disabled:opacity-50"
             style={{ backgroundColor: MARIGOLD, color: INK }}
           >
@@ -590,6 +720,13 @@ function DriverPayment({
         <div className="mt-4 p-4 rounded-xl" style={{ backgroundColor: "#EDF6EF", color: SAGE }}>
           <div className="font-semibold">Driver fee received</div>
           <p className="mt-1 text-sm">You confirmed payment on {formatDate(assignment.driverConfirmedPaidAt)}.</p>
+          <div className="mt-3 pt-3 border-t text-xs space-y-1" style={{ borderColor: "#CFE4D3", color: INK }}>
+            <div><strong>Order:</strong> {assignment.orderNumber || `#${assignment.orderId}`}</div>
+            <div><strong>Amount:</strong> {formatMoney(assignment.deliveryFee)}</div>
+            <div className="capitalize"><strong>Method:</strong> {String(method).replace(/_/g, " ")}</div>
+            {assignment.sellerPaymentReference && <div><strong>Reference:</strong> {assignment.sellerPaymentReference}</div>}
+            {assignment.sellerMarkedPaidAt && <div><strong>Seller marked paid:</strong> {formatDate(assignment.sellerMarkedPaidAt)}</div>}
+          </div>
         </div>
       )}
 
@@ -626,7 +763,15 @@ function DriverPayment({
   );
 }
 
-function LiveDeliveryCamera({ busy, onSave, onClose }) {
+function LiveDeliveryCamera({
+  busy,
+  onSave,
+  onClose,
+  facingMode = "environment",
+  title = "Live delivery proof",
+  instructions = "Show the package handoff clearly. This camera does not accept saved photos.",
+  actionLabel = "Take and save photo",
+}) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [cameraError, setCameraError] = useState("");
@@ -640,7 +785,7 @@ function LiveDeliveryCamera({ busy, onSave, onClose }) {
           throw new Error("Live camera is unavailable in this browser. Open this secure link in Chrome or Safari on the driver’s phone.");
         }
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 960 } },
+          video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 960 } },
           audio: false,
         });
         if (!active) {
@@ -664,7 +809,7 @@ function LiveDeliveryCamera({ busy, onSave, onClose }) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     };
-  }, []);
+  }, [facingMode]);
 
   const capture = async () => {
     const video = videoRef.current;
@@ -685,8 +830,8 @@ function LiveDeliveryCamera({ busy, onSave, onClose }) {
       <section className="w-full max-w-lg rounded-2xl overflow-hidden" style={{ backgroundColor: "white" }}>
         <div className="p-4 flex items-center justify-between gap-3">
           <div>
-            <h2 className="font-semibold" style={{ color: INK }}>Live delivery proof</h2>
-            <p className="text-xs mt-1" style={{ color: SLATE }}>Show the package handoff clearly. This camera does not accept saved photos.</p>
+            <h2 className="font-semibold" style={{ color: INK }}>{title}</h2>
+            <p className="text-xs mt-1" style={{ color: SLATE }}>{instructions}</p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} className="px-3 py-2 rounded-lg border text-sm disabled:opacity-50" style={{ borderColor: "#DDD8CC", color: INK }}>Close</button>
         </div>
@@ -706,7 +851,7 @@ function LiveDeliveryCamera({ busy, onSave, onClose }) {
             className="w-full px-4 py-3 rounded-xl font-semibold disabled:opacity-50"
             style={{ backgroundColor: MARIGOLD, color: INK }}
           >
-            {busy ? "Saving proof…" : "Take and save photo"}
+            {busy ? "Saving…" : actionLabel}
           </button>
         </div>
       </section>
