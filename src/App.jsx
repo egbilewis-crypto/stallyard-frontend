@@ -18,6 +18,8 @@ const FaceLivenessDetectorCore = lazy(() =>
 // bundle and fetched only after an authenticated admin opens the admin view.
 const SuperAdminDashboard = lazy(() => import("./SuperAdminDashboard.jsx"));
 const DriverDelivery = lazy(() => import("./DriverDelivery.jsx"));
+const DriverDashboard = lazy(() => import("./DriverDashboard.jsx"));
+const SellerDriverJobs = lazy(() => import("./SellerDriverJobs.jsx"));
 
 const INK = "#1B2430";
 const CANVAS = "#F6F3EC";
@@ -10270,6 +10272,7 @@ function MarketplaceStallyard() {
                 >
                   My Stallyard
                 </button>
+                <a href="/driver/dashboard" className="hidden lg:inline hover:underline">Drive &amp; earn</a>
                 {currentUser && !currentMember?.isAdmin && (
                   <button
                     type="button"
@@ -12071,6 +12074,7 @@ function MarketplaceStallyard() {
                   { label: "Overview", action: () => setRouteField("sellerSection", "overview") },
                   { label: "Listings", action: () => setRouteField("sellerSection", "listings") },
                   { label: "Orders & delivery", action: () => setRouteField("sellerSection", "orders") },
+                  { label: "Find drivers", action: () => window.location.assign("/seller/driver-jobs") },
                   { label: "Seller wallet", action: () => setView("wallet") },
                   { label: "Messages", action: () => setView("messages") },
                   { label: "My Stall", action: () => openStorefront(currentUser) },
@@ -18815,6 +18819,7 @@ function MarketplaceStallyard() {
 }
 
 export default function Stallyard() {
+  const currentPath = typeof window !== "undefined" ? window.location.pathname.replace(/\/+$/, "") || "/" : "/";
   const driverRoute = typeof window !== "undefined"
     ? window.location.pathname.match(/^\/driver\/delivery\/([A-Za-z0-9_-]{30,120})\/?$/)
     : null;
@@ -18825,6 +18830,14 @@ export default function Stallyard() {
         <DriverDelivery accessToken={driverRoute[1]} />
       </Suspense>
     );
+  }
+
+  if (currentPath === "/driver/dashboard") {
+    return <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Opening Driver Dashboard…</div>}><DriverDashboard /></Suspense>;
+  }
+
+  if (currentPath === "/seller/driver-jobs") {
+    return <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Opening delivery jobs…</div>}><SellerDriverJobs /></Suspense>;
   }
 
   return <MarketplaceStallyard />;
