@@ -7,6 +7,7 @@ const money=(value)=>new Intl.NumberFormat("en-NG",{style:"currency",currency:"N
 const date=(value)=>value?new Date(value).toLocaleString():"Not specified";
 const localDateTime=(value)=>{if(!value)return "";const parsed=new Date(value);return new Date(parsed.getTime()-parsed.getTimezoneOffset()*60000).toISOString().slice(0,16);};
 const emptyForm={orderItemId:"",pickupAddress:"",pickupCity:"",pickupState:"",deliveryFee:"",paymentMethod:"cash",pickupAt:"",deliveryDueAt:"",packageDescription:""};
+const NIGERIA_STATES=["Abia","Adamawa","Akwa Ibom","Anambra","Bauchi","Bayelsa","Benue","Borno","Cross River","Delta","Ebonyi","Edo","Ekiti","Enugu","Federal Capital Territory","Gombe","Imo","Jigawa","Kaduna","Kano","Katsina","Kebbi","Kogi","Kwara","Lagos","Nasarawa","Niger","Ogun","Ondo","Osun","Oyo","Plateau","Rivers","Sokoto","Taraba","Yobe","Zamfara"];
 
 export default function SellerDriverJobs(){
   const [items,setItems]=useState([]),[jobs,setJobs]=useState([]),[loading,setLoading]=useState(true),[busy,setBusy]=useState(""),[error,setError]=useState(""),[notice,setNotice]=useState("");
@@ -25,7 +26,7 @@ export default function SellerDriverJobs(){
       <form onSubmit={postJob} className="grid sm:grid-cols-2 gap-3 mt-4">
         <Field label="Order" wide><select required disabled={Boolean(editingJobId)} value={form.orderItemId} onChange={(e)=>chooseItem(e.target.value)}><option value="">Select an order</option>{items.map((i)=><option key={i.id} value={i.id}>{i.orderNumber} · {i.title}</option>)}</select></Field>
         <Field label="Pickup address" wide><input required minLength={8} value={form.pickupAddress} onChange={(e)=>setForm({...form,pickupAddress:e.target.value})}/></Field>
-        <Field label="Pickup city"><input required value={form.pickupCity} onChange={(e)=>setForm({...form,pickupCity:e.target.value})}/></Field><Field label="Pickup state"><input required value={form.pickupState} onChange={(e)=>setForm({...form,pickupState:e.target.value})}/></Field>
+        <Field label="Pickup city"><input required value={form.pickupCity} onChange={(e)=>setForm({...form,pickupCity:e.target.value})}/></Field><Field label="Pickup state"><select required value={form.pickupState} onChange={(e)=>setForm({...form,pickupState:e.target.value})}><option value="">Select state</option>{NIGERIA_STATES.map((state)=><option key={state} value={state}>{state}</option>)}</select></Field>
         <Field label="Driver fee (NGN)"><input required type="number" min="1" step="0.01" value={form.deliveryFee} onChange={(e)=>setForm({...form,deliveryFee:e.target.value})}/></Field><Field label="Payment method"><select value={form.paymentMethod} onChange={(e)=>setForm({...form,paymentMethod:e.target.value})}><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option></select></Field>
         <Field label="Pickup time"><input type="datetime-local" value={form.pickupAt} onChange={(e)=>setForm({...form,pickupAt:e.target.value})}/></Field><Field label="Delivery due"><input type="datetime-local" value={form.deliveryDueAt} onChange={(e)=>setForm({...form,deliveryDueAt:e.target.value})}/></Field>
         <Field label="Package description" wide><textarea rows="3" value={form.packageDescription} onChange={(e)=>setForm({...form,packageDescription:e.target.value})}/></Field>
