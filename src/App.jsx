@@ -1,4 +1,5 @@
 import { useMarketplaceRouting, readMarketplaceRoute, marketplaceRouteUrl, PRIVATE_VIEWS } from "./MarketplaceRoutes.js";
+import { NIGERIA_LGAS, NIGERIA_STATES as NIGERIA_PROFILE_STATES } from "./NigeriaLocations.jsx";
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
 import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag, Eye, EyeOff } from "lucide-react";
 
@@ -1105,7 +1106,10 @@ function backendUserToMember(user, existing) {
     dateOfBirth: user.date_of_birth ? String(user.date_of_birth).slice(0, 10) : existing?.dateOfBirth || "",
     gender: user.gender || existing?.gender || "",
     nationality: user.nationality || existing?.nationality || "",
-    stateOfResidence: user.state_of_residence || existing?.stateOfResidence || "",
+    stateOfResidence: (user.state_of_residence || existing?.stateOfResidence || "") === "FCT (Abuja)"
+      ? "Federal Capital Territory"
+      : user.state_of_residence || existing?.stateOfResidence || "",
+    lgaOfResidence: user.lga_of_residence || existing?.lgaOfResidence || "",
     officeLocation: user.office_location || existing?.officeLocation || "",
     avatarUrl: user.avatar_url ?? existing?.avatarUrl ?? "",
     storeBio: user.store_bio ?? existing?.storeBio ?? "",
@@ -2224,6 +2228,7 @@ function MarketplaceStallyard() {
     gender: "",
     nationality: "",
     stateOfResidence: "",
+    lgaOfResidence: "",
     officeLocation: "",
     country: "Nigeria",
     licenseNumber: "",
@@ -3508,6 +3513,7 @@ function MarketplaceStallyard() {
       gender: "",
       nationality: "",
       stateOfResidence: "",
+      lgaOfResidence: "",
       officeLocation: "",
       country: "Nigeria",
       licenseNumber: "",
@@ -3560,6 +3566,14 @@ function MarketplaceStallyard() {
       setProfileStageError("Select your state of residence");
       return;
     }
+    if (!authForm.lgaOfResidence) {
+      setProfileStageError("Select your Local Government Area");
+      return;
+    }
+    if (!(NIGERIA_LGAS[authForm.stateOfResidence] || []).includes(authForm.lgaOfResidence)) {
+      setProfileStageError("Select a valid Local Government Area for your state");
+      return;
+    }
     if (!authForm.country.trim()) {
       setProfileStageError("Enter your country of residence");
       return;
@@ -3589,6 +3603,7 @@ function MarketplaceStallyard() {
           gender: authForm.gender,
           nationality: authForm.nationality.trim(),
           stateOfResidence: authForm.stateOfResidence,
+          lgaOfResidence: authForm.lgaOfResidence,
           phone: authForm.phone.trim(),
           country: "Nigeria",
         }),
@@ -3726,6 +3741,7 @@ function MarketplaceStallyard() {
       gender: member.gender || "",
       nationality: member.nationality || "",
       stateOfResidence: member.stateOfResidence || "",
+      lgaOfResidence: member.lgaOfResidence || "",
       officeLocation: member.officeLocation || "",
       country: member.country || "",
       licenseNumber: member.licenseNumber || "",
@@ -9867,12 +9883,22 @@ function MarketplaceStallyard() {
                     />
                     <select
                       value={authForm.stateOfResidence}
-                      onChange={(e) => setAuthForm({ ...authForm, stateOfResidence: e.target.value })}
+                      onChange={(e) => setAuthForm({ ...authForm, stateOfResidence: e.target.value, lgaOfResidence: "" })}
                       className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
                       style={{ borderColor: "#DDD8CC", color: authForm.stateOfResidence ? INK : SLATE }}
                     >
                       <option value="">Select state of residence</option>
-                      {NIGERIAN_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                      {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                    </select>
+                    <select
+                      value={authForm.lgaOfResidence}
+                      onChange={(e) => setAuthForm({ ...authForm, lgaOfResidence: e.target.value })}
+                      disabled={!authForm.stateOfResidence}
+                      className="w-full px-3 py-2 rounded-lg border outline-none bg-white disabled:opacity-60"
+                      style={{ borderColor: "#DDD8CC", color: authForm.lgaOfResidence ? INK : SLATE }}
+                    >
+                      <option value="">{authForm.stateOfResidence ? "Select Local Government Area (LGA)" : "Select state first"}</option>
+                      {(NIGERIA_LGAS[authForm.stateOfResidence] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
                     </select>
                     <input
                       type="tel"
