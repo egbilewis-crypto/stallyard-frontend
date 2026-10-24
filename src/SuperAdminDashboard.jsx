@@ -276,6 +276,32 @@ export default function SuperAdminDashboard({ scope }) {
     window,
     withdrawals,
   } = scope;
+
+  const reviewLocalDriverIdentity = async (delivery, status) => {
+    let adminNote = "";
+    if (status === "rejected") {
+      const reason = window.prompt("Explain why this driver identity is being rejected:", "Identity details or selfie could not be verified.");
+      if (reason === null) return;
+      adminNote = String(reason).trim();
+      if (adminNote.length < 5) {
+        showToast("Add a short rejection reason.");
+        return;
+      }
+    }
+    const response = await authFetch(`${BACKEND_URL}/admin/local-deliveries/${delivery.id}/identity`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, adminNote }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showToast(data.error || "Driver identity review could not be saved.");
+      return;
+    }
+    showToast(status === "approved" ? "Driver identity approved." : "Driver identity rejected.");
+    await fetchAdminLocalDeliveries();
+  };
+
   return (
     <>
       {view === "admin" && currentMember?.isAdmin && !currentMember?.twoFactorEnabled && (
@@ -3296,7 +3322,7 @@ export default function SuperAdminDashboard({ scope }) {
                   </button>
                 </div>
 
-                <div className="grid sm:grid-cols-3 gap-3">
+                <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-xs" style={{ color: SLATE }}>Active deliveries</div>
                     <div className="text-2xl font-semibold mt-1" style={{ color: INK }}>{adminLocalDeliveries.filter((d) => !["delivered", "revoked"].includes(d.status)).length}</div>
@@ -3308,6 +3334,10 @@ export default function SuperAdminDashboard({ scope }) {
                   <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <div className="text-xs" style={{ color: SLATE }}>Unconfirmed driver fees</div>
                     <div className="text-2xl font-semibold mt-1" style={{ color: MARIGOLD }}>{adminLocalDeliveries.filter((d) => d.status === "delivered" && d.paymentStatus !== "confirmed").length}</div>
+                  </div>
+                  <div className="p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="text-xs" style={{ color: SLATE }}>Identity reviews pending</div>
+                    <div className="text-2xl font-semibold mt-1" style={{ color: BERRY }}>{adminLocalDeliveries.filter((d) => d.driverIdentityStatus === "pending").length}</div>
                   </div>
                 </div>
 
@@ -3396,7 +3426,41 @@ export default function SuperAdminDashboard({ scope }) {
                             <div><span style={{ color: SLATE }}>Started</span><div style={{ color: INK }}>{d.startedAt ? new Date(d.startedAt).toLocaleString() : "Not yet"}</div></div>
                             <div><span style={{ color: SLATE }}>Delivered</span><div style={{ color: INK }}>{d.deliveredAt ? new Date(d.deliveredAt).toLocaleString() : "Not yet"}</div></div>
                           </div>
+                          {d.identitySubmitted && (
+                            <div className="mt-3 p-3 rounded-xl border" style={{ borderColor: d.driverIdentityStatus === "rejected" ? BERRY : "#DDD8CC", backgroundColor: CANVAS }}>
+                              <div className="flex justify-between gap-3 flex-wrap">
+                                <div className="text-xs font-semibold" style={{ color: INK }}>Driver identity record</div>
+                                <Tag color={d.driverIdentityStatus === "approved" ? SAGE : d.driverIdentityStatus === "rejected" ? BERRY : MARIGOLD}>{String(d.driverIdentityStatus || "pending").replaceAll("_", " ")}</Tag>
+                              </div>
+                              <div className="flex gap-3 mt-3 items-start flex-wrap">
+                                {d.driverIdentitySelfieUrl && <a href={d.driverIdentitySelfieUrl} target="_blank" rel="noreferrer"><img src={d.driverIdentitySelfieUrl} alt="Driver identity selfie" className="w-24 h-24 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a>}
+                                <div className="text-xs space-y-1" style={{ color: SLATE }}>
+                                  <div><strong style={{ color: INK }}>Legal name:</strong> {d.driverLegalName || "Unavailable"}</div>
+                                  <div className="capitalize"><strong style={{ color: INK }}>ID:</strong> {String(d.driverIdType || "unknown").replaceAll("_", " ")}{d.driverIdLast4 ? ` · ending ${d.driverIdLast4}` : ""}</div>
+                                  <div><strong style={{ color: INK }}>Submitted:</strong> {d.driverIdentitySubmittedAt ? new Date(d.driverIdentitySubmittedAt).toLocaleString() : "Unknown"}</div>
+                                  {d.driverIdentityReviewedAt && <div><strong style={{ color: INK }}>Reviewed:</strong> {new Date(d.driverIdentityReviewedAt).toLocaleString()}</div>}
+                                </div>
+                              </div>
+                              {d.driverIdentityAdminNote && <div className="mt-2 text-xs" style={{ color: d.driverIdentityStatus === "rejected" ? BERRY : SLATE }}>Review note: {d.driverIdentityAdminNote}</div>}
+                              {d.driverIdentityStatus === "pending" && (
+                                <div className="flex gap-3 mt-3 flex-wrap">
+                                  <button type="button" onClick={() => reviewLocalDriverIdentity(d, "approved")} className="text-xs font-semibold underline" style={{ color: SAGE }}>Approve identity</button>
+                                  <button type="button" onClick={() => reviewLocalDriverIdentity(d, "rejected")} className="text-xs font-semibold underline" style={{ color: BERRY }}>Reject identity</button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                           {d.paymentMethod === "bank_transfer" && d.accountNumberLast4 && <div className="text-xs mt-3 p-2 rounded-lg" style={{ backgroundColor: CANVAS, color: SLATE }}>Driver bank: {d.bankName} · {d.accountName} · account ending {d.accountNumberLast4}</div>}
+                          {d.payoutRecordId && (
+                            <div className="text-xs mt-3 p-3 rounded-lg border" style={{ borderColor: "#DDD8CC", backgroundColor: "#FAF9F6", color: SLATE }}>
+                              <div className="font-semibold" style={{ color: INK }}>Driver payout record #{d.payoutRecordId}</div>
+                              <div className="mt-1">Status: <span className="capitalize font-medium" style={{ color: d.payoutRecordStatus === "confirmed" ? SAGE : MARIGOLD }}>{String(d.payoutRecordStatus || "pending").replaceAll("_", " ")}</span></div>
+                              <div>Amount: {formatMoney(d.deliveryFee)} · {String(d.paymentMethod || "cash").replaceAll("_", " ")}</div>
+                              {d.sellerPaymentReference && <div>Reference: {d.sellerPaymentReference}</div>}
+                              {d.sellerMarkedPaidAt && <div>Seller marked paid: {new Date(d.sellerMarkedPaidAt).toLocaleString()}</div>}
+                              {d.driverConfirmedPaidAt && <div>Driver confirmed receipt: {new Date(d.driverConfirmedPaidAt).toLocaleString()}</div>}
+                            </div>
+                          )}
                           {d.proofOfDeliveryUrl && <div className="mt-3"><div className="text-xs font-medium mb-1" style={{ color: INK }}>Delivery proof</div><a href={d.proofOfDeliveryUrl} target="_blank" rel="noreferrer"><img src={d.proofOfDeliveryUrl} alt="Delivery proof" className="w-28 h-28 object-cover rounded-lg border" style={{ borderColor: "#DDD8CC" }} /></a></div>}
                           {canRevoke && <button type="button" onClick={() => adminRevokeLocalDelivery(d.id)} className="mt-3 text-xs font-semibold underline" style={{ color: BERRY }}>Revoke driver access</button>}
                         </div>
