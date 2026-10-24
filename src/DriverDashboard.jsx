@@ -86,7 +86,7 @@ export default function DriverDashboard() {
       const response = await api("/driver/profile", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(form) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Driver profile could not be saved.");
-      setProfile(data.profile); setNotice("Driver profile saved.");
+      setProfile(data.profile); setNotice(data.message || "Driver profile saved.");
       await load();
     } catch (requestError) { setError(requestError.message); }
     finally { setBusy(""); }
@@ -130,6 +130,8 @@ export default function DriverDashboard() {
     } catch (requestError) { setError(requestError.message); setBusy(""); }
   };
 
+  const approvedProfileLocked = ["approved","suspended"].includes(profile?.verificationStatus);
+
   if (loading) return <Page><div className="p-6 text-center">Opening Driver Dashboard…</div></Page>;
   if (signedOut) return <Page><Card><h1 className="text-2xl font-semibold" style={{color:INK}}>Driver sign-in required</h1><p className="mt-2 text-sm" style={{color:SLATE}}>Use your own Stallyard account. Never use a seller&apos;s password.</p><a href="/signin?return=%2Fdriver%2Fdashboard" className="inline-block mt-4 px-4 py-3 rounded-xl font-semibold" style={{backgroundColor:MARIGOLD,color:INK}}>Sign in to Stallyard</a></Card></Page>;
 
@@ -161,21 +163,21 @@ export default function DriverDashboard() {
     {tab === "earnings" && <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Earnings history</h2><div className="grid sm:grid-cols-2 gap-3 mt-4"><Metric label="Confirmed earnings" value={money(assignments.filter((a)=>a.paymentStatus==="confirmed").reduce((sum,a)=>sum+Number(a.deliveryFee||0),0))}/><Metric label="Completed deliveries" value={profile?.completedDeliveries || 0}/></div><div className="mt-4 space-y-2">{assignments.filter((a)=>a.status==="delivered").map((a)=><div key={a.id} className="p-3 rounded-lg border text-sm flex justify-between gap-2" style={{borderColor:"#DDD8CC",color:INK}}><span>{a.orderNumber} · {date(a.deliveredAt)}</span><span style={{color:a.paymentStatus==="confirmed"?SAGE:MARIGOLD}}>{money(a.deliveryFee)} · {a.paymentStatus}</span></div>)}</div></Card>}
 
     {tab === "profile" && <div className="space-y-4">
-      <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Driver profile</h2><form onSubmit={saveProfile} className="grid sm:grid-cols-2 gap-3 mt-4">
-        <Field label="Legal name"><input required minLength={3} value={form.legalName} onChange={(e)=>setForm({...form,legalName:e.target.value})}/></Field>
-        <Field label="Nigerian phone"><input required type="tel" value={form.phone} onChange={(e)=>setForm({...form,phone:e.target.value})}/></Field>
-        <Field label="Service state"><select required value={form.state} onChange={(e)=>setForm({...form,state:e.target.value})}><option value="">Select state</option>{NIGERIA_STATES.map((state)=><option key={state}>{state}</option>)}</select></Field>
-        <Field label="Service city"><input required value={form.city} onChange={(e)=>setForm({...form,city:e.target.value})}/></Field>
+      <Card><h2 className="text-xl font-semibold" style={{color:INK}}>Driver profile</h2>{approvedProfileLocked&&<div className="mt-3 p-3 rounded-xl text-sm" style={{backgroundColor:"#EDF6EF",color:SAGE}}>Your approved identity, phone, service area, and payment details are locked. You can only change your vehicle information or availability.</div>}<form onSubmit={saveProfile} className="grid sm:grid-cols-2 gap-3 mt-4">
+        <Field label="Legal name"><input disabled={approvedProfileLocked} required minLength={3} value={form.legalName} onChange={(e)=>setForm({...form,legalName:e.target.value})}/></Field>
+        <Field label="Nigerian phone"><input disabled={approvedProfileLocked} required type="tel" value={form.phone} onChange={(e)=>setForm({...form,phone:e.target.value})}/></Field>
+        <Field label="Service state"><select disabled={approvedProfileLocked} required value={form.state} onChange={(e)=>setForm({...form,state:e.target.value})}><option value="">Select state</option>{NIGERIA_STATES.map((state)=><option key={state}>{state}</option>)}</select></Field>
+        <Field label="Service city"><input disabled={approvedProfileLocked} required value={form.city} onChange={(e)=>setForm({...form,city:e.target.value})}/></Field>
         <Field label="Vehicle type"><select value={form.vehicleType} onChange={(e)=>setForm({...form,vehicleType:e.target.value})}><option value="motorcycle">Motorcycle</option><option value="car">Car</option><option value="van">Van</option><option value="truck">Truck</option><option value="bicycle">Bicycle</option><option value="on_foot">On foot</option></select></Field>
         <Field label="Licence plate (if applicable)"><input value={form.licensePlate} onChange={(e)=>setForm({...form,licensePlate:e.target.value})}/></Field>
         <Field label="Vehicle description" wide><input value={form.vehicleDescription} onChange={(e)=>setForm({...form,vehicleDescription:e.target.value})} placeholder="Colour, make and model"/></Field>
         <div className="sm:col-span-2 pt-2 border-t" style={{borderColor:"#EFEBE0"}}><div className="text-sm font-semibold" style={{color:INK}}>Optional bank payment details</div><p className="text-xs mt-1" style={{color:SLATE}}>Required only if you want sellers to pay by bank transfer.</p></div>
         {profile?.hasBankDetails&&<div className="sm:col-span-2 text-xs p-3 rounded-lg" style={{backgroundColor:"#EDF6EF",color:SAGE}}>Bank details are saved securely{profile.accountNumberLast4?` (account ending ${profile.accountNumberLast4})`:""}. Complete all three bank fields only when replacing them.</div>}
-        <Field label="Bank name"><input value={form.bankName} onChange={(e)=>setForm({...form,bankName:e.target.value})}/></Field>
-        <Field label="Account number"><input inputMode="numeric" maxLength={10} value={form.accountNumber} onChange={(e)=>setForm({...form,accountNumber:e.target.value.replace(/\D/g,"").slice(0,10)})} placeholder={profile?.accountNumberLast4?`Saved account ending ${profile.accountNumberLast4}`:"10 digits"}/></Field>
-        <Field label="Name on account" wide><input value={form.accountName} onChange={(e)=>setForm({...form,accountName:e.target.value})}/></Field>
+        <Field label="Bank name"><input disabled={approvedProfileLocked} value={form.bankName} onChange={(e)=>setForm({...form,bankName:e.target.value})}/></Field>
+        <Field label="Account number"><input disabled={approvedProfileLocked} inputMode="numeric" maxLength={10} value={form.accountNumber} onChange={(e)=>setForm({...form,accountNumber:e.target.value.replace(/\D/g,"").slice(0,10)})} placeholder={profile?.accountNumberLast4?`Saved account ending ${profile.accountNumberLast4}`:"10 digits"}/></Field>
+        <Field label="Name on account" wide><input disabled={approvedProfileLocked} value={form.accountName} onChange={(e)=>setForm({...form,accountName:e.target.value})}/></Field>
         <label className="sm:col-span-2 flex items-center gap-2 text-sm" style={{color:INK}}><input type="checkbox" checked={form.isAvailable} onChange={(e)=>setForm({...form,isAvailable:e.target.checked})}/>Available to receive delivery jobs</label>
-        <button disabled={busy==="profile"} className="sm:col-span-2 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{backgroundColor:MARIGOLD,color:INK}}>{busy==="profile"?"Saving…":"Save driver profile"}</button>
+        <button disabled={busy==="profile"} className="sm:col-span-2 px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{backgroundColor:MARIGOLD,color:INK}}>{busy==="profile"?"Saving…":approvedProfileLocked?"Save vehicle changes":"Save driver profile"}</button>
       </form></Card>
       {profile && <Card><div className="flex justify-between gap-3 flex-wrap"><div><h2 className="text-xl font-semibold" style={{color:INK}}>Identity verification</h2><p className="text-sm mt-1" style={{color:SLATE}}>Verification is completed once and reused for selected deliveries.</p></div><span className="px-3 py-1 rounded-full text-xs font-semibold capitalize" style={{backgroundColor:"#F4F2ED",color:profile.verificationStatus==="approved"?SAGE:profile.verificationStatus==="rejected"?BERRY:MARIGOLD}}>{profile.verificationStatus}</span></div>
         {profile.identitySelfieUrl&&<div className="flex gap-3 mt-4"><img src={profile.identitySelfieUrl} alt="Driver selfie" className="w-24 h-24 rounded-lg object-cover"/><img src={profile.idDocumentUrl} alt="Driver ID" className="w-32 h-24 rounded-lg object-cover"/></div>}
