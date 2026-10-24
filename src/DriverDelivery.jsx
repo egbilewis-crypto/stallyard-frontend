@@ -33,6 +33,37 @@ function addressText(address) {
     .join(", ");
 }
 
+function compressIdentityDocument(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      reject(new Error("Select a photo of the identity document."));
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const maxDimension = 1600;
+        const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      } catch {
+        reject(new Error("The ID photo could not be prepared. Try another image."));
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("That image format could not be opened. Use a JPG, PNG, or WebP photo."));
+    };
+    image.src = objectUrl;
+  });
+}
+
 export default function DriverDelivery({ accessToken }) {
   const sessionKey = useMemo(() => `stallyard-driver-session:${accessToken}`, [accessToken]);
   const [activationCode, setActivationCode] = useState("");
@@ -50,6 +81,7 @@ export default function DriverDelivery({ accessToken }) {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [identityCameraOpen, setIdentityCameraOpen] = useState(false);
   const [identitySelfie, setIdentitySelfie] = useState("");
+  const [identityDocument, setIdentityDocument] = useState("");
   const [identityBusy, setIdentityBusy] = useState(false);
   const [identityForm, setIdentityForm] = useState({ legalName: "", idType: "nin", idNumber: "" });
   const [paymentBusy, setPaymentBusy] = useState("");
@@ -182,6 +214,10 @@ export default function DriverDelivery({ accessToken }) {
       setError("Take a live selfie before submitting your identity.");
       return;
     }
+    if (!identityDocument) {
+      setError("Upload a clear photo of the selected identity document.");
+      return;
+    }
     setIdentityBusy(true);
     setError("");
     try {
@@ -190,13 +226,14 @@ export default function DriverDelivery({ accessToken }) {
         {
           method: "PATCH",
           headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ ...identityForm, liveSelfie: identitySelfie }),
+          body: JSON.stringify({ ...identityForm, liveSelfie: identitySelfie, idDocumentPhoto: identityDocument }),
         }
       );
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Your identity could not be submitted.");
       setAssignment(data.assignment || assignment);
       setIdentitySelfie("");
+      setIdentityDocument("");
       setIdentityForm({ legalName: "", idType: "nin", idNumber: "" });
     } catch (requestError) {
       setError(requestError.message || "Your identity could not be submitted.");
@@ -382,6 +419,15 @@ export default function DriverDelivery({ accessToken }) {
           form={identityForm}
           setForm={setIdentityForm}
           selfie={identitySelfie}
+          documentPhoto={identityDocument}
+          onDocumentPhoto={async (file) => {
+            try {
+              setError("");
+              setIdentityDocument(await compressIdentityDocument(file));
+            } catch (documentError) {
+              setError(documentError.message || "The ID photo could not be prepared.");
+            }
+          }}
           busy={identityBusy}
           onOpenCamera={() => setIdentityCameraOpen(true)}
           onSubmit={saveDriverIdentity}
@@ -465,9 +511,9 @@ export default function DriverDelivery({ accessToken }) {
   );
 }
 
-function DriverIdentity({ assignment, form, setForm, selfie, busy, onOpenCamera, onSubmit, cardStyle }) {
+function DriverIdentity({ assignment, form, setForm, selfie, documentPhoto, onDocumentPhoto, busy, onOpenCamera, onSubmit, cardStyle }) {
   const status = assignment.driverIdentityStatus || "not_submitted";
-  const maySubmit = assignment.status === "assigned" && ["not_submitted", "rejected"].includes(status);
+  const maySubmit = assignment.status === "assigned" && (["not_submitted", "rejected"].includes(status) || !assignment.identitySubmitted);
   const statusColor = status === "approved" ? SAGE : status === "rejected" ? BERRY : MARIGOLD;
 
   return (
@@ -486,6 +532,7 @@ function DriverIdentity({ assignment, form, setForm, selfie, busy, onOpenCamera,
         <div className="mt-4 p-3 rounded-xl" style={{ backgroundColor: status === "rejected" ? "#FFF1EF" : "#EDF6EF" }}>
           <div className="flex gap-3 items-center">
             {assignment.driverIdentitySelfieUrl && <img src={assignment.driverIdentitySelfieUrl} alt="Driver identity selfie" className="w-20 h-20 rounded-lg object-cover" />}
+            {assignment.driverIdDocumentUrl && <img src={assignment.driverIdDocumentUrl} alt="Driver identity document" className="w-24 h-20 rounded-lg object-cover" />}
             <div className="text-sm" style={{ color: INK }}>
               <div className="font-semibold">{assignment.driverLegalName || "Identity submitted"}</div>
               {assignment.driverIdType && <div className="mt-1 capitalize" style={{ color: SLATE }}>{assignment.driverIdType.replace(/_/g, " ")}{assignment.driverIdLast4 ? ` · ending ${assignment.driverIdLast4}` : ""}</div>}
@@ -525,7 +572,16 @@ function DriverIdentity({ assignment, form, setForm, selfie, busy, onOpenCamera,
             {selfie && <img src={selfie} alt="New live driver selfie" className="w-24 h-24 mt-3 rounded-lg object-cover" />}
             <button type="button" onClick={onOpenCamera} disabled={busy} className="w-full mt-3 px-4 py-3 rounded-xl border font-semibold disabled:opacity-50" style={{ borderColor: INK, color: INK, backgroundColor: "white" }}>{selfie ? "Retake live selfie" : "Open front camera"}</button>
           </div>
-          <button type="submit" disabled={busy || !selfie || form.legalName.trim().length < 3 || form.idNumber.trim().length < 4} className="w-full px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{busy ? "Submitting…" : status === "rejected" ? "Resubmit identity" : "Submit identity"}</button>
+          <div className="p-3 rounded-xl border" style={{ borderColor: documentPhoto ? SAGE : "#DDD8CC", backgroundColor: "#FAF9F6" }}>
+            <div className="text-sm font-semibold" style={{ color: INK }}>Identity-document photo required</div>
+            <p className="mt-1 text-xs" style={{ color: SLATE }}>Upload a clear photo showing the name, document number, and photograph.</p>
+            {documentPhoto && <img src={documentPhoto} alt="Selected identity document" className="w-full max-h-52 mt-3 rounded-lg object-contain bg-white" />}
+            <label className="block w-full mt-3 px-4 py-3 rounded-xl border font-semibold text-center cursor-pointer" style={{ borderColor: INK, color: INK, backgroundColor: "white" }}>
+              {documentPhoto ? "Choose another ID photo" : "Upload ID photo"}
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/*" className="sr-only" disabled={busy} onChange={(e) => { const file = e.target.files?.[0]; if (file) onDocumentPhoto(file); e.target.value = ""; }} />
+            </label>
+          </div>
+          <button type="submit" disabled={busy || !selfie || !documentPhoto || form.legalName.trim().length < 3 || form.idNumber.trim().length < 4} className="w-full px-4 py-3 rounded-xl font-semibold disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{busy ? "Submitting…" : status === "rejected" ? "Resubmit identity" : "Submit identity"}</button>
         </form>
       )}
 
