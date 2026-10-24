@@ -17013,6 +17013,9 @@ function MarketplaceStallyard() {
               <button onClick={() => setView("wallet")} className="text-sm text-left" style={{ color: "#E5E7EB" }}>
                 Getting paid
               </button>
+              <a href="/driver/dashboard" className="text-sm text-left" style={{ color: "#E5E7EB" }}>
+                Drive for Stallyard
+              </a>
             </div>
           </div>
 
