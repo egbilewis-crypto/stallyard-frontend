@@ -1,6 +1,6 @@
 import { useMarketplaceRouting, readMarketplaceRoute, marketplaceRouteUrl, PRIVATE_VIEWS } from "./MarketplaceRoutes.js";
 import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from "react";
-import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag } from "lucide-react";
+import { Search, Plus, Store, LayoutGrid, Pencil, Trash2, X, PackageOpen, ShoppingBag, Minus, User, LogOut, Receipt, Shield, HelpCircle, Wallet, MessageCircle, Send, Heart, Bell, Image as ImageIcon, Flag, Eye, EyeOff } from "lucide-react";
 
 // AWS Amplify's camera and face-liveness libraries are large and are only
 // needed when a seller opens identity verification. Keep them out of the
@@ -2184,6 +2184,7 @@ function MarketplaceStallyard() {
   const [sessionUserProfile, setSessionUserProfile] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authMode, setAuthMode] = useState("register");
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
   const [pendingPasswordReset, setPendingPasswordReset] = useState(null);
   const [resetCodeInput, setResetCodeInput] = useState("");
   const [resetError, setResetError] = useState("");
@@ -10075,7 +10076,14 @@ function MarketplaceStallyard() {
                     </div>
                   )}
 
-                  <div className="space-y-3">
+                  <form
+                    className="space-y-3"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (isSignUp) register();
+                      else login();
+                    }}
+                  >
                     <input
                       value={authForm.username}
                       onChange={(e) => setAuthForm({ ...authForm, username: e.target.value })}
@@ -10096,14 +10104,28 @@ function MarketplaceStallyard() {
                         autoCapitalize="none"
                       />
                     )}
-                    <input
-                      type="password"
-                      value={authForm.password}
-                      onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-                      placeholder="Password"
-                      className="w-full px-3 py-2 rounded-lg border outline-none"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
+                    <div className="relative">
+                      <input
+                        type={showAuthPassword ? "text" : "password"}
+                        value={authForm.password}
+                        onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                        placeholder="Password"
+                        className="w-full px-3 py-2 pr-12 rounded-lg border outline-none"
+                        style={{ borderColor: "#DDD8CC" }}
+                        autoComplete={isSignUp ? "new-password" : "current-password"}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAuthPassword((visible) => !visible)}
+                        className="absolute inset-y-0 right-0 px-3 flex items-center justify-center"
+                        style={{ color: SLATE }}
+                        aria-label={showAuthPassword ? "Hide password" : "Show password"}
+                        aria-pressed={showAuthPassword}
+                        title={showAuthPassword ? "Hide password" : "Show password"}
+                      >
+                        {showAuthPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
                     {!isSignUp && (
                       <button
                         type="button"
@@ -10125,14 +10147,13 @@ function MarketplaceStallyard() {
                       </p>
                     )}
                     <button
-                      type="button"
-                      onClick={() => (isSignUp ? register() : login())}
+                      type="submit"
                       className="w-full py-2.5 rounded-lg font-medium mt-1"
                       style={{ backgroundColor: MARIGOLD, color: INK }}
                     >
                       {isSignUp ? "Continue" : "Sign in"}
                     </button>
-                  </div>
+                  </form>
                 </>
               )}
             </div>
