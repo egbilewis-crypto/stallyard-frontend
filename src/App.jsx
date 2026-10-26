@@ -1105,7 +1105,7 @@ function backendUserToMember(user, existing) {
     otherName: user.other_name || existing?.otherName || "",
     dateOfBirth: user.date_of_birth ? String(user.date_of_birth).slice(0, 10) : existing?.dateOfBirth || "",
     gender: user.gender || existing?.gender || "",
-    nationality: user.nationality || existing?.nationality || "",
+    nationality: "Nigeria",
     stateOfResidence: (user.state_of_residence || existing?.stateOfResidence || "") === "FCT (Abuja)"
       ? "Federal Capital Territory"
       : user.state_of_residence || existing?.stateOfResidence || "",
@@ -2226,7 +2226,7 @@ function MarketplaceStallyard() {
     otherName: "",
     dateOfBirth: "",
     gender: "",
-    nationality: "",
+    nationality: "Nigeria",
     stateOfResidence: "",
     lgaOfResidence: "",
     officeLocation: "",
@@ -3511,7 +3511,7 @@ function MarketplaceStallyard() {
       otherName: "",
       dateOfBirth: "",
       gender: "",
-      nationality: "",
+      nationality: "Nigeria",
       stateOfResidence: "",
       lgaOfResidence: "",
       officeLocation: "",
@@ -3558,10 +3558,6 @@ function MarketplaceStallyard() {
       setProfileStageError("Select your gender");
       return;
     }
-    if (!authForm.nationality.trim()) {
-      setProfileStageError("Enter your nationality");
-      return;
-    }
     if (!authForm.stateOfResidence) {
       setProfileStageError("Select your state of residence");
       return;
@@ -3601,7 +3597,7 @@ function MarketplaceStallyard() {
           otherName: authForm.otherName.trim(),
           dateOfBirth: authForm.dateOfBirth,
           gender: authForm.gender,
-          nationality: authForm.nationality.trim(),
+          nationality: "Nigeria",
           stateOfResidence: authForm.stateOfResidence,
           lgaOfResidence: authForm.lgaOfResidence,
           phone: authForm.phone.trim(),
@@ -3739,7 +3735,7 @@ function MarketplaceStallyard() {
       otherName: member.otherName || "",
       dateOfBirth: member.dateOfBirth || "",
       gender: member.gender || "",
-      nationality: member.nationality || "",
+      nationality: "Nigeria",
       stateOfResidence: member.stateOfResidence || "",
       lgaOfResidence: member.lgaOfResidence || "",
       officeLocation: member.officeLocation || "",
@@ -9874,13 +9870,16 @@ function MarketplaceStallyard() {
                         </select>
                       </label>
                     </div>
-                    <input
-                      value={authForm.nationality}
-                      onChange={(e) => setAuthForm({ ...authForm, nationality: e.target.value })}
-                      placeholder="Nationality"
-                      className="w-full px-3 py-2 rounded-lg border outline-none"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
+                    <label className="block text-xs" style={{ color: SLATE }}>
+                      Nationality
+                      <input
+                        value="Nigeria"
+                        readOnly
+                        aria-readonly="true"
+                        className="block w-full mt-1 px-3 py-2 rounded-lg border bg-gray-50 cursor-not-allowed"
+                        style={{ borderColor: "#DDD8CC", color: INK }}
+                      />
+                    </label>
                     <select
                       value={authForm.stateOfResidence}
                       onChange={(e) => setAuthForm({ ...authForm, stateOfResidence: e.target.value, lgaOfResidence: "" })}
