@@ -863,6 +863,10 @@ function isValidPhone(phone) {
   return trimmed.startsWith("+") && digits.length >= 8 && digits.length <= 15;
 }
 
+function isValidNigerianLocalPhone(phone) {
+  return /^0[789]\d{9}$/.test(String(phone || "").trim());
+}
+
 const NIGERIA_COUNTRY_ALIASES = ["nigeria", "ng"];
 function isNigeria(country) {
   return NIGERIA_COUNTRY_ALIASES.includes((country || "").trim().toLowerCase());
@@ -3578,8 +3582,8 @@ function MarketplaceStallyard() {
       setProfileStageError("Stallyard is available in Nigeria only. Enter Nigeria as your country of residence.");
       return;
     }
-    if (authForm.phone.trim() && !isValidPhone(authForm.phone)) {
-      setProfileStageError("That phone number doesn't look right — check it and try again");
+    if (authForm.phone.trim() && !isValidNigerianLocalPhone(authForm.phone)) {
+      setProfileStageError("Enter an 11-digit Nigerian phone number, for example 08032167464");
       return;
     }
     if (!authForm.phone.trim()) {
@@ -9901,12 +9905,17 @@ function MarketplaceStallyard() {
                     </select>
                     <input
                       type="tel"
+                      inputMode="numeric"
+                      maxLength={11}
                       value={authForm.phone}
-                      onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value })}
-                      placeholder="Nigerian phone number"
+                      onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })}
+                      placeholder="08032167464"
                       className="w-full px-3 py-2 rounded-lg border outline-none"
                       style={{ borderColor: "#DDD8CC" }}
                     />
+                    <p className="text-xs -mt-2" style={{ color: SLATE }}>
+                      Example: 08032167464 — enter all 11 digits starting with 0.
+                    </p>
                     {profileStageError && (
                       <p className="text-sm" style={{ color: BERRY }}>
                         {profileStageError}
