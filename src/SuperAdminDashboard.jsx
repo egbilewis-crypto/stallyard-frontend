@@ -2276,6 +2276,40 @@ export default function SuperAdminDashboard({ scope }) {
                   </>
                 )}
 
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                  <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
+                    <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                      Phone verification SMS provider
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      New verification codes use the active provider. A code already sent will still be checked by
+                      the provider that issued it.
+                    </p>
+                    <div className="p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}>
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <span className="text-sm" style={{ color: SLATE }}>Active provider</span>
+                        <span className="px-3 py-1 rounded-full text-sm font-semibold" style={{ backgroundColor: "#EAF5EE", color: SAGE }}>
+                          {settings.smsProvider === "sendchamp" ? "Sendchamp" : "Termii"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const smsProvider = settings.smsProvider === "sendchamp" ? "termii" : "sendchamp";
+                          persistSettings({ ...settings, smsProvider }, "smsProvider");
+                        }}
+                        className="w-full px-4 py-2.5 rounded-lg text-sm font-semibold"
+                        style={{ backgroundColor: MARIGOLD, color: INK }}
+                      >
+                        Switch to {settings.smsProvider === "sendchamp" ? "Termii" : "Sendchamp"}
+                      </button>
+                    </div>
+                    <p className="text-xs mt-3" style={{ color: SLATE }}>
+                      The switch is blocked if the selected provider's API key is missing from Railway.
+                    </p>
+                  </div>
+                )}
+
                 {hasAdminPermission(currentMember, "content_management") && (
                 <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
                   <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
