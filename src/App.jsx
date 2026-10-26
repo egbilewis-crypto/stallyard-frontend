@@ -2342,7 +2342,7 @@ function MarketplaceStallyard() {
   const setBuyerOrderSearch = (value) => setRouteField("orderSearch", value);
   const buyerOrderStatusFilter = route.orderStatus;
   const setBuyerOrderStatusFilter = (value) => setRouteField("orderStatus", value);
-  const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "" });
+  const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "", smsProvider: "termii" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [homepageAds, setHomepageAds] = useState([
     { slot: 1, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
@@ -2749,7 +2749,7 @@ function MarketplaceStallyard() {
         const settingsRes = await backendFetch(`${BACKEND_URL}/settings`);
         if (settingsRes.ok) {
           const raw = await settingsRes.json();
-          setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "" });
+          setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "", smsProvider: raw.smsProvider === "sendchamp" ? "sendchamp" : "termii" });
         }
       } catch {
         // keep default settings
@@ -4338,6 +4338,7 @@ function MarketplaceStallyard() {
     const body = {};
     if (field === "commissionRate" || next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
     if (field === "taxRate" || next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
+    if (field === "smsProvider" || next.smsProvider !== settings.smsProvider) body.smsProvider = next.smsProvider;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
       // Older admin buttons pass the already-edited state without a field.
@@ -4361,7 +4362,7 @@ function MarketplaceStallyard() {
         showToast(data.error || "Couldn't save settings — try again");
         return false;
       }
-      setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "" });
+      setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "", smsProvider: data.smsProvider === "sendchamp" ? "sendchamp" : "termii" });
       showToast("Settings saved");
       return true;
     } catch {
