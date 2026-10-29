@@ -1104,6 +1104,7 @@ function backendUserToMember(user, existing) {
     displayName: user.display_name || user.username,
     email: user.email,
     phone: user.phone || existing?.phone || "",
+    stallyardTextNumber: user.stallyard_text_number || existing?.stallyardTextNumber || "",
     firstName: user.first_name || existing?.firstName || "",
     lastName: user.last_name || existing?.lastName || "",
     otherName: user.other_name || existing?.otherName || "",
@@ -2439,6 +2440,7 @@ function MarketplaceStallyard() {
   const [accountEmailCodeInput, setAccountEmailCodeInput] = useState("");
   const [verifyingAccountEmail, setVerifyingAccountEmail] = useState(false);
   const [accountPhoneInput, setAccountPhoneInput] = useState("");
+  const [accountPhoneMethod, setAccountPhoneMethod] = useState("stallyard_text");
   const [accountPhoneCodeSent, setAccountPhoneCodeSent] = useState(false);
   const [accountPhoneCodeInput, setAccountPhoneCodeInput] = useState("");
   const [verifyingAccountPhone, setVerifyingAccountPhone] = useState(false);
@@ -7416,14 +7418,18 @@ function MarketplaceStallyard() {
 
   const sendAccountPhoneCode = async () => {
     if (!accountPhoneInput.trim()) {
-      showToast("Enter a phone number");
+      showToast(accountPhoneMethod === "stallyard_text" ? "Enter your private ST number" : "Enter a Nigerian phone number");
       return;
     }
     try {
-      const res = await backendFetch(`${BACKEND_URL}/phone-verify/send`, {
+      const isStallyardText = accountPhoneMethod === "stallyard_text";
+      const request = isStallyardText ? authFetch : backendFetch;
+      const res = await request(`${BACKEND_URL}/${isStallyardText ? "st-number-verify" : "phone-verify"}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: accountPhoneInput.trim() }),
+        body: JSON.stringify(isStallyardText
+          ? { stNumber: accountPhoneInput.trim() }
+          : { phone: accountPhoneInput.trim() }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -7432,7 +7438,7 @@ function MarketplaceStallyard() {
       }
       setAccountPhoneCodeSent(true);
       setAccountPhoneCodeInput("");
-      showToast("Check your phone for a code");
+      showToast(isStallyardText ? "Check Stallyard Text for your code" : "Check your Nigerian phone for an SMS code");
     } catch {
       showToast("Couldn't reach the server — try again");
     }
@@ -7440,25 +7446,31 @@ function MarketplaceStallyard() {
 
   const confirmAccountPhoneCode = async () => {
     if (!accountPhoneCodeInput.trim()) {
-      showToast("Enter the code we texted you");
+      showToast(accountPhoneMethod === "stallyard_text" ? "Enter the code sent to Stallyard Text" : "Enter the SMS code");
       return;
     }
     setVerifyingAccountPhone(true);
     try {
-      const checkRes = await backendFetch(`${BACKEND_URL}/phone-verify/check`, {
+      const isStallyardText = accountPhoneMethod === "stallyard_text";
+      const request = isStallyardText ? authFetch : backendFetch;
+      const checkRes = await request(`${BACKEND_URL}/${isStallyardText ? "st-number-verify" : "phone-verify"}/check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }),
+        body: JSON.stringify(isStallyardText
+          ? { stNumber: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }
+          : { phone: accountPhoneInput.trim(), code: accountPhoneCodeInput.trim() }),
       });
       const checkData = await checkRes.json();
       if (!checkRes.ok || !checkData.valid) {
         showToast("That code doesn't match — check and try again");
         return;
       }
-      const attachRes = await authFetch(`${BACKEND_URL}/profile/verify-phone`, {
+      const attachRes = await authFetch(`${BACKEND_URL}/profile/${isStallyardText ? "verify-st-number" : "verify-phone"}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: accountPhoneInput.trim() }),
+        body: JSON.stringify(isStallyardText
+          ? { stNumber: accountPhoneInput.trim() }
+          : { phone: accountPhoneInput.trim() }),
       });
       if (!attachRes.ok) {
         showToast("Couldn't confirm that — try again");
@@ -7466,13 +7478,21 @@ function MarketplaceStallyard() {
       }
       await persistMembers(
         members.map((m) =>
-          m.username === currentUser ? { ...m, phone: accountPhoneInput.trim(), isPhoneVerified: true } : m
+          m.username === currentUser
+            ? {
+                ...m,
+                ...(isStallyardText
+                  ? { stallyardTextNumber: checkData.stNumber || accountPhoneInput.trim().toUpperCase() }
+                  : { phone: accountPhoneInput.trim() }),
+                isPhoneVerified: true,
+              }
+            : m
         )
       );
       setAccountPhoneCodeSent(false);
       setAccountPhoneCodeInput("");
       setAccountPhoneInput("");
-      showToast("Phone verified");
+      showToast(isStallyardText ? "Private ST number verified" : "Nigerian phone number verified");
     } catch {
       showToast("Couldn't reach the server — try again");
     } finally {
@@ -15751,26 +15771,61 @@ function MarketplaceStallyard() {
                   <div className="pt-3 mt-3" style={{ borderTop: "1px solid #EFEBE0" }}>
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm" style={{ color: INK }}>
-                        Phone {currentMember?.phone ? `(${currentMember.phone})` : ""}
+                        Phone identity {currentMember?.isPhoneVerified
+                          ? `(${currentMember.stallyardTextNumber || currentMember.phone || "verified"})`
+                          : ""}
                       </span>
                       {currentMember?.isPhoneVerified && <Tag color={SAGE}>Verified</Tag>}
                     </div>
                     {!currentMember?.isPhoneVerified && !accountPhoneCodeSent && (
-                      <div className="flex items-center gap-2 mt-2">
-                        <input
-                          value={accountPhoneInput}
-                          onChange={(e) => setAccountPhoneInput(e.target.value)}
-                          placeholder={currentMember?.phone || "Phone number"}
-                          className="px-3 py-2 rounded-lg border outline-none text-sm"
-                          style={{ borderColor: "#DDD8CC" }}
-                        />
-                        <button
-                          onClick={sendAccountPhoneCode}
-                          className="px-3 py-2 rounded-lg text-sm font-medium"
-                          style={{ backgroundColor: INK, color: "white" }}
-                        >
-                          Send code
-                        </button>
+                      <div className="mt-2">
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          <button
+                            type="button"
+                            onClick={() => { setAccountPhoneMethod("stallyard_text"); setAccountPhoneInput(""); }}
+                            className="px-3 py-1.5 rounded-lg border text-xs font-medium"
+                            style={{
+                              borderColor: accountPhoneMethod === "stallyard_text" ? INK : "#DDD8CC",
+                              backgroundColor: accountPhoneMethod === "stallyard_text" ? INK : "white",
+                              color: accountPhoneMethod === "stallyard_text" ? "white" : INK,
+                            }}
+                          >
+                            Stallyard Text ST number
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setAccountPhoneMethod("sms"); setAccountPhoneInput(currentMember?.phone || ""); }}
+                            className="px-3 py-1.5 rounded-lg border text-xs font-medium"
+                            style={{
+                              borderColor: accountPhoneMethod === "sms" ? INK : "#DDD8CC",
+                              backgroundColor: accountPhoneMethod === "sms" ? INK : "white",
+                              color: accountPhoneMethod === "sms" ? "white" : INK,
+                            }}
+                          >
+                            Nigerian SMS
+                          </button>
+                        </div>
+                        <p className="text-xs mb-2" style={{ color: SLATE }}>
+                          {accountPhoneMethod === "stallyard_text"
+                            ? "The code will arrive in your Stallyard Text app."
+                            : "The code will arrive by SMS through the existing Nigerian SMS service."}
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={accountPhoneInput}
+                            onChange={(e) => setAccountPhoneInput(e.target.value)}
+                            placeholder={accountPhoneMethod === "stallyard_text" ? "ST-123-456-789" : (currentMember?.phone || "08032167464")}
+                            className="px-3 py-2 rounded-lg border outline-none text-sm"
+                            style={{ borderColor: "#DDD8CC" }}
+                          />
+                          <button
+                            onClick={sendAccountPhoneCode}
+                            className="px-3 py-2 rounded-lg text-sm font-medium"
+                            style={{ backgroundColor: INK, color: "white" }}
+                          >
+                            Send code
+                          </button>
+                        </div>
                       </div>
                     )}
                     {!currentMember?.isPhoneVerified && accountPhoneCodeSent && (
@@ -15792,7 +15847,7 @@ function MarketplaceStallyard() {
                           {verifyingAccountPhone ? "Checking..." : "Confirm"}
                         </button>
                         <button
-                          onClick={() => setAccountPhoneCodeSent(false)}
+                          onClick={() => { setAccountPhoneCodeSent(false); setAccountPhoneCodeInput(""); }}
                           className="text-xs font-medium underline"
                           style={{ color: SLATE }}
                         >
