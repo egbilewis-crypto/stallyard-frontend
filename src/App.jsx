@@ -2198,6 +2198,7 @@ function MarketplaceStallyard() {
   const [resetCodeInput, setResetCodeInput] = useState("");
   const [resetError, setResetError] = useState("");
   const [resetIdentifier, setResetIdentifier] = useState("");
+  const [resetMethod, setResetMethod] = useState("email");
   const [newPasswordForm, setNewPasswordForm] = useState({ password: "", confirm: "" });
   const [authError, setAuthError] = useState("");
   const [pendingTwoFactor, setPendingTwoFactor] = useState(null);
@@ -3778,7 +3779,7 @@ function MarketplaceStallyard() {
       res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({ username, method: resetMethod }),
       });
     } catch {
       setResetError("Couldn't reach the server — check your connection and try again.");
@@ -3789,7 +3790,7 @@ function MarketplaceStallyard() {
       setResetError(data.error || "Couldn't send a reset code.");
       return;
     }
-    setPendingPasswordReset({ username, maskedEmail: data.maskedEmail, verified: false, resetToken: null });
+    setPendingPasswordReset({ username, method: resetMethod, maskedEmail: data.maskedEmail, maskedStNumber: data.maskedStNumber, verified: false, resetToken: null });
     setResetCodeInput("");
   };
 
@@ -3800,7 +3801,7 @@ function MarketplaceStallyard() {
       res = await backendFetch(`${BACKEND_URL}/password-reset/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: pendingPasswordReset.username }),
+        body: JSON.stringify({ username: pendingPasswordReset.username, method: pendingPasswordReset.method || "email" }),
       });
     } catch {
       setResetError("Couldn't reach the server — check your connection and try again.");
@@ -9971,8 +9972,26 @@ function MarketplaceStallyard() {
                         Reset your password
                       </h1>
                       <p className="text-sm mb-4" style={{ color: SLATE }}>
-                        Enter your username and we'll email a code to the address on file.
+                        Enter your username and choose where you want to receive the reset code.
                       </p>
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                        <button
+                          type="button"
+                          onClick={() => setResetMethod("stallyard_text")}
+                          className="py-2.5 px-3 rounded-lg border text-sm font-semibold"
+                          style={{ borderColor: resetMethod === "stallyard_text" ? MARIGOLD : "#DDD8CC", backgroundColor: resetMethod === "stallyard_text" ? "#FFF3D6" : "white", color: INK }}
+                        >
+                          Stallyard Text
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setResetMethod("email")}
+                          className="py-2.5 px-3 rounded-lg border text-sm font-semibold"
+                          style={{ borderColor: resetMethod === "email" ? MARIGOLD : "#DDD8CC", backgroundColor: resetMethod === "email" ? "#FFF3D6" : "white", color: INK }}
+                        >
+                          Email
+                        </button>
+                      </div>
                       <input
                         value={resetIdentifier}
                         onChange={(e) => {
@@ -10016,7 +10035,7 @@ function MarketplaceStallyard() {
                         Enter your code
                       </h1>
                       <p className="text-sm mb-4" style={{ color: SLATE }}>
-                        We sent a code to {pendingPasswordReset.maskedEmail || "the email on file"}. Enter it below.
+                        We sent a code to {pendingPasswordReset.method === "stallyard_text" ? (pendingPasswordReset.maskedStNumber || "your verified ST number") : (pendingPasswordReset.maskedEmail || "the email on file")}. Enter it below.
                       </p>
                       <input
                         value={resetCodeInput}
