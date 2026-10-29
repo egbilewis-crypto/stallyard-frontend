@@ -3769,9 +3769,9 @@ function MarketplaceStallyard() {
 
   const requestPasswordReset = async () => {
     setResetError("");
-    const username = resetIdentifier.trim().toLowerCase();
+    const username = resetIdentifier.trim();
     if (!username) {
-      setResetError("Enter your username");
+      setResetError(resetMethod === "stallyard_text" ? "Enter your username or verified ST number" : "Enter your username");
       return;
     }
     let res;
@@ -9972,7 +9972,7 @@ function MarketplaceStallyard() {
                         Reset your password
                       </h1>
                       <p className="text-sm mb-4" style={{ color: SLATE }}>
-                        Enter your username and choose where you want to receive the reset code.
+                        Choose where you want to receive the reset code, then enter the requested account information.
                       </p>
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         <button
@@ -9999,7 +9999,7 @@ function MarketplaceStallyard() {
                           if (resetError) setResetError("");
                         }}
                         onKeyDown={(e) => e.key === "Enter" && requestPasswordReset()}
-                        placeholder="Username"
+                        placeholder={resetMethod === "stallyard_text" ? "Username or ST-123-456-789" : "Username"}
                         className="w-full mb-2 px-3 py-2 rounded-lg border outline-none"
                         style={{ borderColor: "#DDD8CC" }}
                         autoCapitalize="none"
