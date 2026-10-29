@@ -2202,6 +2202,7 @@ function MarketplaceStallyard() {
   const [newPasswordForm, setNewPasswordForm] = useState({ password: "", confirm: "" });
   const [authError, setAuthError] = useState("");
   const [pendingTwoFactor, setPendingTwoFactor] = useState(null);
+  const [rememberTwoFactorDevice, setRememberTwoFactorDevice] = useState(false);
   const [twoFactorCodeInput, setTwoFactorCodeInput] = useState("");
   const [savingTwoFactorToggle, setSavingTwoFactorToggle] = useState(false);
   // Turning 2FA ON now requires emailing + confirming a code first, tracked
@@ -3677,6 +3678,7 @@ function MarketplaceStallyard() {
     if (data.twoFactorRequired) {
       setPendingTwoFactor({ userId: data.userId, username: loginIdentifier, method: data.method || "email" });
       setTwoFactorCodeInput("");
+      setRememberTwoFactorDevice(false);
       return;
     }
     await completeLogin(data, loginIdentifier);
@@ -3694,7 +3696,11 @@ function MarketplaceStallyard() {
       res = await backendFetch(`${BACKEND_URL}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: pendingTwoFactor.userId, code: twoFactorCodeInput.trim() }),
+        body: JSON.stringify({
+          userId: pendingTwoFactor.userId,
+          code: twoFactorCodeInput.trim(),
+          rememberDevice: pendingTwoFactor.method === "email" && rememberTwoFactorDevice,
+        }),
       });
     } catch {
       setAuthError("Couldn't reach the server — check your connection and try again.");
@@ -3715,6 +3721,7 @@ function MarketplaceStallyard() {
     const username = pendingTwoFactor.username;
     setPendingTwoFactor(null);
     setTwoFactorCodeInput("");
+    setRememberTwoFactorDevice(false);
     await completeLogin(data, username);
   };
 
@@ -9709,6 +9716,17 @@ function MarketplaceStallyard() {
                       {authError}
                     </p>
                   )}
+                  {pendingTwoFactor.method === "email" && (
+                    <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer" style={{ color: INK }}>
+                      <input
+                        type="checkbox"
+                        checked={rememberTwoFactorDevice}
+                        onChange={(e) => setRememberTwoFactorDevice(e.target.checked)}
+                        className="w-4 h-4"
+                      />
+                      <span>Remember this device for 30 days</span>
+                    </label>
+                  )}
                   <button
                     type="button"
                     onClick={verifyTwoFactorCode}
@@ -9722,6 +9740,7 @@ function MarketplaceStallyard() {
                     onClick={() => {
                       setPendingTwoFactor(null);
                       setTwoFactorCodeInput("");
+                      setRememberTwoFactorDevice(false);
                       setAuthError("");
                     }}
                     className="text-xs font-medium underline mt-3"
