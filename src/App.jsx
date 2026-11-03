@@ -2573,6 +2573,7 @@ function MarketplaceStallyard() {
   const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
   const [premiumSellerLimit, setPremiumSellerLimit] = useState("25000000");
+  const [premiumSellerFormOpen, setPremiumSellerFormOpen] = useState(false);
   const [premiumSellerConsent, setPremiumSellerConsent] = useState(false);
   const [premiumSellerForm, setPremiumSellerForm] = useState({ businessType: "individual", cacNumber: "", inventorySource: "" });
   const [premiumSellerDocuments, setPremiumSellerDocuments] = useState({ addressProof: null, inventoryProof: null, cacDocument: null });
@@ -3348,6 +3349,7 @@ function MarketplaceStallyard() {
       if (!response.ok) throw new Error(data.error || "Premium Seller application could not be submitted");
       setBankStatementDraft(null);
       setPremiumSellerConsent(false);
+      setPremiumSellerFormOpen(false);
       setPremiumSellerForm({ businessType: "individual", cacNumber: "", inventorySource: "" });
       setPremiumSellerDocuments({ addressProof: null, inventoryProof: null, cacDocument: null });
       setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
@@ -11603,13 +11605,17 @@ function MarketplaceStallyard() {
                   Draft, sold, cancelled, expired and removed listings do not count. Premium Seller approval is required above this combined limit.
                 </p>
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
-                  <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
                   {casualSellerStatus?.premiumApplication?.status === "pending" ? (
                     <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
                       <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
                       <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
                     </div>
                   ) : (<>
+                    <button type="button" onClick={() => setPremiumSellerFormOpen((open) => !open)} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                      {premiumSellerFormOpen ? "Close Premium Seller form" : "Apply for Premium Seller"}
+                    </button>
+                    {premiumSellerFormOpen && (
+                    <div className="mt-4">
                     {casualSellerStatus?.premiumApplication?.status === "rejected" && (
                       <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
                         <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
@@ -11656,6 +11662,8 @@ function MarketplaceStallyard() {
                     </div>
                     <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit, identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review.</span></label>
                     <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                    </div>
+                    )}
                   </>)}
                 </div>
               </div>
@@ -12371,13 +12379,17 @@ function MarketplaceStallyard() {
                   ₦20,000,000 combined active-listing limit. Only active listings count. Premium Seller approval is required above ₦20,000,000.
                 </p>
                 <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
-                  <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
                   {casualSellerStatus?.premiumApplication?.status === "pending" ? (
                     <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
                       <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
                       <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
                     </div>
                   ) : (<>
+                    <button type="button" onClick={() => setPremiumSellerFormOpen((open) => !open)} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>
+                      {premiumSellerFormOpen ? "Close Premium Seller form" : "Apply for Premium Seller"}
+                    </button>
+                    {premiumSellerFormOpen && (
+                    <div className="mt-4">
                     {casualSellerStatus?.premiumApplication?.status === "rejected" && (
                       <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
                         <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
@@ -12424,6 +12436,8 @@ function MarketplaceStallyard() {
                     </div>
                     <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit, identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review.</span></label>
                     <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                    </div>
+                    )}
                   </>)}
                 </div>
               </div>
