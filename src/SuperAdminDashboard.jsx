@@ -1151,8 +1151,21 @@ export default function SuperAdminDashboard({ scope }) {
                     <h4 className="font-semibold text-sm mb-2" style={{ color: INK }}>Premium Seller applications awaiting approval</h4>
                     <div className="space-y-2">{premiumSellerApplications.filter((application) => application.status === "pending").map((application) => (
                       <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
-                        <div><strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong><p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested {formatMoney(Number(application.requested_limit), "NGN")}</p></div>
-                        <div className="flex gap-2 flex-wrap"><button onClick={() => viewPremiumSellerDocument(application)} className="text-xs font-medium underline" style={{ color: INK }}>View supporting document</button><button onClick={() => decidePremiumSellerApplication(application, true)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Premium Seller</button><button onClick={() => decidePremiumSellerApplication(application, false)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button></div>
+                        <div>
+                          <strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong>
+                          <p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested {formatMoney(Number(application.requested_limit), "NGN")}</p>
+                          <p className="text-xs mt-1" style={{ color: SLATE }}>{application.business_type === "business" ? `Registered business · CAC ${application.cac_number || "not supplied"}` : "Individual seller"} · liveness {Math.round(Number(application.liveness_confidence || 0))}%</p>
+                          <p className="text-xs mt-1 max-w-xl" style={{ color: SLATE }}><strong style={{ color: INK }}>Inventory source:</strong> {application.inventory_source || "Not supplied"}</p>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          <button onClick={() => viewPremiumSellerDocument(application, "financial")} className="text-xs font-medium underline" style={{ color: INK }}>Financial document</button>
+                          <button onClick={() => viewPremiumSellerDocument(application, "address")} className="text-xs font-medium underline" style={{ color: INK }}>Address proof</button>
+                          <button onClick={() => viewPremiumSellerDocument(application, "inventory")} className="text-xs font-medium underline" style={{ color: INK }}>Inventory proof</button>
+                          <button onClick={() => viewPremiumSellerDocument(application, "liveness")} className="text-xs font-medium underline" style={{ color: INK }}>Liveness image</button>
+                          {application.has_cac_document && <button onClick={() => viewPremiumSellerDocument(application, "cac")} className="text-xs font-medium underline" style={{ color: INK }}>CAC document</button>}
+                          <button onClick={() => decidePremiumSellerApplication(application, true)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: SAGE, color: "white" }}>Approve Premium Seller</button>
+                          <button onClick={() => decidePremiumSellerApplication(application, false)} className="text-xs font-semibold px-3 py-1.5 rounded-lg" style={{ backgroundColor: BERRY, color: "white" }}>Reject</button>
+                        </div>
                       </div>
                     ))}</div>
                   </div>
