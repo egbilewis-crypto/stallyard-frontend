@@ -1153,8 +1153,9 @@ export default function SuperAdminDashboard({ scope }) {
                       <div key={application.id} className="bg-white p-3 rounded-lg flex items-center justify-between gap-3 flex-wrap">
                         <div>
                           <strong className="text-sm" style={{ color: INK }}>{application.display_name || application.username}</strong>
-                          <p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested {formatMoney(Number(application.requested_limit), "NGN")}</p>
-                          <p className="text-xs mt-1" style={{ color: SLATE }}>{application.business_type === "business" ? `Registered business · CAC ${application.cac_number || "not supplied"}` : "Individual seller"} · approved Verified Seller identity reused</p>
+                          <p className="text-xs" style={{ color: SLATE }}>@{application.username} · {application.reference} · requested combined limit: Unlimited</p>
+                          <p className="text-xs mt-1" style={{ color: application.business_type === "business" ? SLATE : BERRY }}>{application.business_type === "business" ? `Registered business · CAC ${application.cac_number || "not supplied"}` : "Legacy individual application — reject and request a new registered-business application"} · approved Verified Seller identity reused</p>
+                          <p className="text-xs mt-1" style={{ color: application.site_verification_consent ? SAGE : BERRY }}>Annual location verification and one unannounced visit per year: {application.site_verification_consent ? "consent accepted" : "consent missing"}</p>
                           <p className="text-xs mt-1 max-w-xl" style={{ color: SLATE }}><strong style={{ color: INK }}>Inventory source:</strong> {application.inventory_source || "Not supplied"}</p>
                         </div>
                         <div className="flex gap-2 flex-wrap">
