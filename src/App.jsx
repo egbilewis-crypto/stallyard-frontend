@@ -2318,6 +2318,7 @@ function MarketplaceStallyard() {
   const [watchlist, setWatchlist] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [notificationInboxFocusId, setNotificationInboxFocusId] = useState(null);
   const cartOpen = route.cart;
   const setCartOpen = (value) => setRouteField("cart", value);
   const [shippingForm, setShippingForm] = useState({
@@ -4185,10 +4186,7 @@ function MarketplaceStallyard() {
     }
   };
 
-  const openNotification = (notification) => {
-    if (!notification.read) void markNotificationRead(notification.id);
-    setNotifPanelOpen(false);
-
+  const openNotificationDestination = (notification) => {
     const type = String(notification.type || "").toLowerCase();
     const sellerOrderTypes = new Set([
       "ship_reminder",
@@ -4235,6 +4233,14 @@ function MarketplaceStallyard() {
       setActiveThreadOrderId(null);
       setView("messages");
     }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const openNotification = (notification) => {
+    if (!notification.read) void markNotificationRead(notification.id);
+    setNotificationInboxFocusId(notification.id);
+    setNotifPanelOpen(false);
+    setView("notifications");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -10709,6 +10715,19 @@ function MarketplaceStallyard() {
                 </button>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setNotificationInboxFocusId(null);
+                setNotifPanelOpen(false);
+                setView("notifications");
+                window.scrollTo({ top: 0, behavior: "smooth" });
+              }}
+              className="w-full px-4 py-3 text-left text-sm font-semibold border-b"
+              style={{ borderColor: "#EFEBE0", color: INK, backgroundColor: "#FFF9EF" }}
+            >
+              Open notification inbox →
+            </button>
             {notifications.length === 0 ? (
               <p className="text-sm p-4" style={{ color: SLATE }}>
                 No notifications yet.
@@ -16326,6 +16345,71 @@ function MarketplaceStallyard() {
                   </div>
                 )}
               </>
+            )}
+          </div>
+        )}
+
+        {view === "notifications" && (
+          <div className="max-w-3xl mx-auto">
+            <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
+              <div>
+                <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+                  Notification inbox
+                </h2>
+                <p className="text-sm mt-1" style={{ color: SLATE }}>
+                  Order, payment, account, and marketplace updates in one place.
+                </p>
+              </div>
+              {notifications.some((notification) => !notification.read) && (
+                <button
+                  type="button"
+                  onClick={markNotificationsRead}
+                  className="px-4 py-2 rounded-lg border text-sm font-semibold bg-white"
+                  style={{ borderColor: "#DDD8CC", color: INK }}
+                >
+                  Mark all as read
+                </button>
+              )}
+            </div>
+
+            {notifications.length === 0 ? (
+              <div className="p-6 rounded-xl border bg-white text-center" style={{ borderColor: "#DDD8CC" }}>
+                <Bell size={28} className="mx-auto mb-2" style={{ color: SLATE }} />
+                <p className="text-sm font-semibold" style={{ color: INK }}>Your notification inbox is empty</p>
+                <p className="text-xs mt-1" style={{ color: SLATE }}>New Stallyard updates will appear here.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {notifications.map((notification) => {
+                  const focused = notification.id === notificationInboxFocusId;
+                  return (
+                    <article
+                      key={notification.id}
+                      className="p-4 rounded-xl border bg-white"
+                      style={{
+                        borderColor: focused ? MARIGOLD : "#DDD8CC",
+                        boxShadow: focused ? "0 0 0 2px rgba(232, 169, 77, 0.16)" : "none",
+                      }}
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="mt-1 w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: notification.read ? "#D5D1C7" : MARIGOLD }} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm" style={{ color: INK, fontWeight: notification.read ? 500 : 700 }}>{notification.message}</p>
+                          <p className="text-xs mt-1" style={{ color: SLATE }}>{new Date(notification.createdAt).toLocaleString()}</p>
+                          <button
+                            type="button"
+                            onClick={() => openNotificationDestination(notification)}
+                            className="mt-3 text-xs font-semibold underline"
+                            style={{ color: INK }}
+                          >
+                            Open related page
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}
