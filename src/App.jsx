@@ -1152,6 +1152,7 @@ function backendUserToMember(user, existing) {
     casualSellerApprovedAt: user.casual_seller_approved_at ?? existing?.casualSellerApprovedAt ?? null,
     sellerTier: user.seller_tier ?? existing?.sellerTier ?? (user.is_approved ? "verified" : "buyer"),
     sellerListingLimit: Number(user.seller_listing_limit ?? existing?.sellerListingLimit ?? 20000000),
+    premiumUnlimited: !!(user.premium_unlimited ?? existing?.premiumUnlimited),
     sellerSuspended: !!(user.seller_suspended ?? existing?.sellerSuspended),
     sellerSuspendedReason: user.seller_suspended_reason ?? existing?.sellerSuspendedReason ?? "",
     phoneVerified: existing?.phoneVerified || true,
@@ -2573,10 +2574,9 @@ function MarketplaceStallyard() {
   const [verifiedSellerIdImages, setVerifiedSellerIdImages] = useState({ front: "", back: "" });
   const [uploadingVerifiedSellerId, setUploadingVerifiedSellerId] = useState(false);
   const [verifiedSellerConsent, setVerifiedSellerConsent] = useState(false);
-  const [premiumSellerLimit, setPremiumSellerLimit] = useState("25000000");
   const [premiumSellerFormOpen, setPremiumSellerFormOpen] = useState(false);
   const [premiumSellerConsent, setPremiumSellerConsent] = useState(false);
-  const [premiumSellerForm, setPremiumSellerForm] = useState({ businessType: "individual", cacNumber: "", inventorySource: "" });
+  const [premiumSellerForm, setPremiumSellerForm] = useState({ businessType: "business", cacNumber: "", inventorySource: "" });
   const [premiumSellerDocuments, setPremiumSellerDocuments] = useState({ addressProof: null, inventoryProof: null, cacDocument: null });
   const [uploadingPremiumDocument, setUploadingPremiumDocument] = useState("");
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
@@ -3319,31 +3319,26 @@ function MarketplaceStallyard() {
       showToast("Your Premium Seller application is already awaiting review");
       return;
     }
-    const requestedLimit = Number(premiumSellerLimit);
-    if (!Number.isFinite(requestedLimit) || requestedLimit <= 20000000) {
-      showToast("Request a limit above ₦20,000,000");
-      return;
-    }
     if (!bankStatementDraft) { showToast("Upload a recent bank statement or financial supporting document"); return; }
     if (!premiumSellerDocuments.addressProof) { showToast("Upload proof of your current address"); return; }
     if (!premiumSellerDocuments.inventoryProof) { showToast("Upload proof that you own or source the inventory"); return; }
     if (premiumSellerForm.inventorySource.trim().length < 20) { showToast("Explain where your Premium inventory comes from"); return; }
-    if (premiumSellerForm.businessType === "business" && !premiumSellerForm.cacNumber.trim()) { showToast("Enter the CAC registration number"); return; }
-    if (premiumSellerForm.businessType === "business" && !premiumSellerDocuments.cacDocument) { showToast("Upload the CAC registration document"); return; }
+    if (!premiumSellerForm.cacNumber.trim()) { showToast("Enter the CAC registration number"); return; }
+    if (!premiumSellerDocuments.cacDocument) { showToast("Upload the CAC registration document"); return; }
     if (!premiumSellerConsent) { showToast("Accept the Premium Seller declaration"); return; }
     try {
       const response = await authFetch(`${BACKEND_URL}/premium-seller/apply`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestedLimit,
           supportingDocument: bankStatementDraft,
           addressProof: premiumSellerDocuments.addressProof,
           inventoryProof: premiumSellerDocuments.inventoryProof,
-          cacDocument: premiumSellerForm.businessType === "business" ? premiumSellerDocuments.cacDocument : null,
-          businessType: premiumSellerForm.businessType,
-          cacNumber: premiumSellerForm.businessType === "business" ? premiumSellerForm.cacNumber.trim() : null,
+          cacDocument: premiumSellerDocuments.cacDocument,
+          businessType: "business",
+          cacNumber: premiumSellerForm.cacNumber.trim(),
           inventorySource: premiumSellerForm.inventorySource.trim(),
           consent: true,
+          siteVerificationConsent: true,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -3351,11 +3346,12 @@ function MarketplaceStallyard() {
       setBankStatementDraft(null);
       setPremiumSellerConsent(false);
       setPremiumSellerFormOpen(false);
-      setPremiumSellerForm({ businessType: "individual", cacNumber: "", inventorySource: "" });
+      setPremiumSellerForm({ businessType: "business", cacNumber: "", inventorySource: "" });
       setPremiumSellerDocuments({ addressProof: null, inventoryProof: null, cacDocument: null });
       setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
         reference: data.reference,
-        requested_limit: requestedLimit,
+        requested_limit: null,
+        unlimited_requested: true,
         status: "pending",
         decision_reason: null,
         created_at: new Date().toISOString(),
@@ -6228,12 +6224,10 @@ function MarketplaceStallyard() {
   const decidePremiumSellerApplication = async (application, approve) => {
     const reason = approve ? "" : window.prompt("Reason for rejection");
     if (!approve && !reason) return;
-    const approvedLimit = approve ? Number(window.prompt("Approved combined active-listing limit", String(application.requested_limit))) : null;
-    if (approve && (!Number.isFinite(approvedLimit) || approvedLimit <= 20000000)) { showToast("Enter an approved limit above ₦20,000,000"); return; }
     try {
       const response = await authFetch(`${BACKEND_URL}/admin/premium-seller-applications/${application.id}/${approve ? "approve" : "reject"}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(approve ? { approvedLimit } : { reason }),
+        body: JSON.stringify(approve ? {} : { reason }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Application could not be updated");
@@ -11680,7 +11674,7 @@ function MarketplaceStallyard() {
                   {casualSellerStatus?.premiumApplication?.status === "pending" ? (
                     <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
                       <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested combined limit: Unlimited</p>
                     </div>
                   ) : (<>
                     <button type="button" onClick={() => setPremiumSellerFormOpen((open) => !open)} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>
@@ -11694,21 +11688,14 @@ function MarketplaceStallyard() {
                         <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
                       </div>
                     )}
-                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling. Every application receives a manual identity, bank, address and inventory review.</p>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
-                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Premium Seller is available only to registered businesses and provides unlimited combined active listings after approval. Every application receives a manual identity, bank, CAC, address and inventory review.</p>
+                    <div className="grid sm:grid-cols-2 gap-2 mb-2">
+                      <div className="px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}><p className="text-xs" style={{ color: SLATE }}>Application type</p><p className="text-sm font-semibold mt-1" style={{ color: INK }}>Registered business only</p></div>
+                      <div className="px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}><p className="text-xs" style={{ color: SLATE }}>Requested combined limit</p><p className="text-sm font-semibold mt-1" style={{ color: SAGE }}>Unlimited</p></div>
+                    </div>
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>CAC registration number
+                      <input value={premiumSellerForm.cacNumber} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, cacNumber: e.target.value.toUpperCase() }))} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Example: RC 1234567" />
                     </label>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Application type
-                      <select value={premiumSellerForm.businessType} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, businessType: e.target.value, cacNumber: e.target.value === "business" ? current.cacNumber : "" }))} className="block w-full mt-1 px-3 py-2 rounded-lg border bg-white">
-                        <option value="individual">Individual seller</option>
-                        <option value="business">Registered business</option>
-                      </select>
-                    </label>
-                    {premiumSellerForm.businessType === "business" && (
-                      <label className="block text-xs mb-2" style={{ color: SLATE }}>CAC registration number
-                        <input value={premiumSellerForm.cacNumber} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, cacNumber: e.target.value.toUpperCase() }))} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Example: RC 1234567" />
-                      </label>
-                    )}
                     <label className="block text-xs mb-3" style={{ color: SLATE }}>Where does your Premium inventory come from?
                       <textarea value={premiumSellerForm.inventorySource} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, inventorySource: e.target.value }))} rows={3} maxLength={1000} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Describe the supplier, manufacturer, importer or ownership source." />
                     </label>
@@ -11725,14 +11712,12 @@ function MarketplaceStallyard() {
                       {premiumSellerDocuments.inventoryProof ? "✓ Inventory proof attached" : "Upload inventory/supply proof"}
                       <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "inventoryProof")} className="hidden" disabled={uploadingPremiumDocument === "inventoryProof"} />
                     </label>
-                    {premiumSellerForm.businessType === "business" && (
-                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
-                        {premiumSellerDocuments.cacDocument ? "✓ CAC document attached" : "Upload CAC document"}
-                        <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "cacDocument")} className="hidden" disabled={uploadingPremiumDocument === "cacDocument"} />
-                      </label>
-                    )}
+                    <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                      {premiumSellerDocuments.cacDocument ? "✓ CAC document attached" : "Upload CAC document"}
+                      <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "cacDocument")} className="hidden" disabled={uploadingPremiumDocument === "cacDocument"} />
+                    </label>
                     </div>
-                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit, identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review.</span></label>
+                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit (unlimited combined active listings), identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review. I understand that Stallyard may send a representative to the business location for additional verification, including one unannounced visit per year.</span></label>
                     <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
                     </div>
                     )}
@@ -11743,7 +11728,7 @@ function MarketplaceStallyard() {
 
             {currentUser && currentMember?.sellerTier === "premium" && (
               <div className="mb-6 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
-                <div className="flex items-center justify-between gap-3 flex-wrap"><p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller</p><Tag color={SAGE}>{formatMoney(currentMember.sellerListingLimit, "NGN")} approved limit</Tag></div>
+                <div className="flex items-center justify-between gap-3 flex-wrap"><p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller</p><Tag color={SAGE}>Unlimited active listings</Tag></div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>{formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} in combined active listings. Only active listings count.</p>
               </div>
             )}
@@ -12454,7 +12439,7 @@ function MarketplaceStallyard() {
                   {casualSellerStatus?.premiumApplication?.status === "pending" ? (
                     <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
                       <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested combined limit: Unlimited</p>
                     </div>
                   ) : (<>
                     <button type="button" onClick={() => setPremiumSellerFormOpen((open) => !open)} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: MARIGOLD, color: INK }}>
@@ -12468,21 +12453,14 @@ function MarketplaceStallyard() {
                         <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
                       </div>
                     )}
-                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every application receives a manual identity, bank, address and inventory review.</p>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
-                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Premium Seller is available only to registered businesses and provides unlimited combined active listings after approval. Every application receives a manual identity, bank, CAC, address and inventory review.</p>
+                    <div className="grid sm:grid-cols-2 gap-2 mb-2">
+                      <div className="px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}><p className="text-xs" style={{ color: SLATE }}>Application type</p><p className="text-sm font-semibold mt-1" style={{ color: INK }}>Registered business only</p></div>
+                      <div className="px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}><p className="text-xs" style={{ color: SLATE }}>Requested combined limit</p><p className="text-sm font-semibold mt-1" style={{ color: SAGE }}>Unlimited</p></div>
+                    </div>
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>CAC registration number
+                      <input value={premiumSellerForm.cacNumber} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, cacNumber: e.target.value.toUpperCase() }))} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Example: RC 1234567" />
                     </label>
-                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Application type
-                      <select value={premiumSellerForm.businessType} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, businessType: e.target.value, cacNumber: e.target.value === "business" ? current.cacNumber : "" }))} className="block w-full mt-1 px-3 py-2 rounded-lg border bg-white">
-                        <option value="individual">Individual seller</option>
-                        <option value="business">Registered business</option>
-                      </select>
-                    </label>
-                    {premiumSellerForm.businessType === "business" && (
-                      <label className="block text-xs mb-2" style={{ color: SLATE }}>CAC registration number
-                        <input value={premiumSellerForm.cacNumber} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, cacNumber: e.target.value.toUpperCase() }))} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Example: RC 1234567" />
-                      </label>
-                    )}
                     <label className="block text-xs mb-3" style={{ color: SLATE }}>Where does your Premium inventory come from?
                       <textarea value={premiumSellerForm.inventorySource} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, inventorySource: e.target.value }))} rows={3} maxLength={1000} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Describe the supplier, manufacturer, importer or ownership source." />
                     </label>
@@ -12499,14 +12477,12 @@ function MarketplaceStallyard() {
                         {premiumSellerDocuments.inventoryProof ? "✓ Inventory proof attached" : "Upload inventory/supply proof"}
                         <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "inventoryProof")} className="hidden" disabled={uploadingPremiumDocument === "inventoryProof"} />
                       </label>
-                      {premiumSellerForm.businessType === "business" && (
-                        <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
-                          {premiumSellerDocuments.cacDocument ? "✓ CAC document attached" : "Upload CAC document"}
-                          <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "cacDocument")} className="hidden" disabled={uploadingPremiumDocument === "cacDocument"} />
-                        </label>
-                      )}
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                        {premiumSellerDocuments.cacDocument ? "✓ CAC document attached" : "Upload CAC document"}
+                        <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "cacDocument")} className="hidden" disabled={uploadingPremiumDocument === "cacDocument"} />
+                      </label>
                     </div>
-                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit, identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review.</span></label>
+                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit (unlimited combined active listings), identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review. I understand that Stallyard may send a representative to the business location for additional verification, including one unannounced visit per year.</span></label>
                     <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
                     </div>
                     )}
@@ -12518,7 +12494,7 @@ function MarketplaceStallyard() {
               <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller allowance</p>
-                  <Tag color={SAGE}>{formatMoney(currentMember.sellerListingLimit, "NGN")} approved limit</Tag>
+                  <Tag color={SAGE}>Unlimited active listings</Tag>
                 </div>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>{formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} in combined active listings. Only active listings count.</p>
               </div>
