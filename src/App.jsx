@@ -1782,92 +1782,6 @@ function StallyardErrorScreen({ onRetry }) {
   );
 }
 
-function PremiumSellerLivenessModal({ onClose, onVerified, authFetch, showToast }) {
-  const [session, setSession] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [finishing, setFinishing] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await authFetch(`${BACKEND_URL}/premium-seller/rekognition/session`, { method: "POST" });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(data.error || "Couldn't start Premium Seller face verification");
-        if (!cancelled) setSession(data);
-      } catch (err) {
-        if (!cancelled) setError(err.message || "Couldn't start Premium Seller face verification");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  const completeLiveness = async () => {
-    if (!session?.sessionId || finishing) return;
-    setFinishing(true);
-    setError("");
-    try {
-      const response = await authFetch(`${BACKEND_URL}/premium-seller/rekognition/complete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: session.sessionId }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "AWS could not verify liveness");
-      onVerified({ token: data.verificationToken, confidence: Number(data.confidence || 0) });
-      showToast(`Fresh Premium Seller liveness verified (${Math.round(Number(data.confidence || 0))}%)`);
-      onClose();
-    } catch (err) {
-      setError(err.message || "Premium Seller liveness could not be completed");
-    } finally {
-      setFinishing(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 overflow-y-auto" style={{ backgroundColor: "rgba(27,36,48,.72)" }} onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl p-5 my-6" style={{ backgroundColor: CANVAS }} onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h2 className="text-2xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>Premium Seller live identity check</h2>
-            <p className="text-sm mt-1" style={{ color: SLATE }}>Complete a fresh AWS face-liveness check. Gallery photos cannot be used.</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close"><X size={22} /></button>
-        </div>
-        <div className="mb-4 p-3 rounded-lg border text-xs leading-5" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8", color: SLATE }}>
-          Starting or abandoning a check counts toward the limit of 3 attempts in a rolling 24-hour period.
-          {session && <span className="block mt-1 font-medium" style={{ color: INK }}>{Number(session.remainingAttempts || 0)} attempt{Number(session.remainingAttempts || 0) === 1 ? "" : "s"} remaining after this session.</span>}
-        </div>
-        {loading && <div className="p-8 text-center text-sm" style={{ color: SLATE }}>Preparing secure face verification…</div>}
-        {session && (
-          <div className="rounded-xl overflow-hidden border bg-white" style={{ borderColor: SAGE }}>
-            <Suspense fallback={<div className="p-8 text-center text-sm" style={{ color: SLATE }}>Loading secure face verification…</div>}>
-              <FaceLivenessDetectorCore
-                sessionId={session.sessionId}
-                region={session.region}
-                config={{ credentialProvider: async () => ({
-                  accessKeyId: session.credentials.accessKeyId,
-                  secretAccessKey: session.credentials.secretAccessKey,
-                  sessionToken: session.credentials.sessionToken,
-                  expiration: session.credentials.expiration ? new Date(session.credentials.expiration) : undefined,
-                }) }}
-                onAnalysisComplete={completeLiveness}
-                onError={(livenessError) => setError(livenessError?.error?.message || livenessError?.message || "AWS face-liveness verification failed")}
-                onUserCancel={onClose}
-              />
-            </Suspense>
-          </div>
-        )}
-        {finishing && <p className="mt-3 text-sm font-medium" style={{ color: SAGE }}>Confirming your liveness result…</p>}
-        {error && <p className="mt-3 text-sm" style={{ color: BERRY }}>{error}</p>}
-      </div>
-    </div>
-  );
-}
-
 function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToast }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -2663,8 +2577,6 @@ function MarketplaceStallyard() {
   const [premiumSellerForm, setPremiumSellerForm] = useState({ businessType: "individual", cacNumber: "", inventorySource: "" });
   const [premiumSellerDocuments, setPremiumSellerDocuments] = useState({ addressProof: null, inventoryProof: null, cacDocument: null });
   const [uploadingPremiumDocument, setUploadingPremiumDocument] = useState("");
-  const [premiumLivenessOpen, setPremiumLivenessOpen] = useState(false);
-  const [premiumLiveness, setPremiumLiveness] = useState({ token: "", confidence: 0 });
   const [casualVerificationOpen, setCasualVerificationOpen] = useState(false);
   const [casualSellerStatus, setCasualSellerStatus] = useState(null);
   const [uploadingPodKey, setUploadingPodKey] = useState(null);
@@ -3410,7 +3322,6 @@ function MarketplaceStallyard() {
       showToast("Request a limit above ₦20,000,000");
       return;
     }
-    if (!premiumLiveness.token) { showToast("Complete the fresh Premium Seller face-liveness check"); return; }
     if (!bankStatementDraft) { showToast("Upload a recent bank statement or financial supporting document"); return; }
     if (!premiumSellerDocuments.addressProof) { showToast("Upload proof of your current address"); return; }
     if (!premiumSellerDocuments.inventoryProof) { showToast("Upload proof that you own or source the inventory"); return; }
@@ -3430,7 +3341,6 @@ function MarketplaceStallyard() {
           businessType: premiumSellerForm.businessType,
           cacNumber: premiumSellerForm.businessType === "business" ? premiumSellerForm.cacNumber.trim() : null,
           inventorySource: premiumSellerForm.inventorySource.trim(),
-          livenessVerificationToken: premiumLiveness.token,
           consent: true,
         }),
       });
@@ -3440,7 +3350,6 @@ function MarketplaceStallyard() {
       setPremiumSellerConsent(false);
       setPremiumSellerForm({ businessType: "individual", cacNumber: "", inventorySource: "" });
       setPremiumSellerDocuments({ addressProof: null, inventoryProof: null, cacDocument: null });
-      setPremiumLiveness({ token: "", confidence: 0 });
       setCasualSellerStatus((current) => current ? { ...current, premiumApplication: {
         reference: data.reference,
         requested_limit: requestedLimit,
@@ -11708,11 +11617,6 @@ function MarketplaceStallyard() {
                       </div>
                     )}
                     <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Premium has no preset marketplace ceiling. Every application receives a manual identity, bank, address and inventory review.</p>
-                    <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: premiumLiveness.token ? SAGE : MARIGOLD, backgroundColor: premiumLiveness.token ? "#EDF4EE" : "#FFF8E8" }}>
-                      <p className="text-xs font-semibold" style={{ color: INK }}>{premiumLiveness.token ? `✓ Fresh liveness verified (${Math.round(premiumLiveness.confidence)}%)` : "Fresh live identity check required"}</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>This uses the live camera. Saved or gallery photographs are not accepted.</p>
-                      <button type="button" onClick={() => setPremiumLivenessOpen(true)} className="mt-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: premiumLiveness.token ? SAGE : MARIGOLD, color: premiumLiveness.token ? "white" : INK }}>{premiumLiveness.token ? "Repeat liveness check" : "Start live identity check"}</button>
-                    </div>
                     <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
                       <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
                     </label>
@@ -12481,11 +12385,6 @@ function MarketplaceStallyard() {
                       </div>
                     )}
                     <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every application receives a manual identity, bank, address and inventory review.</p>
-                    <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: premiumLiveness.token ? SAGE : MARIGOLD, backgroundColor: premiumLiveness.token ? "#EDF4EE" : "#FFF8E8" }}>
-                      <p className="text-xs font-semibold" style={{ color: INK }}>{premiumLiveness.token ? `✓ Fresh liveness verified (${Math.round(premiumLiveness.confidence)}%)` : "Fresh live identity check required"}</p>
-                      <p className="text-xs mt-1" style={{ color: SLATE }}>This uses the live camera. Saved or gallery photographs are not accepted.</p>
-                      <button type="button" onClick={() => setPremiumLivenessOpen(true)} className="mt-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: premiumLiveness.token ? SAGE : MARIGOLD, color: premiumLiveness.token ? "white" : INK }}>{premiumLiveness.token ? "Repeat liveness check" : "Start live identity check"}</button>
-                    </div>
                     <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
                       <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
                     </label>
@@ -19185,14 +19084,6 @@ function MarketplaceStallyard() {
             </button>
           </div>
         </div>
-      )}
-      {premiumLivenessOpen && (
-        <PremiumSellerLivenessModal
-          onClose={() => setPremiumLivenessOpen(false)}
-          authFetch={authFetch}
-          showToast={showToast}
-          onVerified={(result) => setPremiumLiveness(result)}
-        />
       )}
       {casualVerificationOpen && (
         <CasualSellerVerificationModal
