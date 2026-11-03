@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 const paths = {
   browse: "/", dashboard: "/seller/dashboard", buyerHome: "/buyer/dashboard",
-  orders: "/buyer/orders", wallet: "/wallet", messages: "/messages",
+  orders: "/buyer/orders", wallet: "/wallet", messages: "/messages", notifications: "/notifications",
   watchlist: "/watchlist", sell: "/sell", help: "/help", categories: "/categories",
   "how-it-works": "/how-it-works", "create-account": "/create-account",
   "shipping-delivery": "/shipping-delivery", "become-seller": "/become-seller",
@@ -10,7 +10,7 @@ const paths = {
 };
 const buyerStatuses = new Set(["all", "active", "preparing", "shipped", "delivered", "completed", "returned", "refunded", "disputed"]);
 const sellerStatuses = new Set(["all", "new", "preparing", "shipped", "delivered", "completed", "cancelled", "returned", "disputed"]);
-export const PRIVATE_VIEWS = new Set(["dashboard", "buyerHome", "orders", "wallet", "messages", "watchlist"]);
+export const PRIVATE_VIEWS = new Set(["dashboard", "buyerHome", "orders", "wallet", "messages", "notifications", "watchlist"]);
 const defaults = { view: "browse", orderSearch: "", orderStatus: "all", salesTab: "all", sellerSection: "overview", seller: null, thread: null, next: "", category: "All", subcategory: "All", search: "", condition: "All", sort: "featured", priceMin: "", priceMax: "", listingId: null, cart: false, ticket: null, listingsTab: "all" };
 const safeDecode = (value) => { try { return decodeURIComponent(value); } catch { return ""; } };
 export function readMarketplaceRoute(location = typeof window === "undefined" ? { pathname: "/", search: "" } : window.location) {
