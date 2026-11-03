@@ -4185,6 +4185,59 @@ function MarketplaceStallyard() {
     }
   };
 
+  const openNotification = (notification) => {
+    if (!notification.read) void markNotificationRead(notification.id);
+    setNotifPanelOpen(false);
+
+    const type = String(notification.type || "").toLowerCase();
+    const sellerOrderTypes = new Set([
+      "ship_reminder",
+      "delivery_completed",
+      "delivery_token_sent",
+      "cancellation_requested",
+      "return_opened",
+    ]);
+    const buyerOrderTypes = new Set([
+      "cancellation_response",
+      "refund_started",
+      "refund_processed",
+      "refund_failed",
+      "dispute_status",
+    ]);
+    const walletTypes = new Set([
+      "funds_released",
+      "payout_needs_bank",
+      "payout_processing",
+      "payout_completed",
+      "payout_failed",
+      "payout_reversed",
+    ]);
+
+    if (type === "message") {
+      setActiveThreadId(null);
+      setActiveThreadOrderId(null);
+      setView("messages");
+    } else if (sellerOrderTypes.has(type)) {
+      setRoute((previous) => ({ ...previous, view: "dashboard", sellerSection: "orders", salesTab: "all" }));
+    } else if (buyerOrderTypes.has(type)) {
+      setView("orders");
+    } else if (walletTypes.has(type)) {
+      setView("wallet");
+    } else if (type === "listing_rejected") {
+      setRoute((previous) => ({ ...previous, view: "dashboard", sellerSection: "listings" }));
+    } else if (type.startsWith("driver_")) {
+      window.location.assign("/driver/dashboard");
+      return;
+    } else if (type.startsWith("seller_") || type === "verification_problem") {
+      setRoute((previous) => ({ ...previous, view: "dashboard", sellerSection: "overview" }));
+    } else {
+      setActiveThreadId(null);
+      setActiveThreadOrderId(null);
+      setView("messages");
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const markNotificationsRead = async () => {
     setNotifications((ns) => ns.map((n) => ({ ...n, read: true })));
     try {
@@ -10665,7 +10718,7 @@ function MarketplaceStallyard() {
                 {notifications.map((n) => (
                   <button
                     key={n.id}
-                    onClick={() => !n.read && markNotificationRead(n.id)}
+                    onClick={() => openNotification(n)}
                     className="w-full text-left p-3 border-b text-sm"
                     style={{
                       borderColor: "#EFEBE0",
