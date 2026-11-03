@@ -1936,7 +1936,9 @@ function CasualSellerVerificationModal({ onClose, onApproved, authFetch, showToa
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Verification could not be completed");
       onApproved(data);
-      showToast(data.status === "approved" ? "Identity verified — you can now publish up to ₦500,000 in active listings" : "Verification needs attention — review the result and try again");
+      showToast(data.status === "approved"
+        ? "Identity verified — you can now publish up to ₦500,000 in active listings"
+        : (data.decisionReason || "Verification needs attention — review the result and try again"));
       onClose();
     } catch (err) { setError(err.message); }
     finally { setSubmitting(false); }
@@ -19220,7 +19222,12 @@ function MarketplaceStallyard() {
           onApproved={(result) => {
             setCasualSellerStatus((current) => ({
               ...(current || {}), status: result.status, limit: result.limit,
-              application: { reference: result.reference, status: result.status, automatic_checks: result.checks },
+              application: {
+                reference: result.reference,
+                status: result.status,
+                automatic_checks: result.checks,
+                decision_reason: result.decisionReason || null,
+              },
             }));
             setSessionUserProfile((current) => current ? { ...current, casual_seller_status: result.status, casual_seller_limit: result.limit } : current);
           }}
