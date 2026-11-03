@@ -12466,6 +12466,76 @@ function MarketplaceStallyard() {
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
                   ₦20,000,000 combined active-listing limit. Only active listings count. Premium Seller approval is required above ₦20,000,000.
                 </p>
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: "#DDD8CC" }}>
+                  <p className="text-sm font-semibold" style={{ color: INK }}>Apply for Premium Seller</p>
+                  {casualSellerStatus?.premiumApplication?.status === "pending" ? (
+                    <div className="mt-2 p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF7E7" }}>
+                      <p className="text-sm font-semibold" style={{ color: INK }}>Premium application awaiting review</p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>Reference: {casualSellerStatus.premiumApplication.reference} · Requested limit: {formatMoney(Number(casualSellerStatus.premiumApplication.requested_limit), "NGN")}</p>
+                    </div>
+                  ) : (<>
+                    {casualSellerStatus?.premiumApplication?.status === "rejected" && (
+                      <div className="mt-2 mb-3 p-3 rounded-lg border" style={{ borderColor: BERRY, backgroundColor: "#FBEAEA" }}>
+                        <p className="text-sm font-semibold" style={{ color: BERRY }}>Previous Premium application was not approved</p>
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>{casualSellerStatus.premiumApplication.decision_reason || "Review the requirements and submit a new application when ready."}</p>
+                      </div>
+                    )}
+                    <p className="text-xs mt-1 mb-3" style={{ color: SLATE }}>Request an individually approved active-listing limit above ₦20,000,000. Every application receives a manual identity, bank, address and inventory review.</p>
+                    <div className="mb-3 p-3 rounded-lg border" style={{ borderColor: premiumLiveness.token ? SAGE : MARIGOLD, backgroundColor: premiumLiveness.token ? "#EDF4EE" : "#FFF8E8" }}>
+                      <p className="text-xs font-semibold" style={{ color: INK }}>{premiumLiveness.token ? `✓ Fresh liveness verified (${Math.round(premiumLiveness.confidence)}%)` : "Fresh live identity check required"}</p>
+                      <p className="text-xs mt-1" style={{ color: SLATE }}>This uses the live camera. Saved or gallery photographs are not accepted.</p>
+                      <button type="button" onClick={() => setPremiumLivenessOpen(true)} className="mt-2 px-3 py-1.5 rounded-lg text-xs font-semibold" style={{ backgroundColor: premiumLiveness.token ? SAGE : MARIGOLD, color: premiumLiveness.token ? "white" : INK }}>{premiumLiveness.token ? "Repeat liveness check" : "Start live identity check"}</button>
+                    </div>
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Requested combined limit
+                      <input type="number" min="20000001" step="1" value={premiumSellerLimit} onChange={(e) => setPremiumSellerLimit(e.target.value)} className="block w-full mt-1 px-3 py-2 rounded-lg border" />
+                    </label>
+                    <label className="block text-xs mb-2" style={{ color: SLATE }}>Application type
+                      <select value={premiumSellerForm.businessType} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, businessType: e.target.value, cacNumber: e.target.value === "business" ? current.cacNumber : "" }))} className="block w-full mt-1 px-3 py-2 rounded-lg border bg-white">
+                        <option value="individual">Individual seller</option>
+                        <option value="business">Registered business</option>
+                      </select>
+                    </label>
+                    {premiumSellerForm.businessType === "business" && (
+                      <label className="block text-xs mb-2" style={{ color: SLATE }}>CAC registration number
+                        <input value={premiumSellerForm.cacNumber} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, cacNumber: e.target.value.toUpperCase() }))} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Example: RC 1234567" />
+                      </label>
+                    )}
+                    <label className="block text-xs mb-3" style={{ color: SLATE }}>Where does your Premium inventory come from?
+                      <textarea value={premiumSellerForm.inventorySource} onChange={(e) => setPremiumSellerForm((current) => ({ ...current, inventorySource: e.target.value }))} rows={3} maxLength={1000} className="block w-full mt-1 px-3 py-2 rounded-lg border" placeholder="Describe the supplier, manufacturer, importer or ownership source." />
+                    </label>
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                        {bankStatementDraft ? "✓ Financial document attached" : "Upload recent bank statement"}
+                        <input type="file" accept="image/jpeg,.pdf,application/pdf" onChange={handleBankStatementSelect} className="hidden" disabled={uploadingBankStatement} />
+                      </label>
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                        {premiumSellerDocuments.addressProof ? "✓ Address proof attached" : "Upload proof of address"}
+                        <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "addressProof")} className="hidden" disabled={uploadingPremiumDocument === "addressProof"} />
+                      </label>
+                      <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                        {premiumSellerDocuments.inventoryProof ? "✓ Inventory proof attached" : "Upload inventory/supply proof"}
+                        <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "inventoryProof")} className="hidden" disabled={uploadingPremiumDocument === "inventoryProof"} />
+                      </label>
+                      {premiumSellerForm.businessType === "business" && (
+                        <label className="px-3 py-2 rounded-lg border text-xs font-medium cursor-pointer" style={{ borderColor: "#DDD8CC", color: INK }}>
+                          {premiumSellerDocuments.cacDocument ? "✓ CAC document attached" : "Upload CAC document"}
+                          <input type="file" accept="image/*,.pdf,application/pdf" onChange={(e) => handlePremiumDocumentSelect(e, "cacDocument")} className="hidden" disabled={uploadingPremiumDocument === "cacDocument"} />
+                        </label>
+                      )}
+                    </div>
+                    <label className="flex gap-2 text-xs mt-3" style={{ color: SLATE }}><input type="checkbox" checked={premiumSellerConsent} onChange={(e) => setPremiumSellerConsent(e.target.checked)} /><span>I confirm that the requested limit, identity, address, bank, CAC and inventory information are accurate. I accept Stallyard's counterfeit-item and Premium Seller responsibility rules, and consent to secure retention for fraud prevention and marketplace review.</span></label>
+                    <button type="button" onClick={applyForPremiumSeller} className="mt-3 px-4 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: INK, color: "white" }}>Submit Premium application</button>
+                  </>)}
+                </div>
+              </div>
+            )}
+            {currentUser && currentMember?.sellerTier === "premium" && (
+              <div className="mb-4 p-4 rounded-lg border bg-white" style={{ borderColor: SAGE }}>
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-sm font-semibold" style={{ color: INK }}>Premium Seller allowance</p>
+                  <Tag color={SAGE}>{formatMoney(currentMember.sellerListingLimit, "NGN")} approved limit</Tag>
+                </div>
+                <p className="text-xs mt-2" style={{ color: SLATE }}>{formatMoney(Number(casualSellerStatus?.currentActiveValue || 0), "NGN")} in combined active listings. Only active listings count.</p>
               </div>
             )}
             {currentUser && currentMember?.isApproved === false && currentMember?.verificationStatus === "pending" && (
