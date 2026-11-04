@@ -2438,6 +2438,7 @@ function MarketplaceStallyard() {
   const locationWatchersRef = useRef({});
   const locationLastSentRef = useRef({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [editingBank, setEditingBank] = useState(false);
   const [savedBank, setSavedBank] = useState(null);
   const [savedBankError, setSavedBankError] = useState(false);
   const [bankSummaryRefresh, setBankSummaryRefresh] = useState(0);
@@ -3958,6 +3959,10 @@ function MarketplaceStallyard() {
   useEffect(() => {
     let cancelled = false;
     setSavedBank(null);
+    setEditingBank(false);
+    setPendingBankChange(false);
+    setBankForm({ bankCode: "", accountNumber: "" });
+    setBankOwnerConfirmed(false);
     setSavedBankError(false);
     if (!currentUser || !authToken || sessionUserProfile?.is_admin) return;
     (async () => {
@@ -16242,6 +16247,16 @@ function MarketplaceStallyard() {
                   )}
                   {savedBankError && <p className="text-xs mb-3" role="status">Couldn’t load your saved bank details. <button type="button" className="underline" onClick={() => setBankSummaryRefresh((value) => value + 1)}>Try again</button></p>}
                   {!ownSavedBank && !savedBankError && <p className="text-xs mb-3" role="status">Loading saved bank details…</p>}
+                  {!pendingBankChange && !editingBank && (ownSavedBank?.hasBankDetails || currentMember?.hasBankDetails) && (
+                    <button
+                      type="button"
+                      onClick={() => { setEditingBank(true); loadBankList(); }}
+                      className="px-4 py-2 rounded-lg text-sm font-medium mb-3"
+                      style={{ backgroundColor: INK, color: "white" }}
+                    >
+                      Change bank account
+                    </button>
+                  )}
                   {pendingBankChange ? (
                     <>
                       <p className="text-xs mb-3" style={{ color: SLATE }}>
@@ -16276,7 +16291,7 @@ function MarketplaceStallyard() {
                         </button>
                       </div>
                     </>
-                  ) : (
+                  ) : (editingBank || !(ownSavedBank?.hasBankDetails || currentMember?.hasBankDetails)) ? (
                     <>
                       <p className="text-xs mb-3" style={{ color: SLATE }}>
                         {(ownSavedBank?.hasBankDetails || currentMember?.hasBankDetails)
@@ -16313,9 +16328,14 @@ function MarketplaceStallyard() {
                           className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
                           style={{ backgroundColor: INK, color: "white" }}
                         >
-                          {bankSaving ? "Saving..." : "Save"}
+                          {bankSaving ? "Saving..." : editingBank ? "Save new bank account" : "Save bank account"}
                         </button>
                       </div>
+                      {editingBank && <button type="button" disabled={bankSaving} className="text-xs underline mb-3" onClick={() => {
+                        setEditingBank(false);
+                        setBankForm({ bankCode: "", accountNumber: "" });
+                        setBankOwnerConfirmed(false);
+                      }}>Cancel bank change</button>}
                       {bankResolution.status === "checking" && <p className="text-xs mb-2" style={{ color: SLATE }}>Checking account owner with Paystack…</p>}
                       {bankResolution.accountName && (
                         <div className="mb-2 p-3 rounded-lg border" style={{ borderColor: bankResolution.nameMatches ? SAGE : BERRY, backgroundColor: bankResolution.nameMatches ? "#EDF4EE" : "#FBEAEA" }}>
@@ -16326,7 +16346,7 @@ function MarketplaceStallyard() {
                       )}
                       {bankResolution.status === "error" && <p className="text-xs mb-2" style={{ color: BERRY }}>{bankResolution.error}</p>}
                     </>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="p-4 rounded-lg border bg-white mb-8" style={{ borderColor: "#DDD8CC" }}>
