@@ -610,6 +610,7 @@ const RECOMMENDED_LISTING_PHOTO_DIM = 1200; // warn (not block) below this
 const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
 
 const SHIPPING_METHODS = [
+  { value: "pickup", label: "Pickup (free)" },
   { value: "dhl", label: "DHL" },
   { value: "self_delivery", label: "Self delivery" },
   { value: "local_delivery_driver", label: "Local Delivery Driver" },
@@ -911,6 +912,7 @@ function backendListingToFrontend(row, existing) {
     category: row.category,
     subcategory: row.subcategory || "",
     condition: row.condition,
+    shippingRoutes: row.shipping_route?.routes || [],
     shippingFee: Number(row.shipping_fee) || 0,
     shippingFromState: row.shipping_route?.shippingFromState || "",
     shippingFromLga: row.shipping_route?.shippingFromLga || "",
@@ -1050,6 +1052,8 @@ function backendOrderToFrontend(row) {
       price: Number(i.price),
       qty: i.qty,
       shippingFee: Number(i.shipping_fee) || 0,
+      shippingMethod: i.shipping_method || "",
+      shippingRoute: i.shipping_route || null,
       sellerName: i.seller_name,
       sellerId: i.seller_id,
       ownerUsername: i.seller_username,
@@ -1448,6 +1452,11 @@ const SALES_TABS = [
   { key: "completed", label: "Completed" },
   { key: "cancelled", label: "Cancelled" },
 ];
+
+function listingShippingRoutes(listing) {
+  if (Array.isArray(listing.shippingRoutes) && listing.shippingRoutes.length) return listing.shippingRoutes;
+  return listing.shippingFromState && listing.shippingToState ? [{ shippingFromState: listing.shippingFromState, shippingToState: listing.shippingToState, amount: Number(listing.shippingFee) || 0 }] : [];
+}
 
 function ListingThumbnail({ listing }) {
   return listing.images?.[0] ? (
@@ -2562,6 +2571,7 @@ function MarketplaceStallyard() {
     auctionDurationDays: "3",
     currency: "NGN",
     shippingFee: "0.00",
+      shippingRoutes: [{ shippingFromState: "", shippingToState: "", amount: "0.00" }],
       shippingFromState: "",
       shippingFromLga: "",
       shippingToState: "",
@@ -4451,18 +4461,24 @@ function MarketplaceStallyard() {
 
   const removeFromCart = (id) => persistCart(cart.filter((c) => c.id !== id));
 
+  const selectCartShipping = (id, shippingMethod) => persistCart(cart.map((item) => item.id === id ? { ...item, shippingMethod } : item));
+  const selectCartRoute = (id, shippingRouteIndex) => persistCart(cart.map((item) => item.id === id ? { ...item, shippingRouteIndex } : item));
   const cartItems = cart
     .map((c) => {
       const listing = listings.find((l) => l.id === c.id);
-      return listing
-        ? { ...listing, qty: c.qty, price: c.offerPrice ?? listing.price, isOfferPrice: c.offerPrice != null }
-        : null;
+      if (!listing) return null;
+      const routes = listingShippingRoutes(listing);
+      const shippingRouteIndex = c.shippingRouteIndex ?? (routes.length === 1 ? 0 : "");
+      const selectedRoute = shippingRouteIndex !== "" ? routes[Number(shippingRouteIndex)] : null;
+      return { ...listing, shippingRouteIndex, shippingFee: selectedRoute ? Number(selectedRoute.amount) : Number(listing.shippingFee) || 0,
+        shippingMethod: c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : ""), qty: c.qty, price: c.offerPrice ?? listing.price, isOfferPrice: c.offerPrice != null };
     })
     .filter(Boolean);
 
+  const allCartPickup = cartItems.length > 0 && cartItems.every((item) => item.shippingMethod === "pickup");
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
   const cartSubtotal = cartItems.reduce((s, i) => s + i.price * i.qty, 0);
-  const cartShipping = cartItems.reduce((s, i) => s + (Number(i.shippingFee) || 0) * Number(i.qty || 1), 0);
+  const cartShipping = cartItems.reduce((s, i) => s + (i.shippingMethod === "pickup" ? 0 : Number(i.shippingFee) || 0) * Number(i.qty || 1), 0);
   const cartTax = Math.round(cartSubtotal * (settings.taxRate || 0) * 100) / 100;
   const cartTotal = cartSubtotal + cartShipping + cartTax;
   const cartCurrency = "NGN";
@@ -7755,8 +7771,15 @@ function MarketplaceStallyard() {
       showToast("Log in to check out");
       return;
     }
-    if (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
+    if (!allCartPickup && (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim())) {
       setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
+      return;
+    }
+    if (cartItems.some((item) => item.shippingMethod !== "pickup" && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
+      setShippingError("Choose one shipping route for each delivery listing."); return;
+    }
+    if (cartItems.some((item) => !item.shippingMethod || (item.shippingMethods?.length && !item.shippingMethods.includes(item.shippingMethod)))) {
+      setShippingError("Choose one shipping option for each listing before paying.");
       return;
     }
     setShippingError("");
@@ -7767,7 +7790,7 @@ function MarketplaceStallyard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty })),
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
           shippingAddress: { ...shippingForm },
           currency: cartCurrency,
           saveCard: saveCardAtCheckout,
@@ -7827,8 +7850,15 @@ function MarketplaceStallyard() {
   // redirect to Paystack needed, the charge happens directly.
   const payWithSavedCard = async (cardId) => {
     if (cartItems.length === 0) return;
-    if (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim()) {
+    if (!allCartPickup && (!shippingForm.fullName.trim() || !shippingForm.phone.trim() || !shippingForm.street.trim() || !shippingForm.city.trim() || !shippingForm.zip.trim() || !shippingForm.country.trim())) {
       setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
+      return;
+    }
+    if (cartItems.some((item) => item.shippingMethod !== "pickup" && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
+      setShippingError("Choose one shipping route for each delivery listing."); return;
+    }
+    if (cartItems.some((item) => !item.shippingMethod || (item.shippingMethods?.length && !item.shippingMethods.includes(item.shippingMethod)))) {
+      setShippingError("Choose one shipping option for each listing before paying.");
       return;
     }
     setShippingError("");
@@ -7838,7 +7868,7 @@ function MarketplaceStallyard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty })),
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
           shippingAddress: { ...shippingForm },
           currency: cartCurrency,
           cardId,
@@ -8018,6 +8048,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: "NGN",
       shippingFee: "0.00",
+      shippingRoutes: [{ shippingFromState: "", shippingToState: "", amount: "0.00" }],
       shippingFromState: "",
       shippingFromLga: "",
       shippingToState: "",
@@ -8619,15 +8650,13 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
-    const routeFields = [form.shippingFromState, form.shippingToState];
-    if (routeFields.some(Boolean) && !routeFields.every((state) => NIGERIA_PROFILE_STATES.includes(state))) {
-      showToast("Select a state for both Shipping From and Shipping To");
+    const shippingRoutes = form.shippingRoutes.filter((route) => route.shippingFromState || route.shippingToState);
+    if (form.shippingRoutes.length > 3 || shippingRoutes.some((route) => !NIGERIA_PROFILE_STATES.includes(route.shippingFromState) || !NIGERIA_PROFILE_STATES.includes(route.shippingToState) || route.amount === "" || !Number.isFinite(Number(route.amount)) || Number(route.amount) < 0)) {
+      showToast("Complete From, To and a valid charge for each shipping route (maximum 3)");
       return;
     }
-    if (!Number.isFinite(Number(form.shippingFee)) || Number(form.shippingFee) < 0) {
-      showToast("Enter a valid shipping amount of zero or more");
-      return;
-    }
+    const routeKeys = shippingRoutes.map((route) => `${route.shippingFromState}:${route.shippingToState}`);
+    if (new Set(routeKeys).size !== routeKeys.length) { showToast("Each shipping route must have a different From/To combination"); return; }
     if (!form.title.trim()) {
       showToast("Give it a title");
       return;
@@ -8669,8 +8698,8 @@ function MarketplaceStallyard() {
       const patch = {
         ...form,
         price: form.price ? Number(form.price) : 0,
-        shippingFee: Number(form.shippingFee) || 0,
-        shippingRoute: { shippingFromState: form.shippingFromState, shippingToState: form.shippingToState },
+        shippingFee: Number(shippingRoutes[0]?.amount) || 0,
+        shippingRoute: { routes: shippingRoutes.map((route) => ({ ...route, amount: Number(route.amount) })) },
         ...statusPatch,
       };
       if (typeof existingListing?.id === "number") {
@@ -8720,8 +8749,8 @@ function MarketplaceStallyard() {
             category: form.category,
             subcategory: form.subcategory,
             condition: form.condition,
-            shippingFee: Number(form.shippingFee) || 0,
-            shippingRoute: { shippingFromState: form.shippingFromState, shippingToState: form.shippingToState },
+            shippingFee: Number(shippingRoutes[0]?.amount) || 0,
+            shippingRoute: { routes: shippingRoutes.map((route) => ({ ...route, amount: Number(route.amount) })) },
             emoji: form.emoji,
             fitMake: form.fitMake,
             fitModel: form.fitModel,
@@ -8785,6 +8814,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: listing.currency || "NGN",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
+      shippingRoutes: listingShippingRoutes(listing).length ? listingShippingRoutes(listing).map((route) => ({ ...route })) : [{ shippingFromState: "", shippingToState: "", amount: String(listing.shippingFee || 0) }],
       shippingFromState: listing.shippingFromState || "",
       shippingFromLga: listing.shippingFromLga || "",
       shippingToState: listing.shippingToState || "",
@@ -8870,6 +8900,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: l.currency || "NGN",
       shippingFee: l.shippingFee != null ? String(l.shippingFee) : "0.00",
+      shippingRoutes: listingShippingRoutes(l).length ? listingShippingRoutes(l).map((route) => ({ ...route })) : [{ shippingFromState: "", shippingToState: "", amount: String(l.shippingFee || 0) }],
       shippingFromState: l.shippingFromState || "",
       shippingFromLga: l.shippingFromLga || "",
       shippingToState: l.shippingToState || "",
@@ -12146,43 +12177,28 @@ function MarketplaceStallyard() {
                   />
                 </div>
               </div>
-              <div className="grid sm:grid-cols-3 gap-4 p-4 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
-                <fieldset className="space-y-2">
-                  <legend className="text-sm font-medium mb-1" style={{ color: INK }}>Shipping From</legend>
-                  <select aria-label="Shipping From state" value={form.shippingFromState} onChange={(e) => setForm({ ...form, shippingFromState: e.target.value, shippingFromLga: "" })} className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
-                    <option value="">Select state</option>
-                    {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
-                  </select>
-                </fieldset>
-                <fieldset className="space-y-2">
-                  <legend className="text-sm font-medium mb-1" style={{ color: INK }}>Shipping To</legend>
-                  <select aria-label="Shipping To state" value={form.shippingToState} onChange={(e) => setForm({ ...form, shippingToState: e.target.value, shippingToLga: "" })} className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
-                    <option value="">Select state</option>
-                    {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
-                  </select>
-                </fieldset>
-              <div>
-                <label htmlFor="listing-shipping-amount" className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Amount to charge (₦)
-                </label>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
-                  <input
-                    id="listing-shipping-amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.shippingFee}
-                    onChange={(e) => setForm({ ...form, shippingFee: e.target.value })}
-                    className="w-full px-3 py-2 rounded-lg border outline-none"
-                    style={{ borderColor: "#DDD8CC", backgroundColor: "white", fontFamily: "'IBM Plex Mono', monospace" }}
-                    placeholder="e.g. 2500"
-                  />
-                  <span className="text-xs" style={{ color: SLATE }}>
-                    Enter your charge for this route. Leave at 0 for free shipping.
-                  </span>
-                </div>
-              </div>
+              <div className="space-y-3">
+                <p className="text-sm font-semibold" style={{ color: INK }}>Shipping routes (optional · {form.shippingRoutes.length}/3)</p>
+                {form.shippingRoutes.map((route, index) => (
+                  <div key={index} className="p-4 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
+                    <div className="grid sm:grid-cols-3 gap-3">
+                      {[['shippingFromState', 'Shipping From'], ['shippingToState', 'Shipping To']].map(([key, label]) => (
+                        <label key={key} className="block text-sm font-medium" style={{ color: INK }}>{label}
+                          <select aria-label={`${label} route ${index + 1}`} value={route[key]} onChange={(event) => setForm((previous) => ({ ...previous, shippingRoutes: previous.shippingRoutes.map((row, i) => i === index ? { ...row, [key]: event.target.value } : row) }))} className="w-full mt-2 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                            <option value="">Select state</option>
+                            {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                          </select>
+                        </label>
+                      ))}
+                      <label className="block text-sm font-medium" style={{ color: INK }}>Amount to charge (₦)
+                        <input aria-label={`Shipping amount route ${index + 1}`} type="number" min="0" step="0.01" value={route.amount} onChange={(event) => setForm((previous) => ({ ...previous, shippingRoutes: previous.shippingRoutes.map((row, i) => i === index ? { ...row, amount: event.target.value } : row) }))} className="w-full mt-2 px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} placeholder="e.g. 2500" />
+                      </label>
+                    </div>
+                    {form.shippingRoutes.length > 1 && <button type="button" className="text-xs underline mt-3" style={{ color: BERRY }} onClick={() => setForm((previous) => ({ ...previous, shippingRoutes: previous.shippingRoutes.filter((_, i) => i !== index) }))}>Remove route {index + 1}</button>}
+                  </div>
+                ))}
+                {form.shippingRoutes.length < 3 && <button type="button" className="px-4 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }} onClick={() => setForm((previous) => ({ ...previous, shippingRoutes: [...previous.shippingRoutes, { shippingFromState: "", shippingToState: "", amount: "0.00" }] }))}>+ Add shipping route</button>}
+                <p className="text-xs" style={{ color: SLATE }}>Add up to 3 routes. Buyers choose one route per listing. Enter 0 for free shipping; pickup is always free.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
@@ -13452,6 +13468,7 @@ function MarketplaceStallyard() {
                                   <div className="flex items-center justify-between gap-3">
                                     <span>
                                       {i.title} × {i.qty}
+                                      {i.shippingMethod && <span className="block text-xs font-normal">Shipping: {SHIPPING_METHODS.find((option) => option.value === i.shippingMethod)?.label || "Seller delivery"}{i.shippingRoute ? ` · ${i.shippingRoute.shippingFromState} → ${i.shippingRoute.shippingToState}` : ""}</span>}
                                     </span>
                                     <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                                       <Tag color={FULFILLMENT_COLOR[i.fulfillmentStatus] || FULFILLMENT_COLOR.new}>
@@ -14617,6 +14634,7 @@ function MarketplaceStallyard() {
                                 <span>{item.emoji}</span>
                                 <span className="truncate">
                                   {item.title} {item.qty > 1 ? `×${item.qty}` : ""}
+                                  {item.shippingMethod && <span className="block text-xs font-normal">Shipping: {SHIPPING_METHODS.find((option) => option.value === item.shippingMethod)?.label || "Seller delivery"}{item.shippingRoute ? ` · ${item.shippingRoute.shippingFromState} → ${item.shippingRoute.shippingToState}` : ""}</span>}
                                 </span>
                               </span>
                               <span className="flex items-center gap-2 shrink-0">
@@ -17918,7 +17936,7 @@ function MarketplaceStallyard() {
               );
             })()}
             <p className="text-xs mb-5" style={{ color: SLATE }}>
-              {selected.shippingFromState && <p className="text-xs mb-2" style={{ color: SLATE }}>Ships from {selected.shippingFromState} to {selected.shippingToState}.</p>}
+              {listingShippingRoutes(selected).map((route, index) => <p key={index} className="text-xs mb-2" style={{ color: SLATE }}>{route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount), "NGN")}</p>)}
               {selected.shippingFee
                 ? `+ ${formatMoney(selected.shippingFee, selected.currency)} shipping`
                 : "Free shipping"}
@@ -18171,6 +18189,21 @@ function MarketplaceStallyard() {
                           {formatMoney(item.price, item.currency)} each
                           {item.isOfferPrice && <Tag color={MARIGOLD}>Offer price</Tag>}
                         </div>
+                        <label className="block text-xs mt-3 font-medium" style={{ color: INK }}>
+                          Shipping for this listing
+                          <select aria-label={`Shipping for ${item.title}`} value={item.shippingMethod} onChange={(event) => selectCartShipping(item.id, event.target.value)} className="w-full mt-1 px-2 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                            <option value="">Choose one shipping option</option>
+                            {(item.shippingMethods?.length ? item.shippingMethods : ["seller_delivery"]).map((method) => <option key={method} value={method}>{SHIPPING_METHODS.find((option) => option.value === method)?.label || "Seller delivery"} · {formatMoney(method === "pickup" ? 0 : Number(item.shippingFee) || 0, "NGN")}</option>)}
+                          </select>
+                        </label>
+                        {item.shippingMethod !== "pickup" && listingShippingRoutes(item).length > 0 && <label className="block text-xs mt-2 font-medium">Shipping route
+                          <select aria-label={`Shipping route for ${item.title}`} value={item.shippingRouteIndex} onChange={(event) => selectCartRoute(item.id, event.target.value)} className="w-full mt-1 px-2 py-2 rounded-lg border bg-white">
+                            <option value="">Choose one route</option>
+                            {listingShippingRoutes(item).map((route, index) => <option key={index} value={index}>{route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount), "NGN")}</option>)}
+                          </select>
+                        </label>}
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Shipping for this listing: {formatMoney((item.shippingMethod === "pickup" ? 0 : Number(item.shippingFee) || 0) * item.qty, "NGN")}{item.qty > 1 ? ` (${item.qty} units)` : ""}</p>
+
                         <div className="flex items-center gap-2 mt-2">
                           <button
                             onClick={() => updateCartQty(item.id, item.qty - 1)}
@@ -18244,7 +18277,7 @@ function MarketplaceStallyard() {
                   </div>
                 </div>
 
-                {currentUser && (
+                {currentUser && !allCartPickup && (
                   <div className="border-t pt-4 mb-4" style={{ borderColor: "#DDD8CC" }}>
                     <h4 className="text-sm font-semibold mb-2" style={{ color: INK }}>
                       Shipping address
@@ -18382,6 +18415,8 @@ function MarketplaceStallyard() {
                   </div>
                 )}
 
+                {allCartPickup && <p className="text-xs mb-3" style={{ color: SLATE }}>Pickup selected. Arrange collection with each seller. No shipping charge applies.</p>}
+                {allCartPickup && shippingError && <p role="alert" className="text-xs mb-3" style={{ color: BERRY }}>{shippingError}</p>}
                 {savedCards.length > 0 && (
                   <div className="mb-3">
                     <p className="text-xs font-medium mb-2" style={{ color: SLATE }}>
@@ -18787,7 +18822,7 @@ function MarketplaceStallyard() {
               )}
               {form.category === "Auto Parts" && form.vin && <div>VIN: {form.vin}</div>}
               {form.state && <div>Location: {form.state}</div>}
-              {form.shippingFromState && <div>Shipping: {form.shippingFromState} → {form.shippingToState} · {formatMoney(Number(form.shippingFee) || 0, "NGN")}</div>}
+              {form.shippingRoutes.filter((route) => route.shippingFromState && route.shippingToState).map((route, index) => <div key={index}>Shipping: {route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount) || 0, "NGN")}</div>)}
               {form.shippingMethods.length > 0 && (
                 <div>
                   Shipping:{" "}
@@ -18888,6 +18923,7 @@ function MarketplaceStallyard() {
                       <div key={i.id} className="flex items-center justify-between text-sm" style={{ color: INK }}>
                         <span>
                           {i.title} × {i.qty}
+                                      {i.shippingMethod && <span className="block text-xs font-normal">Shipping: {SHIPPING_METHODS.find((option) => option.value === i.shippingMethod)?.label || "Seller delivery"}{i.shippingRoute ? ` · ${i.shippingRoute.shippingFromState} → ${i.shippingRoute.shippingToState}` : ""}</span>}
                         </span>
                         <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
                           {formatMoney((i.price * i.qty))}
