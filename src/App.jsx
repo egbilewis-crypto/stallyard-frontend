@@ -790,7 +790,6 @@ const CATEGORY_ICON = {
   Other: "📦",
 };
 
-const EMOJI_CHOICES = ["📦", "🧶", "🕯️", "📚", "🪴", "👕", "🎨", "⌚", "🛠️", "🎧", "🧸", "🥾", "☕", "💍", "🪑", "🎸", "🚗", "⚙️", "🔧", "🛞", "🔋", "🛒", "🥕", "🍎"];
 
 const FULFILLMENT_LABEL = {
   new: "New",
@@ -1445,6 +1444,12 @@ const SALES_TABS = [
   { key: "cancelled", label: "Cancelled" },
 ];
 
+function ListingThumbnail({ listing }) {
+  return listing.images?.[0] ? (
+    <img src={listing.images[0]} alt={listing.title} loading="lazy" className="w-12 h-12 rounded-lg object-cover shrink-0" />
+  ) : <ImageIcon size={32} className="shrink-0" aria-label="Photo unavailable" />;
+}
+
 function Tag({ children, color }) {
   return (
     <span
@@ -1661,7 +1666,7 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
         <div className="p-5 pl-6">
           {!(listing.images && listing.images.length > 0) && (
             <div className="flex items-start justify-between gap-2">
-              <div className="text-3xl leading-none">{listing.emoji}</div>
+              <ImageIcon size={28} aria-label="Photo unavailable" />
               <div
                 className="font-semibold text-lg"
                 style={{ fontFamily: "'IBM Plex Mono', monospace", color: INK }}
@@ -12352,7 +12357,7 @@ function MarketplaceStallyard() {
                 )}
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
                   Up to {MAX_LISTING_PHOTOS} photos, at least {MIN_LISTING_PHOTOS} required. Drag to reorder — the
-                  first photo is the cover image buyers see first. Recommended size: {RECOMMENDED_LISTING_PHOTO_DIM}×
+                  first photo is the main picture and thumbnail buyers see. Recommended size: {RECOMMENDED_LISTING_PHOTO_DIM}×
                   {RECOMMENDED_LISTING_PHOTO_DIM}px or larger (minimum {MIN_LISTING_PHOTO_DIM}×{MIN_LISTING_PHOTO_DIM}px).
                 </p>
                 <p className="text-xs mt-2" style={{ color: SLATE }}>
@@ -12361,27 +12366,6 @@ function MarketplaceStallyard() {
                   upload screenshots, copied internet pictures, phone numbers, watermarks, logos, promotional text
                   or heavily compressed WhatsApp images.
                 </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2" style={{ color: INK }}>
-                  Icon <span className="font-normal" style={{ color: SLATE }}>(shown if no photos)</span>
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {EMOJI_CHOICES.map((em) => (
-                    <button
-                      type="button"
-                      key={em}
-                      onClick={() => setForm({ ...form, emoji: em })}
-                      className="w-10 h-10 rounded-lg text-xl flex items-center justify-center border-2"
-                      style={{
-                        borderColor: form.emoji === em ? MARIGOLD : "#DDD8CC",
-                        backgroundColor: "white",
-                      }}
-                    >
-                      {em}
-                    </button>
-                  ))}
-                </div>
               </div>
               <div className="flex gap-3 pt-2 flex-wrap">
                 {(!editingId || listings.find((l) => l.id === editingId)?.status === "draft") && (
@@ -13093,7 +13077,7 @@ function MarketplaceStallyard() {
                       >
                         <div className="flex items-center justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-3 min-w-0">
-                            <span className="text-2xl">{l.emoji}</span>
+                            <ListingThumbnail listing={l} />
                             <div className="min-w-0">
                               <div className="font-medium truncate flex items-center gap-2" style={{ color: INK }}>
                                 {l.title}
@@ -14338,7 +14322,7 @@ function MarketplaceStallyard() {
                           <img src={l.images[0]} alt={l.title} className="w-full h-24 object-cover" />
                         ) : (
                           <div className="w-full h-24 flex items-center justify-center text-3xl" style={{ backgroundColor: CANVAS }}>
-                            {l.emoji}
+                            <ImageIcon size={28} aria-label="Photo unavailable" />
                           </div>
                         )}
                         <div className="p-2">
@@ -17774,7 +17758,7 @@ function MarketplaceStallyard() {
                 )}
               </div>
             ) : (
-              <div className="text-4xl mb-3">{selected.emoji}</div>
+              <ImageIcon size={40} className="mb-3" aria-label="Photo unavailable" />
             )}
             <h3 className="text-xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               {selected.title}
@@ -18094,7 +18078,7 @@ function MarketplaceStallyard() {
                 <div className="space-y-4 mb-6">
                   {cartItems.map((item) => (
                     <div key={item.id} className="flex gap-3">
-                      <div className="text-2xl">{item.emoji}</div>
+                      <ListingThumbnail listing={item} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-sm truncate" style={{ color: INK }}>
                           {item.title}
@@ -18691,7 +18675,7 @@ function MarketplaceStallyard() {
                 ))}
               </div>
             ) : (
-              <div className="text-4xl mb-3">{form.emoji}</div>
+              <p className="text-sm mb-3">Add photos before publishing.</p>
             )}
             <div className="font-medium text-lg mb-1" style={{ color: INK }}>
               {form.title || "Untitled listing"}
