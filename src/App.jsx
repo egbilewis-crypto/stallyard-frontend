@@ -912,6 +912,11 @@ function backendListingToFrontend(row, existing) {
     subcategory: row.subcategory || "",
     condition: row.condition,
     shippingFee: Number(row.shipping_fee) || 0,
+    shippingFromState: row.shipping_route?.shippingFromState || "",
+    shippingFromLga: row.shipping_route?.shippingFromLga || "",
+    shippingToState: row.shipping_route?.shippingToState || "",
+    shippingToLga: row.shipping_route?.shippingToLga || "",
+
     emoji: row.emoji || "📦",
     fitMake: row.fit_make || "",
     fitModel: row.fit_model || "",
@@ -2557,6 +2562,11 @@ function MarketplaceStallyard() {
     auctionDurationDays: "3",
     currency: "NGN",
     shippingFee: "0.00",
+      shippingFromState: "",
+      shippingFromLga: "",
+      shippingToState: "",
+      shippingToLga: "",
+
     quantity: "",
     sku: "",
     brand: "",
@@ -8008,6 +8018,11 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: "NGN",
       shippingFee: "0.00",
+      shippingFromState: "",
+      shippingFromLga: "",
+      shippingToState: "",
+      shippingToLga: "",
+
       quantity: "",
       sku: "",
       brand: "",
@@ -8604,6 +8619,17 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
+    const routeFields = [form.shippingFromState, form.shippingFromLga, form.shippingToState, form.shippingToLga];
+    if (routeFields.some(Boolean) && (!routeFields.every(Boolean) ||
+      !(NIGERIA_LGAS[form.shippingFromState] || []).includes(form.shippingFromLga) ||
+      !(NIGERIA_LGAS[form.shippingToState] || []).includes(form.shippingToLga))) {
+      showToast("Select a state and local government for both Shipping From and Shipping To");
+      return;
+    }
+    if (!Number.isFinite(Number(form.shippingFee)) || Number(form.shippingFee) < 0) {
+      showToast("Enter a valid shipping amount of zero or more");
+      return;
+    }
     if (!form.title.trim()) {
       showToast("Give it a title");
       return;
@@ -8646,6 +8672,7 @@ function MarketplaceStallyard() {
         ...form,
         price: form.price ? Number(form.price) : 0,
         shippingFee: Number(form.shippingFee) || 0,
+        shippingRoute: { shippingFromState: form.shippingFromState, shippingFromLga: form.shippingFromLga, shippingToState: form.shippingToState, shippingToLga: form.shippingToLga },
         ...statusPatch,
       };
       if (typeof existingListing?.id === "number") {
@@ -8696,6 +8723,7 @@ function MarketplaceStallyard() {
             subcategory: form.subcategory,
             condition: form.condition,
             shippingFee: Number(form.shippingFee) || 0,
+            shippingRoute: { shippingFromState: form.shippingFromState, shippingFromLga: form.shippingFromLga, shippingToState: form.shippingToState, shippingToLga: form.shippingToLga },
             emoji: form.emoji,
             fitMake: form.fitMake,
             fitModel: form.fitModel,
@@ -8759,6 +8787,11 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: listing.currency || "NGN",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
+      shippingFromState: listing.shippingFromState || "",
+      shippingFromLga: listing.shippingFromLga || "",
+      shippingToState: listing.shippingToState || "",
+      shippingToLga: listing.shippingToLga || "",
+
       quantity: listing.quantity != null ? String(listing.quantity) : "",
       sku: listing.sku || "",
       brand: listing.brand || "",
@@ -8839,6 +8872,11 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: l.currency || "NGN",
       shippingFee: l.shippingFee != null ? String(l.shippingFee) : "0.00",
+      shippingFromState: l.shippingFromState || "",
+      shippingFromLga: l.shippingFromLga || "",
+      shippingToState: l.shippingToState || "",
+      shippingToLga: l.shippingToLga || "",
+
       quantity: l.quantity != null ? String(l.quantity) : "",
       sku: l.sku || "",
       brand: l.brand || "",
@@ -12110,9 +12148,33 @@ function MarketplaceStallyard() {
                   />
                 </div>
               </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium mb-1" style={{ color: INK }}>Shipping From</legend>
+                  <select aria-label="Shipping From state" value={form.shippingFromState} onChange={(e) => setForm({ ...form, shippingFromState: e.target.value, shippingFromLga: "" })} className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <option value="">Select state</option>
+                    {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                  </select>
+                  <select aria-label="Shipping From local government" disabled={!form.shippingFromState} value={form.shippingFromLga} onChange={(e) => setForm({ ...form, shippingFromLga: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-white disabled:opacity-50" style={{ borderColor: "#DDD8CC" }}>
+                    <option value="">{form.shippingFromState ? "Select local government" : "Select state first"}</option>
+                    {(NIGERIA_LGAS[form.shippingFromState] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
+                  </select>
+                </fieldset>
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-medium mb-1" style={{ color: INK }}>Shipping To</legend>
+                  <select aria-label="Shipping To state" value={form.shippingToState} onChange={(e) => setForm({ ...form, shippingToState: e.target.value, shippingToLga: "" })} className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
+                    <option value="">Select state</option>
+                    {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                  </select>
+                  <select aria-label="Shipping To local government" disabled={!form.shippingToState} value={form.shippingToLga} onChange={(e) => setForm({ ...form, shippingToLga: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-white disabled:opacity-50" style={{ borderColor: "#DDD8CC" }}>
+                    <option value="">{form.shippingToState ? "Select local government" : "Select state first"}</option>
+                    {(NIGERIA_LGAS[form.shippingToState] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
+                  </select>
+                </fieldset>
+              </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Shipping fee
+                  Shipping amount (₦)
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
@@ -12127,7 +12189,7 @@ function MarketplaceStallyard() {
                     placeholder="0.00"
                   />
                   <span className="text-xs" style={{ color: SLATE }}>
-                    Leave at 0 for free shipping. Charged once per line, not per quantity.
+                    Enter your charge for this route. Leave at 0 for free shipping.
                   </span>
                 </div>
               </div>
@@ -17865,6 +17927,7 @@ function MarketplaceStallyard() {
               );
             })()}
             <p className="text-xs mb-5" style={{ color: SLATE }}>
+              {selected.shippingFromState && <p className="text-xs mb-2" style={{ color: SLATE }}>Ships from {selected.shippingFromLga}, {selected.shippingFromState} to {selected.shippingToLga}, {selected.shippingToState}.</p>}
               {selected.shippingFee
                 ? `+ ${formatMoney(selected.shippingFee, selected.currency)} shipping`
                 : "Free shipping"}
@@ -18733,6 +18796,7 @@ function MarketplaceStallyard() {
               )}
               {form.category === "Auto Parts" && form.vin && <div>VIN: {form.vin}</div>}
               {form.state && <div>Location: {form.state}</div>}
+              {form.shippingFromState && <div>Shipping: {form.shippingFromLga}, {form.shippingFromState} → {form.shippingToLga}, {form.shippingToState} · {formatMoney(Number(form.shippingFee) || 0, "NGN")}</div>}
               {form.shippingMethods.length > 0 && (
                 <div>
                   Shipping:{" "}
