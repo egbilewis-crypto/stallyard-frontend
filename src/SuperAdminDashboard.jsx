@@ -1,3 +1,57 @@
+function ApprovedMemberDocuments({ React, userId, authFetch, backendUrl }) {
+  const [documents, setDocuments] = React.useState(null);
+  const [error, setError] = React.useState("");
+  const [retry, setRetry] = React.useState(0);
+  const [preview, setPreview] = React.useState(null);
+  const [loadingDocument, setLoadingDocument] = React.useState(false);
+  const fetchRef = React.useRef(authFetch);
+  fetchRef.current = authFetch;
+  const requestRef = React.useRef(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    setDocuments(null);
+    setError("");
+    (async () => {
+      try {
+        const response = await fetchRef.current(`${backendUrl}/admin/members/${userId}/approved-documents`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not load approved documents");
+        if (!cancelled) setDocuments(data.documents || []);
+      } catch (err) { if (!cancelled) setError(err.message); }
+    })();
+    return () => { cancelled = true; requestRef.current++; };
+  }, [userId, backendUrl, retry]);
+  React.useEffect(() => () => { if (preview?.url) URL.revokeObjectURL(preview.url); }, [preview]);
+  const openDocument = async (document) => {
+    const request = ++requestRef.current;
+    setLoadingDocument(true);
+    setError("");
+    try {
+      const response = await fetchRef.current(`${backendUrl}${document.url}`);
+      if (!response.ok) throw new Error("Could not open this document. Please try again.");
+      const blob = await response.blob();
+      if (request === requestRef.current) setPreview({ url: URL.createObjectURL(blob), type: blob.type, label: document.label });
+    } catch (err) { if (request === requestRef.current) setError(err.message); }
+    finally { if (request === requestRef.current) setLoadingDocument(false); }
+  };
+  return (
+    <div className="mt-3 text-xs">
+      <p className="font-semibold mb-2">Approved verification documents</p>
+      {error && <p role="alert">{error} <button type="button" className="underline" onClick={() => setRetry((value) => value + 1)}>Retry</button></p>}
+      {!documents && !error && <p role="status">Loading approved documents…</p>}
+      {documents?.length === 0 && <p>No approved verification documents on file.</p>}
+      <div className="flex flex-wrap gap-3">
+        {documents?.map((document) => <button key={document.url} type="button" disabled={loadingDocument} className="underline text-left disabled:opacity-50" onClick={() => openDocument(document)}>{document.label}<span className="block text-xs">{document.reference}</span></button>)}
+      </div>
+      {loadingDocument && <p role="status">Opening document…</p>}
+      {preview && <div className="mt-3 p-3 border rounded-lg">
+        <div className="flex justify-between gap-3 mb-2"><strong>{preview.label}</strong><button type="button" className="underline" onClick={() => setPreview(null)}>Close document</button></div>
+        {preview.type === "application/pdf" ? <iframe src={preview.url} title={preview.label} className="w-full h-96" /> : <img src={preview.url} alt={preview.label} className="max-w-full max-h-96 object-contain" />}
+      </div>}
+    </div>
+  );
+}
+
 // Lazily loaded admin-only interface. Public shoppers never download this chunk.
 export default function SuperAdminDashboard({ scope }) {
   const {
@@ -1237,8 +1291,9 @@ export default function SuperAdminDashboard({ scope }) {
                       return (a.displayName || a.username || "").localeCompare(b.displayName || b.username || "");
                     })
                     .map((m, i, sorted) => {
+                    const canReadApprovedDocuments = !currentMember?.adminRole || currentMember.adminRole === "super_admin";
                     const hasDocs =
-                      m.idType || m.licenseNumber || m.bankStatementUrl || (m.licensePhotos && m.licensePhotos.length > 0);
+                      canReadApprovedDocuments || m.idType || m.licenseNumber || m.bankStatementUrl || (m.licensePhotos && m.licensePhotos.length > 0);
                     const docsOpen = expandedDocsUsername === m.username;
                     const showAdminHeader = i === 0 && m.isAdmin;
                     const showMemberHeader = !m.isAdmin && (i === 0 || sorted[i - 1].isAdmin);
@@ -1406,6 +1461,9 @@ export default function SuperAdminDashboard({ scope }) {
                               <div>Rejection reason: {m.rejectionReason}</div>
                             )}
                           </div>
+                          {canReadApprovedDocuments ? (
+                            <ApprovedMemberDocuments key={m.backendId} React={React} userId={m.backendId} authFetch={authFetch} backendUrl={BACKEND_URL} />
+                          ) : <p className="text-xs mb-2" style={{ color: SLATE }}>Approved verification documents require the highest administrator access.</p>}
                           {m.bankStatementUrl && (
                             <div className="mb-2">
                               <p className="text-xs font-medium mb-1" style={{ color: INK }}>
@@ -1448,7 +1506,7 @@ export default function SuperAdminDashboard({ scope }) {
                             </div>
                           ) : (
                             <p className="text-xs" style={{ color: SLATE }}>
-                              No photos uploaded.
+                              No legacy signup photos on file.
                             </p>
                           )}
                         </div>
