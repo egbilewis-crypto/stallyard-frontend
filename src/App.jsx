@@ -2130,6 +2130,7 @@ function MarketplaceStallyard() {
     username: "",
     email: "",
     phone: "",
+    stallyardTextNumber: "",
     password: "",
   });
   const [contentTab, setContentTab] = useState("banners");
@@ -3431,7 +3432,12 @@ function MarketplaceStallyard() {
       username,
       email: authForm.email.trim(),
       password: authForm.password,
+      stallyardTextNumber: authForm.stallyardTextNumber.trim().toUpperCase(),
     };
+    if (signupDraft.stallyardTextNumber && !/^ST-\d{3}-\d{3}-\d{3}$/.test(signupDraft.stallyardTextNumber)) {
+      setAuthError("Enter the Stallyard Text number as ST-123-456-789, or leave it blank");
+      return;
+    }
     let sendRes;
     try {
       sendRes = await backendFetch(`${BACKEND_URL}/email-verify/send`, {
@@ -3534,6 +3540,7 @@ function MarketplaceStallyard() {
       password: "",
       email: "",
       phone: "",
+      stallyardTextNumber: draft.stallyardTextNumber || "",
       displayName: "",
       firstName: "",
       lastName: "",
@@ -3567,6 +3574,7 @@ function MarketplaceStallyard() {
   // wherever we surface the "finish your profile" prompt.
   const completeProfile = async () => {
     setProfileStageError("");
+    const hasVerifiedStNumber = !!currentMember?.isPhoneVerified && !!currentMember?.stallyardTextNumber;
     if (!authForm.firstName.trim() || !authForm.lastName.trim()) {
       setProfileStageError("Enter your surname and first name");
       return;
@@ -3607,12 +3615,12 @@ function MarketplaceStallyard() {
       setProfileStageError("Stallyard is available in Nigeria only. Enter Nigeria as your country of residence.");
       return;
     }
-    if (authForm.phone.trim() && !isValidNigerianLocalPhone(authForm.phone)) {
+    if (!hasVerifiedStNumber && authForm.phone.trim() && !isValidNigerianLocalPhone(authForm.phone)) {
       setProfileStageError("Enter an 11-digit Nigerian phone number, for example 08032167464");
       return;
     }
-    if (!authForm.phone.trim()) {
-      setProfileStageError("Enter your Nigerian phone number");
+    if (!hasVerifiedStNumber && !authForm.phone.trim()) {
+      setProfileStageError("Enter your Nigerian phone number or verify your Stallyard Text number");
       return;
     }
     let res;
@@ -3629,7 +3637,7 @@ function MarketplaceStallyard() {
           nationality: "Nigeria",
           stateOfResidence: authForm.stateOfResidence,
           lgaOfResidence: authForm.lgaOfResidence,
-          phone: authForm.phone.trim(),
+          phone: hasVerifiedStNumber ? "" : authForm.phone.trim(),
           country: "Nigeria",
         }),
       });
@@ -3764,6 +3772,7 @@ function MarketplaceStallyard() {
       password: "",
       email: "",
       phone: member.phone || "",
+      stallyardTextNumber: member.stallyardTextNumber || "",
       displayName: "",
       firstName: member.firstName || "",
       lastName: member.lastName || "",
@@ -7529,6 +7538,34 @@ function MarketplaceStallyard() {
     }
   };
 
+  const sendSignupStNumberCode = async () => {
+    const stNumber = authForm.stallyardTextNumber.trim().toUpperCase();
+    if (!/^ST-\d{3}-\d{3}-\d{3}$/.test(stNumber)) {
+      setProfileStageError("Enter the Stallyard Text number as ST-123-456-789");
+      return;
+    }
+    setProfileStageError("");
+    setAccountPhoneMethod("stallyard_text");
+    setAccountPhoneInput(stNumber);
+    try {
+      const response = await authFetch(`${BACKEND_URL}/st-number-verify/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stNumber }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setProfileStageError(data.error || "Couldn't send a verification code to Stallyard Text");
+        return;
+      }
+      setAccountPhoneCodeSent(true);
+      setAccountPhoneCodeInput("");
+      showToast("Check Stallyard Text for your verification code");
+    } catch {
+      setProfileStageError("Couldn't reach the server — check your connection and try again.");
+    }
+  };
+
   const confirmAccountPhoneCode = async () => {
     if (!accountPhoneCodeInput.trim()) {
       showToast(accountPhoneMethod === "stallyard_text" ? "Enter the code sent to Stallyard Text" : "Enter the SMS code");
@@ -7574,6 +7611,19 @@ function MarketplaceStallyard() {
             : m
         )
       );
+      setSessionUserProfile((current) => current ? {
+        ...current,
+        is_phone_verified: true,
+        ...(isStallyardText
+          ? { stallyard_text_number: checkData.stNumber || accountPhoneInput.trim().toUpperCase() }
+          : { phone: accountPhoneInput.trim() }),
+      } : current);
+      if (isStallyardText) {
+        setAuthForm((current) => ({
+          ...current,
+          stallyardTextNumber: checkData.stNumber || accountPhoneInput.trim().toUpperCase(),
+        }));
+      }
       setAccountPhoneCodeSent(false);
       setAccountPhoneCodeInput("");
       setAccountPhoneInput("");
@@ -10043,19 +10093,63 @@ function MarketplaceStallyard() {
                       <option value="">{authForm.stateOfResidence ? "Select Local Government Area (LGA)" : "Select state first"}</option>
                       {(NIGERIA_LGAS[authForm.stateOfResidence] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
                     </select>
-                    <input
-                      type="tel"
-                      inputMode="numeric"
-                      maxLength={11}
-                      value={authForm.phone}
-                      onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })}
-                      placeholder="08032167464"
-                      className="w-full px-3 py-2 rounded-lg border outline-none"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
-                    <p className="text-xs -mt-2" style={{ color: SLATE }}>
-                      Example: 08032167464 — enter all 11 digits starting with 0.
-                    </p>
+                    {currentMember?.isPhoneVerified && currentMember?.stallyardTextNumber ? (
+                      <div className="p-3 rounded-lg border" style={{ borderColor: SAGE, backgroundColor: "#EDF4EE" }}>
+                        <p className="text-xs" style={{ color: SLATE }}>Verified Stallyard Text number</p>
+                        <p className="font-semibold mt-1" style={{ color: INK }}>{currentMember.stallyardTextNumber}</p>
+                        <p className="text-xs mt-1" style={{ color: SAGE }}>✓ Verified and automatically linked to this profile</p>
+                      </div>
+                    ) : authForm.stallyardTextNumber ? (
+                      <div className="p-3 rounded-lg border" style={{ borderColor: MARIGOLD, backgroundColor: "#FFF8E8" }}>
+                        <p className="text-sm font-semibold" style={{ color: INK }}>Verify your Stallyard Text number</p>
+                        <p className="text-xs mt-1 mb-2" style={{ color: SLATE }}>We will send a six-digit code to your Stallyard Text app.</p>
+                        <input
+                          value={authForm.stallyardTextNumber}
+                          onChange={(e) => {
+                            const value = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 14);
+                            setAuthForm({ ...authForm, stallyardTextNumber: value });
+                            setAccountPhoneCodeSent(false);
+                          }}
+                          placeholder="ST-123-456-789"
+                          className="w-full px-3 py-2 rounded-lg border outline-none bg-white"
+                          style={{ borderColor: "#DDD8CC" }}
+                          disabled={accountPhoneCodeSent}
+                        />
+                        {!accountPhoneCodeSent ? (
+                          <button type="button" onClick={sendSignupStNumberCode} className="mt-2 px-4 py-2 rounded-lg text-sm font-medium" style={{ backgroundColor: INK, color: "white" }}>Send verification code</button>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <input
+                              value={accountPhoneCodeInput}
+                              onChange={(e) => setAccountPhoneCodeInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                              placeholder="6-digit code"
+                              inputMode="numeric"
+                              maxLength={6}
+                              className="px-3 py-2 rounded-lg border outline-none bg-white w-36 text-center"
+                              style={{ borderColor: "#DDD8CC", fontFamily: "'IBM Plex Mono', monospace" }}
+                            />
+                            <button type="button" onClick={confirmAccountPhoneCode} disabled={verifyingAccountPhone} className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50" style={{ backgroundColor: MARIGOLD, color: INK }}>{verifyingAccountPhone ? "Checking…" : "Confirm code"}</button>
+                            <button type="button" onClick={() => setAccountPhoneCodeSent(false)} className="text-xs underline" style={{ color: SLATE }}>Change number</button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <input
+                          type="tel"
+                          inputMode="numeric"
+                          maxLength={11}
+                          value={authForm.phone}
+                          onChange={(e) => setAuthForm({ ...authForm, phone: e.target.value.replace(/\D/g, "").slice(0, 11) })}
+                          placeholder="08032167464"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                        />
+                        <p className="text-xs -mt-2" style={{ color: SLATE }}>
+                          Example: 08032167464 — enter all 11 digits starting with 0.
+                        </p>
+                      </>
+                    )}
                     {profileStageError && (
                       <p className="text-sm" style={{ color: BERRY }}>
                         {profileStageError}
@@ -10293,6 +10387,7 @@ function MarketplaceStallyard() {
                       autoComplete="username"
                     />
                     {isSignUp && (
+                    <>
                       <input
                         type="email"
                         value={authForm.email}
@@ -10302,6 +10397,19 @@ function MarketplaceStallyard() {
                         style={{ borderColor: "#DDD8CC" }}
                         autoCapitalize="none"
                       />
+                      <div>
+                        <input
+                          value={authForm.stallyardTextNumber}
+                          onChange={(e) => setAuthForm({ ...authForm, stallyardTextNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 14) })}
+                          placeholder="Stallyard Text number (optional)"
+                          className="w-full px-3 py-2 rounded-lg border outline-none"
+                          style={{ borderColor: "#DDD8CC" }}
+                          autoCapitalize="characters"
+                          autoComplete="off"
+                        />
+                        <p className="text-xs mt-1" style={{ color: SLATE }}>Example: ST-123-456-789. You will verify it after your account is created.</p>
+                      </div>
+                    </>
                     )}
                     <div className="relative">
                       <input
