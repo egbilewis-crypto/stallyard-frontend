@@ -8619,11 +8619,9 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
-    const routeFields = [form.shippingFromState, form.shippingFromLga, form.shippingToState, form.shippingToLga];
-    if (routeFields.some(Boolean) && (!routeFields.every(Boolean) ||
-      !(NIGERIA_LGAS[form.shippingFromState] || []).includes(form.shippingFromLga) ||
-      !(NIGERIA_LGAS[form.shippingToState] || []).includes(form.shippingToLga))) {
-      showToast("Select a state and local government for both Shipping From and Shipping To");
+    const routeFields = [form.shippingFromState, form.shippingToState];
+    if (routeFields.some(Boolean) && !routeFields.every((state) => NIGERIA_PROFILE_STATES.includes(state))) {
+      showToast("Select a state for both Shipping From and Shipping To");
       return;
     }
     if (!Number.isFinite(Number(form.shippingFee)) || Number(form.shippingFee) < 0) {
@@ -8672,7 +8670,7 @@ function MarketplaceStallyard() {
         ...form,
         price: form.price ? Number(form.price) : 0,
         shippingFee: Number(form.shippingFee) || 0,
-        shippingRoute: { shippingFromState: form.shippingFromState, shippingFromLga: form.shippingFromLga, shippingToState: form.shippingToState, shippingToLga: form.shippingToLga },
+        shippingRoute: { shippingFromState: form.shippingFromState, shippingToState: form.shippingToState },
         ...statusPatch,
       };
       if (typeof existingListing?.id === "number") {
@@ -8723,7 +8721,7 @@ function MarketplaceStallyard() {
             subcategory: form.subcategory,
             condition: form.condition,
             shippingFee: Number(form.shippingFee) || 0,
-            shippingRoute: { shippingFromState: form.shippingFromState, shippingFromLga: form.shippingFromLga, shippingToState: form.shippingToState, shippingToLga: form.shippingToLga },
+            shippingRoute: { shippingFromState: form.shippingFromState, shippingToState: form.shippingToState },
             emoji: form.emoji,
             fitMake: form.fitMake,
             fitModel: form.fitModel,
@@ -12148,16 +12146,12 @@ function MarketplaceStallyard() {
                   />
                 </div>
               </div>
-              <div className="grid sm:grid-cols-2 gap-4">
+              <div className="grid sm:grid-cols-3 gap-4 p-4 rounded-lg border" style={{ borderColor: "#DDD8CC" }}>
                 <fieldset className="space-y-2">
                   <legend className="text-sm font-medium mb-1" style={{ color: INK }}>Shipping From</legend>
                   <select aria-label="Shipping From state" value={form.shippingFromState} onChange={(e) => setForm({ ...form, shippingFromState: e.target.value, shippingFromLga: "" })} className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                     <option value="">Select state</option>
                     {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
-                  </select>
-                  <select aria-label="Shipping From local government" disabled={!form.shippingFromState} value={form.shippingFromLga} onChange={(e) => setForm({ ...form, shippingFromLga: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-white disabled:opacity-50" style={{ borderColor: "#DDD8CC" }}>
-                    <option value="">{form.shippingFromState ? "Select local government" : "Select state first"}</option>
-                    {(NIGERIA_LGAS[form.shippingFromState] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
                   </select>
                 </fieldset>
                 <fieldset className="space-y-2">
@@ -12166,32 +12160,29 @@ function MarketplaceStallyard() {
                     <option value="">Select state</option>
                     {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
                   </select>
-                  <select aria-label="Shipping To local government" disabled={!form.shippingToState} value={form.shippingToLga} onChange={(e) => setForm({ ...form, shippingToLga: e.target.value })} className="w-full px-3 py-2 rounded-lg border bg-white disabled:opacity-50" style={{ borderColor: "#DDD8CC" }}>
-                    <option value="">{form.shippingToState ? "Select local government" : "Select state first"}</option>
-                    {(NIGERIA_LGAS[form.shippingToState] || []).map((lga) => <option key={lga} value={lga}>{lga}</option>)}
-                  </select>
                 </fieldset>
-              </div>
               <div>
-                <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Shipping amount (₦)
+                <label htmlFor="listing-shipping-amount" className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                  Amount to charge (₦)
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span style={{ color: SLATE }}>{CURRENCIES.NGN.symbol}</span>
                   <input
+                    id="listing-shipping-amount"
                     type="number"
                     min="0"
                     step="0.01"
                     value={form.shippingFee}
                     onChange={(e) => setForm({ ...form, shippingFee: e.target.value })}
-                    className="w-32 px-3 py-2 rounded-lg border outline-none"
+                    className="w-full px-3 py-2 rounded-lg border outline-none"
                     style={{ borderColor: "#DDD8CC", backgroundColor: "white", fontFamily: "'IBM Plex Mono', monospace" }}
-                    placeholder="0.00"
+                    placeholder="e.g. 2500"
                   />
                   <span className="text-xs" style={{ color: SLATE }}>
                     Enter your charge for this route. Leave at 0 for free shipping.
                   </span>
                 </div>
+              </div>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
@@ -17927,7 +17918,7 @@ function MarketplaceStallyard() {
               );
             })()}
             <p className="text-xs mb-5" style={{ color: SLATE }}>
-              {selected.shippingFromState && <p className="text-xs mb-2" style={{ color: SLATE }}>Ships from {selected.shippingFromLga}, {selected.shippingFromState} to {selected.shippingToLga}, {selected.shippingToState}.</p>}
+              {selected.shippingFromState && <p className="text-xs mb-2" style={{ color: SLATE }}>Ships from {selected.shippingFromState} to {selected.shippingToState}.</p>}
               {selected.shippingFee
                 ? `+ ${formatMoney(selected.shippingFee, selected.currency)} shipping`
                 : "Free shipping"}
@@ -18796,7 +18787,7 @@ function MarketplaceStallyard() {
               )}
               {form.category === "Auto Parts" && form.vin && <div>VIN: {form.vin}</div>}
               {form.state && <div>Location: {form.state}</div>}
-              {form.shippingFromState && <div>Shipping: {form.shippingFromLga}, {form.shippingFromState} → {form.shippingToLga}, {form.shippingToState} · {formatMoney(Number(form.shippingFee) || 0, "NGN")}</div>}
+              {form.shippingFromState && <div>Shipping: {form.shippingFromState} → {form.shippingToState} · {formatMoney(Number(form.shippingFee) || 0, "NGN")}</div>}
               {form.shippingMethods.length > 0 && (
                 <div>
                   Shipping:{" "}
