@@ -2438,6 +2438,9 @@ function MarketplaceStallyard() {
   const locationWatchersRef = useRef({});
   const locationLastSentRef = useRef({});
   const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [savedBank, setSavedBank] = useState(null);
+  const [savedBankError, setSavedBankError] = useState(false);
+  const [bankSummaryRefresh, setBankSummaryRefresh] = useState(0);
   const [bankList, setBankList] = useState([]);
   const [bankForm, setBankForm] = useState({ bankCode: "", accountNumber: "" });
   const [bankResolution, setBankResolution] = useState({ status: "idle", accountName: "", nameMatches: false, error: "" });
@@ -3951,6 +3954,25 @@ function MarketplaceStallyard() {
     currentMember?.casualSellerStatus === "approved" || casualSellerStatus?.status === "approved"
   );
   const casualSellerContactReady = casualSellerStatus?.emailVerified === true && casualSellerStatus?.phoneVerified === true;
+
+  useEffect(() => {
+    let cancelled = false;
+    setSavedBank(null);
+    setSavedBankError(false);
+    if (!currentUser || !authToken || sessionUserProfile?.is_admin) return;
+    (async () => {
+      try {
+        const response = await authFetch(`${BACKEND_URL}/sellers/bank-details`);
+        const summary = await response.json();
+        if (!response.ok) throw new Error("Could not load saved bank");
+        if (!cancelled) setSavedBank({ ...summary, username: currentUser });
+      } catch {
+        if (!cancelled) setSavedBankError(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser, authToken, sessionUserProfile?.is_admin, bankSummaryRefresh]);
+  const ownSavedBank = savedBank?.username === currentUser ? savedBank : null;
 
   useEffect(() => {
     const accountNumber = bankForm.accountNumber.replace(/\D/g, "");
@@ -7409,6 +7431,7 @@ function MarketplaceStallyard() {
       await persistMembers(
         members.map((m) => (m.username === currentUser ? { ...m, hasBankDetails: true } : m))
       );
+      setBankSummaryRefresh((value) => value + 1);
       showToast(`Bank details saved${data.accountName ? ` for ${data.accountName}` : ""}`);
       setBankForm({ bankCode: "", accountNumber: "" });
       setBankOwnerConfirmed(false);
@@ -7443,6 +7466,7 @@ function MarketplaceStallyard() {
       setBankChangeCodeInput("");
       setBankForm({ bankCode: "", accountNumber: "" });
       setBankOwnerConfirmed(false);
+      setBankSummaryRefresh((value) => value + 1);
       showToast(`Bank account updated${data.accountName ? ` for ${data.accountName}` : ""}`);
     } catch {
       showToast("Couldn't reach the server — try again");
@@ -16209,6 +16233,15 @@ function MarketplaceStallyard() {
                   <h3 className="text-sm font-semibold mb-1" style={{ color: INK }}>
                     Payout bank details
                   </h3>
+                  {ownSavedBank?.hasBankDetails && (
+                    <div className="p-3 rounded-lg border mb-3 text-sm" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                      <p className="font-semibold" style={{ color: INK }}>{ownSavedBank.bankName || bankList.find((bank) => String(bank.code) === ownSavedBank.bankCode)?.name || "Saved payout bank"}</p>
+                      <p style={{ color: SLATE }}>Account ending in {ownSavedBank.accountNumberLast4}</p>
+                      {!ownSavedBank.bankName && <button type="button" className="text-xs underline" onClick={() => setBankSummaryRefresh((value) => value + 1)}>Reload bank name</button>}
+                    </div>
+                  )}
+                  {savedBankError && <p className="text-xs mb-3" role="status">Couldn’t load your saved bank details. <button type="button" className="underline" onClick={() => setBankSummaryRefresh((value) => value + 1)}>Try again</button></p>}
+                  {!ownSavedBank && !savedBankError && <p className="text-xs mb-3" role="status">Loading saved bank details…</p>}
                   {pendingBankChange ? (
                     <>
                       <p className="text-xs mb-3" style={{ color: SLATE }}>
@@ -16246,7 +16279,7 @@ function MarketplaceStallyard() {
                   ) : (
                     <>
                       <p className="text-xs mb-3" style={{ color: SLATE }}>
-                        {currentMember?.hasBankDetails
+                        {(ownSavedBank?.hasBankDetails || currentMember?.hasBankDetails)
                           ? "Your bank details are on file. Changing them requires confirming a code we'll email you."
                           : "Add your bank details before requesting a withdrawal — payouts go here automatically."}
                       </p>
