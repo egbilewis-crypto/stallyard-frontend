@@ -610,6 +610,7 @@ const RECOMMENDED_LISTING_PHOTO_DIM = 1200; // warn (not block) below this
 const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/heic", "image/heif", "image/avif"];
 
 const SHIPPING_METHODS = [
+  { value: "free_shipping", label: "Free shipping" },
   { value: "pickup", label: "Pickup (free)" },
   { value: "dhl", label: "DHL" },
   { value: "self_delivery", label: "Self delivery" },
@@ -940,6 +941,7 @@ function backendListingToFrontend(row, existing) {
     brand: row.brand || "",
     state: row.state || "",
     shippingMethods: row.shipping_methods || [],
+    shippingMethodFees: row.shipping_method_fees || {},
     returnPolicy: row.return_policy || "",
     vin: row.vin || "",
     sellerName: row.seller_name,
@@ -1455,6 +1457,12 @@ const SALES_TABS = [
   { key: "cancelled", label: "Cancelled" },
 ];
 
+function deliveryMethodFee(listing, method, routeFee) {
+  if (method === "pickup" || method === "free_shipping") return 0;
+  const fee = listing.shippingMethodFees?.[method];
+  return fee !== undefined && fee !== null && fee !== "" ? Number(fee) : Number(routeFee) || 0;
+}
+
 function listingShippingRoutes(listing) {
   if (Array.isArray(listing.shippingRoutes) && listing.shippingRoutes.length) return listing.shippingRoutes;
   return listing.shippingFromState && listing.shippingToState ? [{ shippingFromState: listing.shippingFromState, shippingToState: listing.shippingToState, amount: Number(listing.shippingFee) || 0 }] : [];
@@ -1714,7 +1722,7 @@ function PriceTagCard({ listing, onOpen, onAddToCart, rating, isSaved, onToggleW
             </p>
           )}
           <p className="mt-1 text-xs" style={{ color: SLATE }}>
-            {listing.shippingFee ? `+ ${formatMoney(listing.shippingFee, listing.currency)} shipping` : "Free shipping"}
+            {listing.shippingFee ? `+ ${formatMoney(listing.shippingFee, listing.currency)} shipping` : "Delivery charge shown at checkout"}
           </p>
         </div>
       </button>
@@ -2585,6 +2593,7 @@ function MarketplaceStallyard() {
     brand: "",
     state: "",
     shippingMethods: [],
+      shippingMethodFees: {},
     returnPolicy: "",
     vin: "",
   });
@@ -4473,7 +4482,8 @@ function MarketplaceStallyard() {
       const routes = listingShippingRoutes(listing);
       const shippingRouteIndex = c.shippingRouteIndex ?? (routes.length === 1 ? 0 : "");
       const selectedRoute = shippingRouteIndex !== "" ? routes[Number(shippingRouteIndex)] : null;
-      return { ...listing, shippingRouteIndex, shippingFee: selectedRoute ? Number(selectedRoute.amount) : Number(listing.shippingFee) || 0,
+      const method = c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : "");
+      return { ...listing, baseShippingFee: listing.shippingFee, shippingRouteIndex, shippingFee: deliveryMethodFee(listing, method, selectedRoute ? selectedRoute.amount : listing.shippingFee),
         shippingMethod: c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : ""), qty: c.qty, price: c.offerPrice ?? listing.price, isOfferPrice: c.offerPrice != null };
     })
     .filter(Boolean);
@@ -7778,7 +7788,7 @@ function MarketplaceStallyard() {
       setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
       return;
     }
-    if (cartItems.some((item) => item.shippingMethod !== "pickup" && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
+    if (cartItems.some((item) => !(["pickup", "free_shipping"].includes(item.shippingMethod)) && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
       setShippingError("Choose one shipping route for each delivery listing."); return;
     }
     if (cartItems.some((item) => !item.shippingMethod || (item.shippingMethods?.length && !item.shippingMethods.includes(item.shippingMethod)))) {
@@ -7857,7 +7867,7 @@ function MarketplaceStallyard() {
       setShippingError("Fill in the recipient name, phone, street, city, and postal code for delivery in Nigeria.");
       return;
     }
-    if (cartItems.some((item) => item.shippingMethod !== "pickup" && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
+    if (cartItems.some((item) => !(["pickup", "free_shipping"].includes(item.shippingMethod)) && listingShippingRoutes(item).length && (item.shippingRouteIndex === "" || !listingShippingRoutes(item)[Number(item.shippingRouteIndex)]))) {
       setShippingError("Choose one shipping route for each delivery listing."); return;
     }
     if (cartItems.some((item) => !item.shippingMethod || (item.shippingMethods?.length && !item.shippingMethods.includes(item.shippingMethod)))) {
@@ -8063,6 +8073,7 @@ function MarketplaceStallyard() {
       brand: "",
       state: "",
       shippingMethods: [],
+      shippingMethodFees: {},
       returnPolicy: "",
       vin: "",
     });
@@ -8654,6 +8665,15 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
+    for (const method of ["self_delivery", "local_delivery_driver"]) {
+      if (!form.shippingMethods.includes(method)) continue;
+      const fee = form.shippingMethodFees[method];
+      if (fee === undefined || fee === "") {
+        if (!isDraft && method === "local_delivery_driver") { showToast("Enter the Local Delivery Driver charge before publishing"); return; }
+      } else if (!Number.isFinite(Number(fee)) || Number(fee) < 0 || (method === "local_delivery_driver" && Number(fee) <= 0)) {
+        showToast(method === "local_delivery_driver" ? "Local Delivery Driver charge must be greater than zero" : "Enter a valid Self delivery charge"); return;
+      }
+    }
     if (!isDraft && form.shippingMethods.includes("pickup") && !form.pickupLocation.trim()) {
       showToast("Enter a pickup address or meeting location before publishing with Pickup"); return;
     }
@@ -8780,6 +8800,7 @@ function MarketplaceStallyard() {
             brand: form.brand,
             state: form.state,
             shippingMethods: form.shippingMethods,
+            shippingMethodFees: form.shippingMethodFees,
             pickupLocation: form.pickupLocation.trim(),
             returnPolicy: form.returnPolicy,
             vin: form.vin,
@@ -8842,6 +8863,7 @@ function MarketplaceStallyard() {
       brand: listing.brand || "",
       state: listing.state || "",
       shippingMethods: listing.shippingMethods || [],
+      shippingMethodFees: { ...(listing.shippingMethodFees || {}) },
       returnPolicy: listing.returnPolicy || "",
       vin: listing.vin || "",
     });
@@ -8929,6 +8951,7 @@ function MarketplaceStallyard() {
       brand: l.brand || "",
       state: l.state || "",
       shippingMethods: l.shippingMethods || [],
+      shippingMethodFees: { ...(l.shippingMethodFees || {}) },
       returnPolicy: l.returnPolicy || "",
       vin: l.vin || "",
     });
@@ -12216,7 +12239,7 @@ function MarketplaceStallyard() {
                   </div>
                 ))}
                 {form.shippingRoutes.length < 3 && <button type="button" className="px-4 py-2 rounded-lg border text-sm font-medium" style={{ borderColor: "#DDD8CC", color: INK }} onClick={() => setForm((previous) => ({ ...previous, shippingRoutes: [...previous.shippingRoutes, { shippingFromState: "", shippingToState: "", amount: "0.00" }] }))}>+ Add shipping route</button>}
-                <p className="text-xs" style={{ color: SLATE }}>Add up to 3 routes. Buyers choose one route per listing. Enter 0 for free shipping; pickup is always free.</p>
+                <p className="text-xs" style={{ color: SLATE }}>Add up to 3 routes. Buyers choose one route per listing. Enter the shipping charge for each route. Pickup is free.</p>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
@@ -12277,6 +12300,11 @@ function MarketplaceStallyard() {
                   ))}
                 </div>
               </div>
+              {[['self_delivery', 'Self delivery charge (₦) — optional'], ['local_delivery_driver', 'Local Delivery Driver charge (₦) — required']].filter(([method]) => form.shippingMethods.includes(method)).map(([method, label]) => <div key={method}>
+                <label htmlFor={`delivery-charge-${method}`} className="block text-sm font-medium mb-1" style={{ color: INK }}>{label}</label>
+                <input id={`delivery-charge-${method}`} type="number" min={method === "local_delivery_driver" ? "0.01" : "0"} step="0.01" value={form.shippingMethodFees[method] ?? ""} onChange={(event) => setForm({ ...form, shippingMethodFees: { ...form.shippingMethodFees, [method]: event.target.value } })} placeholder="Enter amount" className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} />
+                {method === "self_delivery" && <p className="text-xs mt-1" style={{ color: SLATE }}>Leave blank to use your shipping route charge. An entered amount replaces the route charge.</p>}
+              </div>)}
               {form.shippingMethods.includes("pickup") && <div>
                 <label htmlFor="listing-pickup-location" className="block text-sm font-medium mb-1" style={{ color: INK }}>Pickup address or meeting location (required for pickup)</label>
                 <textarea id="listing-pickup-location" value={form.pickupLocation} maxLength={1000} onChange={(event) => setForm({ ...form, pickupLocation: event.target.value })} rows={3} placeholder="Street address, area, city and helpful pickup instructions" className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} />
@@ -17967,7 +17995,7 @@ function MarketplaceStallyard() {
               {listingShippingRoutes(selected).map((route, index) => <p key={index} className="text-xs mb-2" style={{ color: SLATE }}>{route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount), "NGN")}</p>)}
               {selected.shippingFee
                 ? `+ ${formatMoney(selected.shippingFee, selected.currency)} shipping`
-                : "Free shipping"}
+                : "Delivery charge shown at checkout"}
             </p>
             {isAuction ? (
               <div>
@@ -18221,10 +18249,10 @@ function MarketplaceStallyard() {
                           Shipping for this listing
                           <select aria-label={`Shipping for ${item.title}`} value={item.shippingMethod} onChange={(event) => selectCartShipping(item.id, event.target.value)} className="w-full mt-1 px-2 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }}>
                             <option value="">Choose one shipping option</option>
-                            {(item.shippingMethods?.length ? item.shippingMethods : ["seller_delivery"]).map((method) => <option key={method} value={method}>{SHIPPING_METHODS.find((option) => option.value === method)?.label || "Seller delivery"} · {formatMoney(method === "pickup" ? 0 : Number(item.shippingFee) || 0, "NGN")}</option>)}
+                            {(item.shippingMethods?.length ? item.shippingMethods : ["seller_delivery"]).map((method) => <option key={method} value={method}>{SHIPPING_METHODS.find((option) => option.value === method)?.label || "Seller delivery"} · {formatMoney(deliveryMethodFee(item, method, listingShippingRoutes(item)[Number(item.shippingRouteIndex)]?.amount ?? item.baseShippingFee), "NGN")}</option>)}
                           </select>
                         </label>
-                        {item.shippingMethod !== "pickup" && listingShippingRoutes(item).length > 0 && <label className="block text-xs mt-2 font-medium">Shipping route
+                        {!(["pickup", "free_shipping"].includes(item.shippingMethod)) && listingShippingRoutes(item).length > 0 && <label className="block text-xs mt-2 font-medium">Shipping route
                           <select aria-label={`Shipping route for ${item.title}`} value={item.shippingRouteIndex} onChange={(event) => selectCartRoute(item.id, event.target.value)} className="w-full mt-1 px-2 py-2 rounded-lg border bg-white">
                             <option value="">Choose one route</option>
                             {listingShippingRoutes(item).map((route, index) => <option key={index} value={index}>{route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount), "NGN")}</option>)}
