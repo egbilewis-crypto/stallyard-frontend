@@ -8650,6 +8650,10 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
+    if (!isDraft && !NIGERIAN_STATES.includes(form.state)) {
+      showToast("Select the state where the item is located before publishing");
+      return;
+    }
     if (!isDraft && (!Array.isArray(form.shippingMethods) || form.shippingMethods.length === 0 || form.shippingMethods.some((method) => !SHIPPING_METHODS.some((option) => option.value === method)))) {
       showToast("Choose at least one delivery or pickup method before publishing");
       return;
@@ -12223,7 +12227,7 @@ function MarketplaceStallyard() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
-                  Location <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                  Item location <span className="font-normal" style={{ color: SLATE }}>(required)</span>
                 </label>
                 <select
                   value={form.state}
