@@ -2318,6 +2318,8 @@ function MarketplaceStallyard() {
   };
   const [toast, setToast] = useState("");
   const [editingId, setEditingId] = useState(null);
+  const [listingFormOpen, setListingFormOpen] = useState(false);
+  useEffect(() => { if (view !== "sell") setListingFormOpen(false); }, [view]);
   const [cart, setCart] = useState([]);
   // Most-recently-viewed listing ids, newest first, capped at 12 — stored
   // the same way as cart/watchlist (local to this browser).
@@ -7990,6 +7992,7 @@ function MarketplaceStallyard() {
   };
 
   const resetForm = () => {
+    setListingFormOpen(false);
     setForm({
       title: "",
       description: "",
@@ -8764,6 +8767,7 @@ function MarketplaceStallyard() {
       returnPolicy: listing.returnPolicy || "",
       vin: listing.vin || "",
     });
+    setListingFormOpen(true);
     setEditingId(listing.id);
     setAdminEditContext(fromAdmin);
     setPreviewOpen(false);
@@ -8847,6 +8851,7 @@ function MarketplaceStallyard() {
     setAdminEditContext(false);
     setPreviewOpen(false);
     setView("sell");
+    setListingFormOpen(true);
     showToast("Duplicated — review and publish when ready");
   };
 
@@ -11675,7 +11680,7 @@ function MarketplaceStallyard() {
         {view === "sell" && !currentMember?.isAdmin && (
           <div className="max-w-xl">
             <h2 className="text-2xl mb-1" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
-              {editingId ? "Edit your listing" : "Set up a listing"}
+              {listingFormOpen ? (editingId ? "Edit your listing" : "Set up a listing") : "Sell on Stallyard"}
             </h2>
             <p className="text-sm mb-6" style={{ color: SLATE }}>
               Visible to everyone browsing Stallyard.
@@ -11926,7 +11931,17 @@ function MarketplaceStallyard() {
               </div>
             )}
 
-            {(!currentUser || (hasSellerListingAccess && !needsIdVerification)) && (
+            {(!currentUser || (hasSellerListingAccess && !needsIdVerification)) && !listingFormOpen && (
+              <button
+                type="button"
+                onClick={() => { resetForm(); setListingFormOpen(true); }}
+                className="px-5 py-2.5 rounded-lg font-semibold"
+                style={{ backgroundColor: MARIGOLD, color: INK }}
+              >
+                List an item
+              </button>
+            )}
+            {listingFormOpen && (!currentUser || (hasSellerListingAccess && !needsIdVerification)) && (
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
@@ -12408,7 +12423,7 @@ function MarketplaceStallyard() {
                     List it
                   </button>
                 )}
-                {editingId && (
+                {listingFormOpen && (
                   <button
                     type="button"
                     onClick={resetForm}
@@ -12449,6 +12464,7 @@ function MarketplaceStallyard() {
                     <button
                       onClick={() => {
                         resetForm();
+                        setListingFormOpen(true);
                         setView("sell");
                       }}
                       className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
