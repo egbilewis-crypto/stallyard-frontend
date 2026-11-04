@@ -12397,6 +12397,17 @@ function MarketplaceStallyard() {
                 >
                   {editingId && listings.find((l) => l.id === editingId)?.status !== "draft" ? "Save changes" : "Preview"}
                 </button>
+                {(!editingId || listings.find((l) => l.id === editingId)?.status === "draft") && (
+                  <button
+                    type="button"
+                    onClick={() => handleSubmit("publish")}
+                    disabled={uploading}
+                    className="px-5 py-2.5 rounded-lg font-medium disabled:opacity-50"
+                    style={{ backgroundColor: INK, color: "white" }}
+                  >
+                    List it
+                  </button>
+                )}
                 {editingId && (
                   <button
                     type="button"
