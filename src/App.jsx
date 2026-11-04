@@ -912,6 +912,7 @@ function backendListingToFrontend(row, existing) {
     category: row.category,
     subcategory: row.subcategory || "",
     condition: row.condition,
+    pickupLocation: row.pickup_location || "",
     shippingRoutes: row.shipping_route?.routes || [],
     shippingFee: Number(row.shipping_fee) || 0,
     shippingFromState: row.shipping_route?.shippingFromState || "",
@@ -1052,6 +1053,7 @@ function backendOrderToFrontend(row) {
       price: Number(i.price),
       qty: i.qty,
       shippingFee: Number(i.shipping_fee) || 0,
+      pickupLocation: i.pickup_location || "",
       shippingMethod: i.shipping_method || "",
       shippingRoute: i.shipping_route || null,
       sellerName: i.seller_name,
@@ -2571,6 +2573,7 @@ function MarketplaceStallyard() {
     auctionDurationDays: "3",
     currency: "NGN",
     shippingFee: "0.00",
+      pickupLocation: "",
       shippingRoutes: [{ shippingFromState: "", shippingToState: "", amount: "0.00" }],
       shippingFromState: "",
       shippingFromLga: "",
@@ -8048,6 +8051,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: "NGN",
       shippingFee: "0.00",
+      pickupLocation: "",
       shippingRoutes: [{ shippingFromState: "", shippingToState: "", amount: "0.00" }],
       shippingFromState: "",
       shippingFromLga: "",
@@ -8650,6 +8654,9 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
+    if (!isDraft && form.shippingMethods.includes("pickup") && !form.pickupLocation.trim()) {
+      showToast("Enter a pickup address or meeting location before publishing with Pickup"); return;
+    }
     if (!isDraft && !NIGERIAN_STATES.includes(form.state)) {
       showToast("Select the state where the item is located before publishing");
       return;
@@ -8773,6 +8780,7 @@ function MarketplaceStallyard() {
             brand: form.brand,
             state: form.state,
             shippingMethods: form.shippingMethods,
+            pickupLocation: form.pickupLocation.trim(),
             returnPolicy: form.returnPolicy,
             vin: form.vin,
           }),
@@ -8822,6 +8830,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: listing.currency || "NGN",
       shippingFee: listing.shippingFee != null ? String(listing.shippingFee) : "0.00",
+      pickupLocation: listing.pickupLocation || "",
       shippingRoutes: listingShippingRoutes(listing).length ? listingShippingRoutes(listing).map((route) => ({ ...route })) : [{ shippingFromState: "", shippingToState: "", amount: String(listing.shippingFee || 0) }],
       shippingFromState: listing.shippingFromState || "",
       shippingFromLga: listing.shippingFromLga || "",
@@ -8908,6 +8917,7 @@ function MarketplaceStallyard() {
       auctionDurationDays: "3",
       currency: l.currency || "NGN",
       shippingFee: l.shippingFee != null ? String(l.shippingFee) : "0.00",
+      pickupLocation: l.pickupLocation || "",
       shippingRoutes: listingShippingRoutes(l).length ? listingShippingRoutes(l).map((route) => ({ ...route })) : [{ shippingFromState: "", shippingToState: "", amount: String(l.shippingFee || 0) }],
       shippingFromState: l.shippingFromState || "",
       shippingFromLga: l.shippingFromLga || "",
@@ -12267,6 +12277,11 @@ function MarketplaceStallyard() {
                   ))}
                 </div>
               </div>
+              {form.shippingMethods.includes("pickup") && <div>
+                <label htmlFor="listing-pickup-location" className="block text-sm font-medium mb-1" style={{ color: INK }}>Pickup address or meeting location (required for pickup)</label>
+                <textarea id="listing-pickup-location" value={form.pickupLocation} maxLength={1000} onChange={(event) => setForm({ ...form, pickupLocation: event.target.value })} rows={3} placeholder="Street address, area, city and helpful pickup instructions" className="w-full px-3 py-2 rounded-lg border bg-white" style={{ borderColor: "#DDD8CC" }} />
+                <p className="text-xs mt-1" style={{ color: SLATE }}>Private: only shown to the buyer after payment. Your item's state remains public.</p>
+              </div>}
               <div>
                 <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
                   Return policy <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
@@ -14659,6 +14674,10 @@ function MarketplaceStallyard() {
                               </span>
                             </div>
 
+                            {item.shippingMethod === "pickup" && item.pickupLocation && <div className="ml-6 mt-2 p-3 rounded-lg border text-sm" style={{ borderColor: "#DDD8CC", backgroundColor: CANVAS }}>
+                              <p className="font-semibold">Pickup location</p>
+                              <p className="whitespace-pre-wrap">{item.pickupLocation}</p>
+                            </div>}
                             <div className="pl-6 mt-2 mb-2">
                               <TrackingTimeline
                                 item={item}
@@ -17944,6 +17963,7 @@ function MarketplaceStallyard() {
               );
             })()}
             <p className="text-xs mb-5" style={{ color: SLATE }}>
+              {selected.state && <p className="text-sm mb-2" style={{ color: INK }}>Item location: {selected.state}</p>}
               {listingShippingRoutes(selected).map((route, index) => <p key={index} className="text-xs mb-2" style={{ color: SLATE }}>{route.shippingFromState} → {route.shippingToState} · {formatMoney(Number(route.amount), "NGN")}</p>)}
               {selected.shippingFee
                 ? `+ ${formatMoney(selected.shippingFee, selected.currency)} shipping`
