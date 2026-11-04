@@ -8650,6 +8650,10 @@ function MarketplaceStallyard() {
       return;
     }
     const isDraft = mode === "draft";
+    if (!isDraft && (!Array.isArray(form.shippingMethods) || form.shippingMethods.length === 0 || form.shippingMethods.some((method) => !SHIPPING_METHODS.some((option) => option.value === method)))) {
+      showToast("Choose at least one delivery or pickup method before publishing");
+      return;
+    }
     const shippingRoutes = form.shippingRoutes.filter((route) => route.shippingFromState || route.shippingToState);
     if (form.shippingRoutes.length > 3 || shippingRoutes.some((route) => !NIGERIA_PROFILE_STATES.includes(route.shippingFromState) || !NIGERIA_PROFILE_STATES.includes(route.shippingToState) || route.amount === "" || !Number.isFinite(Number(route.amount)) || Number(route.amount) < 0)) {
       showToast("Complete From, To and a valid charge for each shipping route (maximum 3)");
@@ -12237,7 +12241,7 @@ function MarketplaceStallyard() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2" style={{ color: INK }}>
-                  Shipping options <span className="font-normal" style={{ color: SLATE }}>(optional)</span>
+                  Shipping options <span className="font-normal" style={{ color: SLATE }}>(choose at least one)</span>
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {SHIPPING_METHODS.map((m) => (
