@@ -2383,6 +2383,12 @@ function MarketplaceStallyard() {
   const setBuyerOrderStatusFilter = (value) => setRouteField("orderStatus", value);
   const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "", smsProvider: "termii" });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
+  const [categoryStrip, setCategoryStrip] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BACKEND_URL}/homepage-category-strip`).then((response) => response.ok ? response.json() : null).then((data) => { if (!cancelled && data) setCategoryStrip(data.strip); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [homepageAds, setHomepageAds] = useState([
     { slot: 1, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
     { slot: 2, imageUrl: "", mediaType: "image", posterUrl: "", linkUrl: "" },
@@ -11355,6 +11361,30 @@ function MarketplaceStallyard() {
               </div>
             )}
 
+            {isHomeState && categoryStrip?.enabled !== false && ((categoryStrip?.tiles?.length || 0) > 0 || visibleListings.some((listing) => listing.images?.[0])) && (
+              <section className="mb-10" aria-labelledby="shop-category-heading">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <h3 id="shop-category-heading" className="text-xl font-semibold" style={{ color: INK }}>{categoryStrip?.title || "Shop by category"}</h3>
+                  <button type="button" className="text-sm underline" style={{ color: SLATE }} onClick={() => document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Shop all</button>
+                </div>
+                <div className="flex gap-4 overflow-x-auto pb-3">
+                  {(categoryStrip?.tiles?.length ? categoryStrip.tiles.map((tile) => ({ ...tile, image: tile.imageUrl })) : [{ category: "All", label: "Shop all", image: visibleListings.find((listing) => listing.images?.[0])?.images[0] },
+                    ...CATEGORIES.filter((category) => category !== "All").map((category) => ({ category, label: category, image: visibleListings.find((listing) => listing.category === category && listing.images?.[0])?.images[0] })).filter((tile) => tile.image)
+                  ]).map((tile, index) => (
+                    <button key={`${tile.category}-${index}`} type="button" onClick={() => {
+                      if (tile.category === "All") document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      else { setCategoryFilter(tile.category); setSubcategoryFilter("All"); }
+                    }} className="group shrink-0 text-left w-36 sm:w-40 lg:w-[calc((100%-96px)/7)] lg:min-w-[140px]">
+                      <div className="aspect-square overflow-hidden rounded-2xl bg-white border" style={{ borderColor: "#E8E5DE" }}>
+                        <img src={tile.image} alt={tile.label} loading="lazy" decoding="async" className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                      </div>
+                      <span className="block text-sm mt-3 group-hover:underline" style={{ color: INK }}>{tile.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+
             {categoryFilter !== "All" && (
               <div className="mb-6 flex items-center justify-between gap-3 rounded-xl border bg-white px-4 py-3" style={{ borderColor: "#DDD8CC" }}>
                 <div className="flex items-center gap-3 min-w-0">
@@ -11431,7 +11461,7 @@ function MarketplaceStallyard() {
               </div>
             )}
 
-            <h3 className="text-xl mb-4" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
+            <h3 id="shop-all-listings" className="text-xl mb-4 scroll-mt-48" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
               {isHomeState ? "Shop all" : "Results"}
             </h3>
 
@@ -17470,6 +17500,8 @@ function MarketplaceStallyard() {
               homepageAdSaving,
               homepageAdUploading,
               homepageAds,
+              categoryStrip,
+              setCategoryStrip,
               listings,
               loadingAdminStaff,
               loadingAuditLog,
