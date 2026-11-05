@@ -2203,6 +2203,16 @@ function MarketplaceStallyard() {
   const setPriceMin = (value) => setRouteField("priceMin", value);
   const priceMax = route.priceMax;
   const setPriceMax = (value) => setRouteField("priceMax", value);
+  const [allListingsRequest, setAllListingsRequest] = useState(0);
+  const browseAllListings = () => {
+    setRoute((previous) => ({ ...previous, view: "browse", category: "All", subcategory: "All", search: "", condition: "All", priceMin: "", priceMax: "", listingId: null, cart: false }));
+    setCategoriesMenuOpen(false);
+    setAllListingsRequest((value) => value + 1);
+  };
+  useEffect(() => {
+    if (!allListingsRequest) return;
+    document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [allListingsRequest]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   useEffect(() => {
     if (!categoriesMenuOpen) return;
@@ -10862,7 +10872,7 @@ function MarketplaceStallyard() {
                   <div className="max-h-[560px] overflow-y-auto py-2">
                     <button
                       type="button"
-                      onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setCategoriesMenuOpen(false); }}
+                      onClick={browseAllListings}
                       className="w-full flex items-center justify-between gap-3 px-5 py-3 text-left text-sm transition-colors hover:bg-[#F6F3EC]"
                       style={{ color: INK, backgroundColor: categoryFilter === "All" ? "#F6F3EC" : "white" }}
                       role="menuitem"
@@ -10927,7 +10937,7 @@ function MarketplaceStallyard() {
           <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
             <div className="max-w-[1500px] mx-auto w-full min-w-0 px-4 flex items-center gap-5 lg:gap-3 lg:justify-between overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
               <button
-                onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
+                onClick={browseAllListings}
                 className="px-3 py-1 rounded-full font-medium shrink-0"
                 style={{ backgroundColor: categoryFilter === "All" ? "#F4F1EA" : "transparent" }}
               >
@@ -11362,7 +11372,7 @@ function MarketplaceStallyard() {
             )}
 
             {isHomeState && categoryStrip?.enabled !== false && ((categoryStrip?.tiles?.length || 0) > 0 || visibleListings.some((listing) => listing.images?.[0])) && (
-              <section className="mb-10" aria-labelledby="shop-category-heading">
+              <section className="mb-10 lg:relative lg:left-1/2 lg:-translate-x-1/2 lg:w-[calc(100vw-4rem)] lg:max-w-[1600px]" aria-labelledby="shop-category-heading">
                 <div className="flex items-center justify-between gap-3 mb-4">
                   <h3 id="shop-category-heading" className="text-xl font-semibold" style={{ color: INK }}>{categoryStrip?.title || "Shop by category"}</h3>
                   <button type="button" className="text-sm underline" style={{ color: SLATE }} onClick={() => document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Shop all</button>
@@ -11374,7 +11384,7 @@ function MarketplaceStallyard() {
                     <button key={`${tile.category}-${index}`} type="button" onClick={() => {
                       if (tile.category === "All") document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" });
                       else { setCategoryFilter(tile.category); setSubcategoryFilter("All"); }
-                    }} className="group shrink-0 text-left w-36 sm:w-40 lg:w-[calc((100%-96px)/7)] lg:min-w-[140px]">
+                    }} className="group shrink-0 text-left w-36 sm:w-40 lg:w-36">
                       <div className="aspect-square overflow-hidden rounded-2xl bg-white border" style={{ borderColor: "#E8E5DE" }}>
                         {tile.image ? <img src={tile.image} alt={tile.label} loading="lazy" decoding="async" className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" /> : <span className="flex w-full h-full items-center justify-center text-5xl" role="img" aria-label={tile.label}>{CATEGORY_ICON[tile.category] || "📦"}</span>}
                       </div>
