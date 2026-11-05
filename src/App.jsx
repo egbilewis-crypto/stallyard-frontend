@@ -10925,7 +10925,7 @@ function MarketplaceStallyard() {
 
           {/* Quick category strip */}
           <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
-            <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-7 overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
+            <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-4 overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
               <button
                 onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
                 className="px-3 py-1 rounded-full font-medium shrink-0"
@@ -10933,7 +10933,7 @@ function MarketplaceStallyard() {
               >
                 All
               </button>
-              {CATEGORIES.slice(0, 12).map((category) => (
+              {CATEGORIES.slice(0, 16).map((category) => (
                 <button
                   key={category}
                   onClick={() => { setCategoryFilter(category); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
