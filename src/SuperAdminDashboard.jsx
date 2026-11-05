@@ -1,3 +1,54 @@
+function CategoryStripEditor({ React, authFetch, backendUrl, categories, strip, onSave }) {
+  const [draft, setDraft] = React.useState(strip || { title: "Shop by category", enabled: true, tiles: [] });
+  const [busy, setBusy] = React.useState(false);
+  const [message, setMessage] = React.useState("");
+  React.useEffect(() => { if (strip) setDraft(strip); }, [strip]);
+  const changeTile = (index, changes) => setDraft((previous) => ({ ...previous, tiles: previous.tiles.map((tile, i) => i === index ? { ...tile, ...changes } : tile) }));
+  const upload = async (file, index) => {
+    if (!file) return;
+    if (file.size > 12 * 1024 * 1024) { setMessage("Choose an image under 12 MB."); return; }
+    setBusy(true); setMessage("");
+    try {
+      const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); });
+      const response = await authFetch(`${backendUrl}/uploads/image`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dataUrl, folder: "homepage/categories" }) });
+      const data = await response.json();
+      if (!response.ok || !data.url) throw new Error(data.error || "Image upload failed");
+      changeTile(index, { imageUrl: data.url });
+    } catch (err) { setMessage(err.message || "Image upload failed"); }
+    finally { setBusy(false); }
+  };
+  const save = async () => {
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(`${backendUrl}/homepage-category-strip`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not save category strip");
+      onSave(data.strip); setMessage("Category strip saved.");
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  };
+  return <section className="mb-6 p-4 rounded-xl border bg-white" style={{ borderColor: "#DDD8CC" }}>
+    <h3 className="text-lg font-semibold mb-3">Homepage category strip</h3>
+    <label className="block text-sm mb-3">Heading<input value={draft.title} maxLength={100} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="block w-full border rounded-lg px-3 py-2 mt-1" /></label>
+    <label className="flex gap-2 items-center text-sm mb-3"><input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />Show below the homepage banner</label>
+    <p className="text-xs mb-3">Add your own tiles, or leave the list empty to use pictures from active listings.</p>
+    <fieldset disabled={busy} className="space-y-3">
+      {draft.tiles.map((tile, index) => <div key={index} className="border rounded-lg p-3 grid sm:grid-cols-4 gap-3">
+        <div>{tile.imageUrl && <img src={tile.imageUrl} alt={tile.label || "Tile preview"} className="w-24 h-24 rounded-lg object-cover mb-2" />}<label className="text-xs">Upload picture<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" onChange={(event) => upload(event.target.files?.[0], index)} className="block w-full text-xs" /></label></div>
+        <label className="text-xs">Label<input value={tile.label} maxLength={60} onChange={(event) => changeTile(index, { label: event.target.value })} className="block w-full border rounded px-2 py-2 mt-1" /></label>
+        <label className="text-xs">Category<select value={tile.category} onChange={(event) => changeTile(index, { category: event.target.value })} className="block w-full border rounded px-2 py-2 mt-1"><option value="All">Shop all</option>{categories.filter((category) => category !== "All").map((category) => <option key={category} value={category}>{category}</option>)}</select><input aria-label={`Image URL tile ${index + 1}`} placeholder="HTTPS image URL" value={tile.imageUrl} onChange={(event) => changeTile(index, { imageUrl: event.target.value })} className="w-full border rounded px-2 py-2 mt-2" /></label>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <button type="button" disabled={index === 0} onClick={() => setDraft((previous) => { const tiles = [...previous.tiles]; [tiles[index - 1], tiles[index]] = [tiles[index], tiles[index - 1]]; return { ...previous, tiles }; })} className="underline disabled:opacity-40">Move left</button>
+          <button type="button" disabled={index === draft.tiles.length - 1} onClick={() => setDraft((previous) => { const tiles = [...previous.tiles]; [tiles[index + 1], tiles[index]] = [tiles[index], tiles[index + 1]]; return { ...previous, tiles }; })} className="underline disabled:opacity-40">Move right</button>
+          <button type="button" onClick={() => setDraft({ ...draft, tiles: draft.tiles.filter((_, i) => i !== index) })} className="underline">Remove</button>
+        </div>
+      </div>)}
+      <div className="flex gap-3"><button type="button" disabled={draft.tiles.length >= 12} className="border rounded-lg px-3 py-2 text-sm" onClick={() => setDraft({ ...draft, tiles: [...draft.tiles, { label: "", category: "All", imageUrl: "" }] })}>Add tile</button><button type="button" className="bg-black text-white rounded-lg px-3 py-2 text-sm" onClick={save}>Save category strip</button></div>
+    </fieldset>
+    {message && <p role="status" className="text-sm mt-3">{message}</p>}
+  </section>;
+}
+
 function ApprovedMemberDocuments({ React, userId, authFetch, backendUrl }) {
   const [documents, setDocuments] = React.useState(null);
   const [error, setError] = React.useState("");
@@ -194,6 +245,8 @@ export default function SuperAdminDashboard({ scope }) {
     homepageAdSaving,
     homepageAdUploading,
     homepageAds,
+    categoryStrip,
+    setCategoryStrip,
     listings,
     loadingAdminStaff,
     loadingAuditLog,
@@ -598,6 +651,7 @@ export default function SuperAdminDashboard({ scope }) {
 
             {adminTab === "homepageAds" && (!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
               <div>
+                <CategoryStripEditor React={React} authFetch={authFetch} backendUrl={BACKEND_URL} categories={CATEGORIES} strip={categoryStrip} onSave={setCategoryStrip} />
                 <div className="mb-5">
                   <h3 className="text-xl" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                     Homepage ads
