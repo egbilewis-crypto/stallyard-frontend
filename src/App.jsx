@@ -11408,9 +11408,9 @@ function MarketplaceStallyard() {
                 <h3 className="text-xl mb-4" style={{ fontFamily: "'DM Serif Display', serif", color: INK }}>
                   New arrivals
                 </h3>
-                <div className="flex gap-5 overflow-x-auto pb-2 -mx-1 px-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 pb-2">
                   {newArrivals.map((l) => (
-                    <div key={l.id} className="shrink-0" style={{ width: "260px" }}>
+                    <div key={l.id} className="min-w-0">
                       <PriceTagCard
                         listing={l}
                         rating={getListingRating(l.id)}
