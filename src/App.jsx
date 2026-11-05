@@ -10925,7 +10925,7 @@ function MarketplaceStallyard() {
 
           {/* Quick category strip */}
           <div className="border-t" style={{ borderColor: "#EEEAE1" }}>
-            <div className="max-w-[1500px] mx-auto px-4 flex items-center gap-5 lg:gap-3 lg:justify-between overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
+            <div className="max-w-[1500px] mx-auto w-full min-w-0 px-4 flex items-center gap-5 lg:gap-3 lg:justify-between overflow-x-auto whitespace-nowrap py-2 text-xs" style={{ color: INK }}>
               <button
                 onClick={() => { setCategoryFilter("All"); setSubcategoryFilter("All"); setView("browse"); setSelected(null); }}
                 className="px-3 py-1 rounded-full font-medium shrink-0"
@@ -11368,7 +11368,7 @@ function MarketplaceStallyard() {
                   <button type="button" className="text-sm underline" style={{ color: SLATE }} onClick={() => document.getElementById("shop-all-listings")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Shop all</button>
                 </div>
                 <div className="flex gap-4 overflow-x-auto pb-3">
-                  {(categoryStrip?.tiles?.length ? categoryStrip.tiles.map((tile) => ({ ...tile, image: tile.imageUrl })) : [{ category: "All", label: "Shop all", image: visibleListings.find((listing) => listing.images?.[0])?.images[0] },
+                  {(categoryStrip?.tiles?.length ? categoryStrip.tiles.filter((tile) => tile.imageUrl).map((tile) => ({ ...tile, image: tile.imageUrl })) : [{ category: "All", label: "Shop all", image: visibleListings.find((listing) => listing.images?.[0])?.images[0] },
                     ...CATEGORIES.filter((category) => category !== "All").map((category) => ({ category, label: category, image: visibleListings.find((listing) => listing.category === category && listing.images?.[0])?.images[0] })).filter((tile) => tile.image)
                   ]).map((tile, index) => (
                     <button key={`${tile.category}-${index}`} type="button" onClick={() => {
@@ -11376,7 +11376,7 @@ function MarketplaceStallyard() {
                       else { setCategoryFilter(tile.category); setSubcategoryFilter("All"); }
                     }} className="group shrink-0 text-left w-36 sm:w-40 lg:w-[calc((100%-96px)/7)] lg:min-w-[140px]">
                       <div className="aspect-square overflow-hidden rounded-2xl bg-white border" style={{ borderColor: "#E8E5DE" }}>
-                        <img src={tile.image} alt={tile.label} loading="lazy" decoding="async" className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                        {tile.image ? <img src={tile.image} alt={tile.label} loading="lazy" decoding="async" className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" /> : <span className="flex w-full h-full items-center justify-center text-5xl" role="img" aria-label={tile.label}>{CATEGORY_ICON[tile.category] || "📦"}</span>}
                       </div>
                       <span className="block text-sm mt-3 group-hover:underline" style={{ color: INK }}>{tile.label}</span>
                     </button>
