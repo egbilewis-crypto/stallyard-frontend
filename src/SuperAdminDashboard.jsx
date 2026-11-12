@@ -384,6 +384,29 @@ export default function SuperAdminDashboard({ scope }) {
     withdrawals,
   } = scope;
 
+  const settingsFetchRef = React.useRef(authFetch);
+  settingsFetchRef.current = authFetch;
+  React.useEffect(() => {
+    if (view !== "admin" || adminTab !== "settings") return undefined;
+    let cancelled = false;
+    const refreshEmailProviderStatus = async () => {
+      try {
+        const response = await settingsFetchRef.current(`${BACKEND_URL}/settings`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled) setSettings((current) => ({
+          ...current,
+          authEmailProviderMode: ["automatic", "stalsend", "resend"].includes(data.authEmailProviderMode) ? data.authEmailProviderMode : "automatic",
+          authEmailActiveProvider: data.authEmailActiveProvider === "resend" ? "resend" : "stalsend",
+          authEmailProvidersConfigured: data.authEmailProvidersConfigured || current.authEmailProvidersConfigured,
+        }));
+      } catch {}
+    };
+    refreshEmailProviderStatus();
+    const timer = window.setInterval(refreshEmailProviderStatus, 20000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [view, adminTab, BACKEND_URL, setSettings]);
+
   const [registeredDrivers, setRegisteredDrivers] = React.useState([]);
   const [registeredDriversLoading, setRegisteredDriversLoading] = React.useState(false);
 
@@ -2431,6 +2454,47 @@ export default function SuperAdminDashboard({ scope }) {
                     </div>
                     <p className="text-xs mt-3" style={{ color: SLATE }}>
                       The switch is blocked if the selected provider's API key is missing from Railway.
+                    </p>
+                  </div>
+                )}
+
+                {(!currentMember?.adminRole || currentMember.adminRole === "super_admin") && (
+                  <div className="mt-8 pt-6" style={{ borderTop: "1px solid #DDD8CC" }}>
+                    <label className="block text-sm font-medium mb-1" style={{ color: INK }}>
+                      Sign-in and verification email provider
+                    </label>
+                    <p className="text-xs mb-3" style={{ color: SLATE }}>
+                      Controls marketplace email verification, password reset codes, two-factor codes, bank-change codes, and admin sign-in codes. Automatic mode uses the active provider and switches to the other after a confirmed send failure. Each code request is sent through one provider only.
+                    </p>
+                    <div className="p-4 rounded-xl border" style={{ borderColor: "#DDD8CC", backgroundColor: "white" }}>
+                      <div className="grid sm:grid-cols-2 gap-3 items-end">
+                        <label className="block">
+                          <span className="block text-xs mb-1" style={{ color: SLATE }}>Provider mode</span>
+                          <select
+                            value={settings.authEmailProviderMode || "automatic"}
+                            onChange={(e) => persistSettings({ ...settings, authEmailProviderMode: e.target.value }, "authEmailProviderMode")}
+                            className="w-full px-3 py-2 rounded-lg border text-sm outline-none"
+                            style={{ borderColor: "#DDD8CC", color: INK }}
+                          >
+                            <option value="automatic">Automatic — StalSend, then Resend backup</option>
+                            <option value="stalsend">StalSend only</option>
+                            <option value="resend">Resend only</option>
+                          </select>
+                        </label>
+                        <div>
+                          <span className="block text-xs mb-1" style={{ color: SLATE }}>Currently active</span>
+                          <span className="inline-flex px-3 py-2 rounded-lg text-sm font-semibold" style={{ backgroundColor: "#EAF5EE", color: SAGE }}>
+                            {settings.authEmailActiveProvider === "resend" ? "Resend" : "StalSend"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="grid sm:grid-cols-2 gap-2 mt-3 text-xs" style={{ color: SLATE }}>
+                        <span>StalSend: {settings.authEmailProvidersConfigured?.stalsend ? "API key configured" : "API key not configured"}</span>
+                        <span>Resend: {settings.authEmailProvidersConfigured?.resend ? "API key configured" : "API key not configured"}</span>
+                      </div>
+                    </div>
+                    <p className="text-xs mt-3" style={{ color: SLATE }}>
+                      A confirmed provider rejection triggers failover in Automatic mode. If a request times out and delivery is uncertain, the system will not blindly send a second code; you can switch providers here if needed. Regular marketplace emails and report attachments still use Resend until StalSend's general email API is available.
                     </p>
                   </div>
                 )}
