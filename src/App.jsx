@@ -2391,7 +2391,7 @@ function MarketplaceStallyard() {
   const setBuyerOrderSearch = (value) => setRouteField("orderSearch", value);
   const buyerOrderStatusFilter = route.orderStatus;
   const setBuyerOrderStatusFilter = (value) => setRouteField("orderStatus", value);
-  const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "", smsProvider: "termii" });
+  const [settings, setSettings] = useState({ commissionRate: 0.05, taxRate: 0, authImage: "", smsProvider: "termii", authEmailProviderMode: "automatic", authEmailActiveProvider: "stalsend", authEmailProvidersConfigured: { stalsend: false, resend: false } });
   const [content, setContent] = useState({ banners: [], articles: [], faqs: [] });
   const [categoryStrip, setCategoryStrip] = useState(null);
   useEffect(() => {
@@ -2820,7 +2820,7 @@ function MarketplaceStallyard() {
         const settingsRes = await backendFetch(`${BACKEND_URL}/settings`);
         if (settingsRes.ok) {
           const raw = await settingsRes.json();
-          setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "", smsProvider: raw.smsProvider === "sendchamp" ? "sendchamp" : "termii" });
+          setSettings({ commissionRate: raw.commissionRate, taxRate: raw.taxRate || 0, authImage: raw.authImage || "", smsProvider: raw.smsProvider === "sendchamp" ? "sendchamp" : "termii", authEmailProviderMode: ["automatic", "stalsend", "resend"].includes(raw.authEmailProviderMode) ? raw.authEmailProviderMode : "automatic", authEmailActiveProvider: raw.authEmailActiveProvider === "resend" ? "resend" : "stalsend", authEmailProvidersConfigured: raw.authEmailProvidersConfigured || { stalsend: false, resend: false } });
         }
       } catch {
         // keep default settings
@@ -4526,6 +4526,7 @@ function MarketplaceStallyard() {
     if (field === "commissionRate" || next.commissionRate !== settings.commissionRate) body.commissionRate = next.commissionRate;
     if (field === "taxRate" || next.taxRate !== settings.taxRate) body.taxRate = next.taxRate;
     if (field === "smsProvider" || next.smsProvider !== settings.smsProvider) body.smsProvider = next.smsProvider;
+    if (field === "authEmailProviderMode" || next.authEmailProviderMode !== settings.authEmailProviderMode) body.authEmailProviderMode = next.authEmailProviderMode;
     if (next.authImage !== settings.authImage) body.authImage = next.authImage;
     if (Object.keys(body).length === 0) {
       // Older admin buttons pass the already-edited state without a field.
@@ -4549,7 +4550,7 @@ function MarketplaceStallyard() {
         showToast(data.error || "Couldn't save settings — try again");
         return false;
       }
-      setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "", smsProvider: data.smsProvider === "sendchamp" ? "sendchamp" : "termii" });
+      setSettings({ commissionRate: data.commissionRate, taxRate: data.taxRate || 0, authImage: data.authImage || "", smsProvider: data.smsProvider === "sendchamp" ? "sendchamp" : "termii", authEmailProviderMode: ["automatic", "stalsend", "resend"].includes(data.authEmailProviderMode) ? data.authEmailProviderMode : "automatic", authEmailActiveProvider: data.authEmailActiveProvider === "resend" ? "resend" : "stalsend", authEmailProvidersConfigured: data.authEmailProvidersConfigured || { stalsend: false, resend: false } });
       showToast("Settings saved");
       return true;
     } catch {
