@@ -950,6 +950,45 @@ function backendListingToFrontend(row, existing) {
   };
 }
 
+const MARKETPLACE_PRESETS = {
+  "item_available": "Is this item still available?",
+  "available_yes": "Yes, it’s available.",
+  "available_no": "No, it’s sold.",
+  "condition": "What condition is this item in?",
+  "new": "It’s new.",
+  "used": "It’s used.",
+  "refurbished": "It’s refurbished.",
+  "condition_details": "Please see the condition details on the listing.",
+  "more_pictures": "Can you add more pictures of this item?",
+  "add_pictures": "Yes, I’ll add more photos to the listing.",
+  "added_pictures": "I’ve added more photos to the listing.",
+  "all_pictures": "All available photos are already on the listing.",
+  "included": "What comes with this item?",
+  "included_details": "Please see what’s included on the listing.",
+  "updated_included": "I’ve updated the listing to show what’s included.",
+  "location": "Which state are you located in?",
+  "location_at": "Are you located in {state}?",
+  "location_yes": "Yes, I’m located there.",
+  "location_reply": "I’m located in {state}.",
+  "deliver": "Can you deliver to {state}?",
+  "delivery_yes": "Yes, delivery is available.",
+  "delivery_no": "Delivery isn’t available there.",
+  "pickup_only": "This item is pickup only.",
+  "delivery_cost": "How much is delivery to {state}?",
+  "delivery_price": "Delivery to {state} costs ₦{price}.",
+  "free_delivery": "Delivery is free to that location.",
+  "delivery_details": "Please check the delivery options on the listing.",
+  "pickup": "Is pickup available?",
+  "pickup_yes": "Yes, pickup is available. You’ll see the pickup details after purchase.",
+  "pickup_no": "Pickup isn’t available.",
+  "ship": "When can you ship the item?",
+  "ship_today": "I can ship today.",
+  "ship_short": "I can ship within 1–2 business days.",
+  "ship_long": "I can ship within 3–5 business days."
+};
+const BUYER_PRESETS = ["location", "location_at", "location_yes", "location_reply", "item_available", "condition", "more_pictures", "included", "deliver", "delivery_cost", "pickup", "ship"];
+const SELLER_PRESETS = ["available_yes", "available_no", "new", "used", "refurbished", "condition_details", "add_pictures", "added_pictures", "all_pictures", "included_details", "updated_included", "delivery_yes", "delivery_no", "pickup_only", "delivery_price", "free_delivery", "delivery_details", "pickup_yes", "pickup_no", "ship_today", "ship_short", "ship_long", "location", "location_at", "location_yes", "location_reply"];
+
 function backendMessageToFrontend(row, members) {
   const sender = members.find((m) => m.backendId === row.sender_id);
   return {
@@ -959,6 +998,8 @@ function backendMessageToFrontend(row, members) {
     text: row.body || "",
     amount: row.offer_amount != null ? Number(row.offer_amount) : undefined,
     status: row.offer_status,
+    offerBasePrice: Number(row.offer_base_price) || null,
+    offerAcceptedAt: row.offer_accepted_at,
     imageUrl: row.image_url || "",
     orderId: row.order_id || null,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
@@ -2576,11 +2617,13 @@ function MarketplaceStallyard() {
   const setViewingSeller = (value) => setRouteField("seller", value);
   const [bidAmount, setBidAmount] = useState("");
   const [nowTick, setNowTick] = useState(Date.now());
-  const [messageInput, setMessageInput] = useState("");
   const [messageError, setMessageError] = useState("");
   const [sendingDeliveryTokenId, setSendingDeliveryTokenId] = useState(null);
   const [offerModalOpen, setOfferModalOpen] = useState(false);
   const [offerAmount, setOfferAmount] = useState("");
+  const [counterOffer, setCounterOffer] = useState(null);
+  const [chatPreset, setChatPreset] = useState("");
+  const [chatState, setChatState] = useState("");
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -2658,7 +2701,6 @@ function MarketplaceStallyard() {
   const [generatingTokenKey, setGeneratingTokenKey] = useState(null);
   const [redeemTokenDrafts, setRedeemTokenDrafts] = useState({});
   const [redeemingTokenKey, setRedeemingTokenKey] = useState(null);
-  const [uploadingMessagePhoto, setUploadingMessagePhoto] = useState(false);
   const [reportMessageId, setReportMessageId] = useState(null);
   const [reportReasonDraft, setReportReasonDraft] = useState("");
   const [rejectModalUsername, setRejectModalUsername] = useState(null);
@@ -3131,7 +3173,7 @@ function MarketplaceStallyard() {
           const mapped = items.map((i) => ({
             id: i.listing_id,
             qty: i.qty,
-            ...(i.offer_price != null ? { offerPrice: Number(i.offer_price) } : {}),
+            ...(i.offer_id != null ? { offerId: i.offer_id, offerPrice: Number(i.offer_price) } : {}),
           }));
           setCart(mapped);
           await window.storage.set("stallyard-cart", JSON.stringify(mapped), false);
@@ -3186,17 +3228,33 @@ function MarketplaceStallyard() {
   }, [currentUser, authToken, members, listings]);
 
   useEffect(() => {
-    if (view !== "messages") return;
-    const interval = setInterval(async () => {
+    const buyerOrSellerId = members.find((member) => member.username === currentUser)?.backendId;
+    if (view !== "messages" || !authToken || !buyerOrSellerId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
-        const threadsRes = await window.storage.get("stallyard-messages", true);
-        if (threadsRes) setThreads(JSON.parse(threadsRes.value));
+        const response = await authFetch(`${BACKEND_URL}/threads/${buyerOrSellerId}`);
+        if (!response.ok) return;
+        const { threads: rows } = await response.json();
+        const conversations = await Promise.all(rows.map(async (row) => {
+          const request = await authFetch(`${BACKEND_URL}/messages/${row.id}`);
+          if (!request.ok) throw new Error("Conversation refresh failed");
+          return backendThreadToFrontend(row, (await request.json()).messages, members, listings);
+        }));
+        if (!cancelled) setThreads(conversations.sort((a, b) => b.updatedAt - a.updatedAt));
       } catch {
-        // ignore polling errors
+        // Keep the last loaded conversation during a temporary connection failure.
+      } finally {
+        inFlight = false;
       }
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [view]);
+    };
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [view, authToken, currentUser, members, listings]);
 
   useEffect(() => {
     const interval = setInterval(() => setNowTick(Date.now()), 30000);
@@ -4237,7 +4295,7 @@ function MarketplaceStallyard() {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            items: next.map((c) => ({ listingId: c.id, qty: c.qty, offerPrice: c.offerPrice })),
+            items: next.map((c) => ({ listingId: c.id, qty: c.qty, offerPrice: c.offerPrice, offerId: c.offerId })),
           }),
         });
       } catch {
@@ -4383,6 +4441,7 @@ function MarketplaceStallyard() {
       }
     }
     const existing = cart.find((c) => c.id === listing.id);
+    if (existing?.offerId) { setCartOpen(true); return; }
     const next = existing
       ? cart.map((c) => (c.id === listing.id ? { ...c, qty: c.qty + 1 } : c))
       : [...cart, { id: listing.id, qty: 1 }];
@@ -4398,7 +4457,7 @@ function MarketplaceStallyard() {
     }
   };
 
-  const addToCartAtPrice = (listing, price) => {
+  const addToCartAtPrice = (listing, price, offerId) => {
     if (cart.length > 0 && !cart.find((c) => c.id === listing.id)) {
       const firstItem = listings.find((l) => l.id === cart[0].id);
       const cartCurrency = firstItem?.currency || "NGN";
@@ -4412,8 +4471,8 @@ function MarketplaceStallyard() {
     }
     const existing = cart.find((c) => c.id === listing.id);
     const next = existing
-      ? cart.map((c) => (c.id === listing.id ? { ...c, offerPrice: price } : c))
-      : [...cart, { id: listing.id, qty: 1, offerPrice: price }];
+      ? cart.map((c) => (c.id === listing.id ? { ...c, qty: offerId ? 1 : c.qty, offerPrice: price, offerId } : c))
+      : [...cart, { id: listing.id, qty: 1, offerPrice: price, offerId }];
     persistCart(next);
     showToast(`Added "${listing.title}" to cart at your offer price`);
   };
@@ -4484,7 +4543,7 @@ function MarketplaceStallyard() {
       persistCart(cart.filter((c) => c.id !== id));
       return;
     }
-    persistCart(cart.map((c) => (c.id === id ? { ...c, qty } : c)));
+    persistCart(cart.map((c) => (c.id === id && !c.offerId ? { ...c, qty } : c)));
   };
 
   const removeFromCart = (id) => persistCart(cart.filter((c) => c.id !== id));
@@ -4500,7 +4559,7 @@ function MarketplaceStallyard() {
       const selectedRoute = shippingRouteIndex !== "" ? routes[Number(shippingRouteIndex)] : null;
       const method = c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : "");
       return { ...listing, baseShippingFee: listing.shippingFee, shippingRouteIndex, shippingFee: deliveryMethodFee(listing, method, selectedRoute ? selectedRoute.amount : listing.shippingFee),
-        shippingMethod: c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : ""), qty: c.qty, price: c.offerPrice ?? listing.price, isOfferPrice: c.offerPrice != null };
+        shippingMethod: c.shippingMethod || (listing.shippingMethods?.length === 1 ? listing.shippingMethods[0] : !listing.shippingMethods?.length ? "seller_delivery" : ""), qty: c.qty, offerId: c.offerId, price: c.offerPrice ?? listing.price, isOfferPrice: c.offerPrice != null };
     })
     .filter(Boolean);
 
@@ -4713,61 +4772,23 @@ function MarketplaceStallyard() {
     setView("messages");
   };
 
-  const sendMessage = async (threadId, text, imageUrl = null) => {
-    const trimmed = text.trim();
-    if (!trimmed && !imageUrl) return;
-    if (trimmed && containsContactInfo(trimmed)) {
-      setMessageError("Messages can't include email addresses or phone numbers — keep contact on Stallyard.");
-      return;
-    }
-    setMessageError("");
-    let res;
+  const sendPreset = async () => {
     try {
-      res = await authFetch(`${BACKEND_URL}/messages`, {
+      const res = await authFetch(`${BACKEND_URL}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          threadId,
-          body: trimmed,
-          messageType: "text",
-          imageUrl: imageUrl || undefined,
-          orderId: activeThreadOrderId || undefined,
-        }),
+        body: JSON.stringify({ threadId: activeThread.id, preset: chatPreset, state: chatState }),
       });
+      const data = await res.json();
+      if (!res.ok) { setMessageError(data.error || "Could not send that message."); return; }
+      const message = backendMessageToFrontend(data.message, members);
+      await persistThreads(threads.map((thread) => thread.id === activeThread.id
+        ? { ...thread, messages: [...thread.messages, message], updatedAt: Date.now() } : thread));
+      setChatPreset("");
+      setChatState("");
+      setMessageError("");
     } catch {
-      setMessageError("Couldn't reach the server — try again.");
-      return;
-    }
-    if (!res.ok) {
-      setMessageError("Couldn't send that — try again.");
-      return;
-    }
-    const { message: row } = await res.json();
-    const message = backendMessageToFrontend(row, members);
-    await persistThreads(
-      threads.map((t) =>
-        t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
-      )
-    );
-    setMessageInput("");
-  };
-
-  const handleMessagePhotoSelect = async (e, threadId) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      showToast("That photo is too large — please upload something under 5MB");
-      return;
-    }
-    setUploadingMessagePhoto(true);
-    try {
-      const dataUrl = await resizeImageFile(file, 1200, 0.8);
-      await sendMessage(threadId, "", dataUrl);
-    } catch {
-      showToast("Couldn't send that photo — try again");
-    } finally {
-      setUploadingMessagePhoto(false);
+      setMessageError("Could not reach Stallyard. Try again.");
     }
   };
 
@@ -5565,35 +5586,30 @@ function MarketplaceStallyard() {
     }
   };
 
-  const sendOffer = async (threadId, amount) => {
-    const amt = Math.round(Number(amount) * 100) / 100;
-    if (!amt || amt <= 0) {
-      showToast("Enter an offer amount");
-      return;
-    }
+  const sendOffer = async (threadId, discount, counterTo) => {
     let res;
     try {
       res = await authFetch(`${BACKEND_URL}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ threadId, messageType: "offer", offerAmount: amt }),
+        body: JSON.stringify({ threadId, discount: Number(discount), counterTo }),
       });
     } catch {
       showToast("Couldn't reach the server — try again");
       return;
     }
     if (!res.ok) {
-      showToast("Couldn't send that offer — try again");
+      showToast((await res.json().catch(() => ({}))).error || "Could not send that offer.");
       return;
     }
     const { message: row } = await res.json();
     const message = backendMessageToFrontend(row, members);
     await persistThreads(
       threads.map((t) =>
-        t.id === threadId ? { ...t, messages: [...t.messages, message], updatedAt: Date.now() } : t
+        t.id === threadId ? { ...t, messages: [...t.messages.map((entry) => entry.id === counterTo ? { ...entry, status: "countered" } : entry), message], updatedAt: Date.now() } : t
       )
     );
-    showToast(`Offer of ${formatMoney(amt, "NGN")} sent`);
+    showToast(`Offer of ${formatMoney(message.amount, "NGN")} sent`);
   };
 
   const respondToOffer = async (threadId, messageId, status) => {
@@ -5612,13 +5628,14 @@ function MarketplaceStallyard() {
       showToast("Couldn't respond to that offer — try again");
       return;
     }
+    const { message: updatedOffer } = await res.json();
     await persistThreads(
       threads.map((t) =>
         t.id !== threadId
           ? t
           : {
               ...t,
-              messages: t.messages.map((m) => (m.id === messageId ? { ...m, status } : m)),
+              messages: t.messages.map((m) => (m.id === messageId ? { ...m, status, offerAcceptedAt: updatedOffer.offer_accepted_at } : m)),
               updatedAt: Date.now(),
             }
       )
@@ -7820,7 +7837,7 @@ function MarketplaceStallyard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, offerId: i.offerId, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
           shippingAddress: { ...shippingForm },
           currency: cartCurrency,
           saveCard: saveCardAtCheckout,
@@ -7898,7 +7915,7 @@ function MarketplaceStallyard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
+          items: cartItems.map((i) => ({ listingId: i.id, qty: i.qty, offerId: i.offerId, shippingMethod: i.shippingMethod, shippingRouteIndex: i.shippingRouteIndex })),
           shippingAddress: { ...shippingForm },
           currency: cartCurrency,
           cardId,
@@ -16863,9 +16880,9 @@ function MarketplaceStallyard() {
                             }}
                           >
                             <div className="font-medium mb-1">
-                              Offer: {formatMoney(m.amount)}
+                              {m.text || `Offer: ${formatMoney(m.amount)}`}
                             </div>
-                            {m.status === "pending" && !mine && (
+                            {m.status === "pending" && m.offerBasePrice && !mine && (
                               <div className="flex items-center gap-3 mt-1">
                                 <button
                                   onClick={() => respondToOffer(activeThread.id, m.id, "accepted")}
@@ -16881,6 +16898,11 @@ function MarketplaceStallyard() {
                                 >
                                   Decline
                                 </button>
+                                <button className="text-xs underline" onClick={() => {
+                                  setCounterOffer(m);
+                                  setOfferAmount("");
+                                  setOfferModalOpen(true);
+                                }}>Counteroffer</button>
                               </div>
                             )}
                             {m.status === "pending" && mine && (
@@ -16891,17 +16913,23 @@ function MarketplaceStallyard() {
                             {m.status === "accepted" && (
                               <div className="flex items-center gap-2 mt-1 flex-wrap">
                                 <Tag color={SAGE}>Accepted</Tag>
-                                {isBuyer && listingForOffer && (
+                                {m.offerAcceptedAt && Date.now() < Date.parse(m.offerAcceptedAt) + 86400000 && <span className="text-xs">Payment due within 24 hours of acceptance.</span>}
+                                {m.offerAcceptedAt && Date.now() >= Date.parse(m.offerAcceptedAt) + 86400000 && <span>Offer expired.</span>}
+                                {isBuyer && listingForOffer && m.offerAcceptedAt && Date.now() < Date.parse(m.offerAcceptedAt) + 86400000 && (
                                   <button
-                                    onClick={() => addToCartAtPrice(listingForOffer, m.amount)}
+                                    onClick={() => { addToCartAtPrice(listingForOffer, m.amount, m.id); setCartOpen(true); }}
                                     className="text-xs font-medium underline"
                                     style={{ color: INK }}
                                   >
-                                    Add to cart at {formatMoney(m.amount)}
+                                    Checkout at agreed price · {formatMoney(m.amount)}
                                   </button>
                                 )}
                               </div>
                             )}
+                            {m.status === "unavailable" && <Tag color={BERRY}>Item unavailable. Offer closed.</Tag>}
+                            {m.status === "expired" && <Tag color={BERRY}>Offer expired.</Tag>}
+                            {m.status === "countered" && <Tag color={SLATE}>Countered</Tag>}
+                            {m.status === "paid" && <Tag color={SAGE}>Payment confirmed</Tag>}
                             {m.status === "declined" && (
                               <Tag color={BERRY}>Declined</Tag>
                             )}
@@ -16971,91 +16999,53 @@ function MarketplaceStallyard() {
                 )}
 
                 {offerModalOpen && (
-                  <div className="flex items-center gap-2 mb-2 p-2 rounded-lg border" style={{ borderColor: MARIGOLD }}>
-                    <span style={{ color: SLATE }}>₦</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={offerAmount}
-                      onChange={(e) => setOfferAmount(e.target.value)}
-                      placeholder="Your offer"
-                      autoFocus
-                      className="flex-1 px-2 py-1.5 rounded-lg border outline-none text-sm"
-                      style={{ borderColor: "#DDD8CC" }}
-                    />
-                    <button
-                      onClick={async () => {
-                        await sendOffer(activeThread.id, offerAmount);
-                        setOfferAmount("");
-                        setOfferModalOpen(false);
-                      }}
-                      className="px-3 py-1.5 rounded-lg text-sm font-medium"
-                      style={{ backgroundColor: MARIGOLD, color: INK }}
-                    >
-                      Send offer
-                    </button>
-                    <button
-                      onClick={() => {
-                        setOfferModalOpen(false);
-                        setOfferAmount("");
-                      }}
-                      aria-label="Cancel offer"
-                    >
-                      <X size={16} style={{ color: SLATE }} />
-                    </button>
+                  <div className="flex flex-wrap items-center gap-2 mb-2 p-2 rounded-lg border">
+                    <select aria-label="Discount" value={offerAmount} onChange={(e) => setOfferAmount(e.target.value)}>
+                      <option value="">Choose a discount</option>
+                      {Array.from({ length: 50 }, (_, i) => 50 - i).map((discount) => (
+                        <option key={discount} value={discount}>{discount}% off</option>
+                      ))}
+                    </select>
+                    {offerAmount && <span>{formatMoney(
+                      Math.round(Number(counterOffer?.offerBasePrice ?? listings.find((l) => l.id === activeThread.listingId)?.price ?? 0) *
+                        (100 - Number(offerAmount))) / 100
+                    )}</span>}
+                    <button disabled={!offerAmount} className="px-2 py-1 border rounded" onClick={() => {
+                      sendOffer(activeThread.id, offerAmount, counterOffer?.id);
+                      setOfferModalOpen(false);
+                      setCounterOffer(null);
+                    }}>Send {counterOffer ? "counteroffer" : "offer"}</button>
+                    <button onClick={() => { setOfferModalOpen(false); setCounterOffer(null); }}>Cancel</button>
                   </div>
                 )}
-
-                <div className="flex items-center gap-2">
-                  {!offerModalOpen && (
-                    <button
-                      type="button"
-                      onClick={() => setOfferModalOpen(true)}
-                      className="p-2.5 rounded-lg border shrink-0"
-                      style={{ borderColor: MARIGOLD, color: MARIGOLD }}
-                      aria-label="Make an offer"
-                      title="Make an offer"
-                    >
-                      ₦
-                    </button>
+                <div className="flex items-center flex-wrap gap-2">
+                  {!offerModalOpen && activeThread.buyerUsername === currentUser &&
+                    listings.some((listing) => listing.id === activeThread.listingId && listing.listingType === "fixed" && listing.status === "active") && (
+                    <button type="button" className="p-2 border rounded" onClick={() => {
+                      setCounterOffer(null);
+                      setOfferAmount("");
+                      setOfferModalOpen(true);
+                    }}>Make an offer</button>
                   )}
-                  <label
-                    className="p-2.5 rounded-lg border shrink-0 cursor-pointer flex items-center justify-center"
-                    style={{ borderColor: "#DDD8CC", color: SLATE }}
-                    title="Attach a photo"
-                  >
-                    <ImageIcon size={16} />
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => handleMessagePhotoSelect(e, activeThread.id)}
-                      className="hidden"
-                      disabled={uploadingMessagePhoto}
-                    />
-                  </label>
-                  <input
-                    value={messageInput}
-                    onChange={(e) => {
-                      setMessageInput(e.target.value);
-                      if (messageError) setMessageError("");
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") sendMessage(activeThread.id, messageInput);
-                    }}
-                    placeholder="Type a message..."
-                    className="flex-1 px-3 py-2 rounded-lg border outline-none text-sm"
-                    style={{ borderColor: "#DDD8CC" }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => sendMessage(activeThread.id, messageInput)}
-                    className="p-2.5 rounded-lg"
-                    style={{ backgroundColor: MARIGOLD, color: INK }}
-                    aria-label="Send"
-                  >
-                    <Send size={16} />
-                  </button>
+                  <select aria-label="Preset message" value={chatPreset} onChange={(e) => {
+                    setChatPreset(e.target.value);
+                    setChatState("");
+                    setMessageError("");
+                  }}>
+                    <option value="">Choose a message</option>
+                    {(activeThread.buyerUsername === currentUser ? BUYER_PRESETS : SELLER_PRESETS).map((preset) => (
+                      <option key={preset} value={preset}>{MARKETPLACE_PRESETS[preset].replace("{state}", "[state]").replace("{price}", "[price]")}</option>
+                    ))}
+                  </select>
+                  {(MARKETPLACE_PRESETS[chatPreset]?.includes("{state}") || chatPreset === "free_delivery") && (
+                    <select aria-label="Nigerian state" value={chatState} onChange={(e) => setChatState(e.target.value)}>
+                      <option value="">Select state or FCT</option>
+                      {NIGERIA_PROFILE_STATES.map((state) => <option key={state} value={state}>{state}</option>)}
+                    </select>
+                  )}
+                  <button className="p-2 border rounded" disabled={!chatPreset ||
+                    ((MARKETPLACE_PRESETS[chatPreset].includes("{state}") || chatPreset === "free_delivery") && !chatState)}
+                    onClick={sendPreset}>Send</button>
                 </div>
               </div>
             )}
@@ -18319,6 +18309,7 @@ function MarketplaceStallyard() {
                             {item.qty}
                           </span>
                           <button
+                            disabled={Boolean(item.offerId)}
                             onClick={() => updateCartQty(item.id, item.qty + 1)}
                             className="w-6 h-6 rounded-md border flex items-center justify-center"
                             style={{ borderColor: "#DDD8CC" }}
